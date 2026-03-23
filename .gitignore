@@ -1,0 +1,22 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Runtime data
+data/
+*.log
+
+# Frontend build artifacts
+web/node_modules/
+web/dist/
+
+# Local reference repositories
+refer/
+
+# Spec workflow runtime approvals
+.spec-workflow/approvals/
+
+# Optional local env files
+.env
+.env.*
+!.env.example

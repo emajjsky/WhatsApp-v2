@@ -1,0 +1,22 @@
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { AppShell } from './components/AppShell'
+import { AccountsPage } from './pages/AccountsPage'
+import { AgentsPage } from './pages/AgentsPage'
+import { ChatsPage } from './pages/ChatsPage'
+import { DashboardPage } from './pages/DashboardPage'
+import { ExportsPage } from './pages/ExportsPage'
+
+export default function App() {
+  return (
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route index element={<DashboardPage />} />
+        <Route path="/accounts" element={<AccountsPage />} />
+        <Route path="/chats" element={<ChatsPage />} />
+        <Route path="/exports" element={<ExportsPage />} />
+        <Route path="/agents" element={<AgentsPage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}

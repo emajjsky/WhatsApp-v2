@@ -1,0 +1,224 @@
+package platform
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+
+	"whatsapp-agent-platform/internal/accounts"
+	"whatsapp-agent-platform/internal/agents"
+	"whatsapp-agent-platform/internal/chats"
+	"whatsapp-agent-platform/internal/config"
+	"whatsapp-agent-platform/internal/exports"
+	"whatsapp-agent-platform/internal/sessions"
+	"whatsapp-agent-platform/internal/storage"
+)
+
+type App struct {
+	cfg        config.Config
+	logger     *slog.Logger
+	router     http.Handler
+	httpServer *http.Server
+	database   *storage.Postgres
+}
+
+func New(cfg config.Config) (*App, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	logger, err := NewLogger(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		database *storage.Postgres
+		deps     RouteDependencies
+	)
+
+	if cfg.Database.DSN != "" {
+		database, err = storage.Open(context.Background(), cfg.Database.Driver, cfg.Database.DSN)
+		if err != nil {
+			return nil, err
+		}
+
+		if cfg.Database.AutoMigrate {
+			migrator := storage.NewMigrator(cfg.Database.MigrationsDir)
+			if err := migrator.Apply(context.Background(), database.DB()); err != nil {
+				_ = database.Close()
+				return nil, err
+			}
+		}
+
+		accountRepo, err := accounts.NewRepository(database.DB())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		credentialRepo, err := sessions.NewCredentialRepository(database.DB())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		credentialStore, err := sessions.NewCredentialStoreAdapter(credentialRepo)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		sessionManager := sessions.NewManager(
+			sessions.NewPlaceholderConnector(logger),
+			credentialStore,
+			logger,
+		)
+
+		accountService, err := accounts.NewService(accountRepo, sessionManager)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		accountHandler, err := accounts.NewHandler(accountService)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		chatRepo, err := chats.NewRepository(database.DB())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		chatService, err := chats.NewService(chatRepo)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		chatHandler, err := chats.NewHandler(chatService)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		exportRepo, err := exports.NewRepository(database.DB())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		exportService, err := exports.NewService(exportRepo, chatRepo, "data/exports", logger)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		exportHandler, err := exports.NewHandler(exportService)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		agentRepo, err := agents.NewRepository(database.DB())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		agentService, err := agents.NewService(agentRepo, accountRepo)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		agentHandler, err := agents.NewHandler(agentService)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		deps.AccountHandler = accountHandler
+		deps.ChatHandler = chatHandler
+		deps.ExportHandler = exportHandler
+		deps.AgentHandler = agentHandler
+	} else {
+		logger.Warn("database is not configured; account, chat, export, and agent APIs are disabled")
+	}
+
+	router := NewRouter(cfg, logger, deps)
+	httpServer := NewHTTPServer(cfg, router, logger)
+
+	app := &App{
+		cfg:        cfg,
+		logger:     logger,
+		router:     router,
+		httpServer: httpServer,
+		database:   database,
+	}
+
+	app.logger.Info("application assembled", "http_addr", cfg.HTTP.Address())
+
+	return app, nil
+}
+
+func (a *App) Run(ctx context.Context) error {
+	if a.httpServer == nil {
+		return fmt.Errorf("http server is not initialized")
+	}
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		a.logger.Info("starting http server", "addr", a.cfg.HTTP.Address())
+		serverErrCh <- a.httpServer.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		a.logger.Info("shutdown signal received")
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), a.cfg.HTTP.ShutdownTimeout)
+		defer cancel()
+
+		if err := a.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+
+		err := <-serverErrCh
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+
+		a.logger.Info("http server stopped cleanly")
+		return nil
+	case err := <-serverErrCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+
+		return nil
+	}
+}
+
+func (a *App) Shutdown(ctx context.Context) error {
+	if a.httpServer != nil {
+		a.logger.Info("shutting down http server")
+		if err := a.httpServer.Shutdown(ctx); err != nil {
+			return err
+		}
+	}
+
+	if a.database != nil {
+		a.logger.Info("closing database connection")
+		if err := a.database.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
