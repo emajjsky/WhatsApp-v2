@@ -108,6 +108,46 @@ func (r *CredentialRepository) DeleteByAccountID(ctx context.Context, accountID 
 	return nil
 }
 
+func (r *CredentialRepository) UpsertDeviceBinding(ctx context.Context, accountID string, deviceID *string) error {
+	const query = `
+INSERT INTO session_credentials (
+    account_id,
+    credential_blob,
+    noise_keys_version,
+    device_id,
+    last_synced_at
+) VALUES ($1, $2, 1, $3, $4)
+ON CONFLICT (account_id)
+DO UPDATE SET
+    device_id = EXCLUDED.device_id,
+    last_synced_at = EXCLUDED.last_synced_at,
+    updated_at = NOW()`
+
+	if _, err := r.db.ExecContext(
+		ctx,
+		query,
+		accountID,
+		[]byte("{}"),
+		deviceID,
+		time.Now().UTC(),
+	); err != nil {
+		return fmt.Errorf("upsert device binding for account %q: %w", accountID, err)
+	}
+
+	return nil
+}
+
+func (r *CredentialRepository) GetDeviceIDByAccountID(ctx context.Context, accountID string) (*string, error) {
+	const query = `SELECT device_id FROM session_credentials WHERE account_id = $1`
+
+	var deviceID sql.NullString
+	if err := r.db.QueryRowContext(ctx, query, accountID).Scan(&deviceID); err != nil {
+		return nil, fmt.Errorf("get device binding for account %q: %w", accountID, err)
+	}
+
+	return nullableString(deviceID), nil
+}
+
 func nullableString(value sql.NullString) *string {
 	if !value.Valid {
 		return nil

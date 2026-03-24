@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ type Config struct {
 	HTTP        HTTPConfig
 	Database    DatabaseConfig
 	Logging     LoggingConfig
+	Integrations IntegrationConfig
 }
 
 type HTTPConfig struct {
@@ -38,6 +40,11 @@ type DatabaseConfig struct {
 	MigrationsDir string
 }
 
+type IntegrationConfig struct {
+	AgentRunnerBaseURL string
+	WhatsAppProxyURL   string
+}
+
 func Load() (Config, error) {
 	cfg := Config{
 		AppName:     stringEnv("APP_NAME", "whatsapp-agent-platform"),
@@ -59,6 +66,10 @@ func Load() (Config, error) {
 		Logging: LoggingConfig{
 			Level:  stringEnv("LOG_LEVEL", "info"),
 			Format: stringEnv("LOG_FORMAT", "text"),
+		},
+		Integrations: IntegrationConfig{
+			AgentRunnerBaseURL: strings.TrimSpace(os.Getenv("AGENT_RUNNER_BASE_URL")),
+			WhatsAppProxyURL:   strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
 		},
 	}
 
@@ -105,6 +116,18 @@ func (c Config) Validate() error {
 	}
 	if c.Database.AutoMigrate && strings.TrimSpace(c.Database.MigrationsDir) == "" {
 		return fmt.Errorf("DB_MIGRATIONS_DIR must not be empty when DB_AUTO_MIGRATE is enabled")
+	}
+	if c.Integrations.AgentRunnerBaseURL != "" {
+		parsed, err := url.Parse(c.Integrations.AgentRunnerBaseURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("AGENT_RUNNER_BASE_URL must be a valid absolute URL")
+		}
+	}
+	if c.Integrations.WhatsAppProxyURL != "" {
+		parsed, err := url.Parse(c.Integrations.WhatsAppProxyURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("WHATSAPP_PROXY_URL must be a valid absolute URL")
+		}
 	}
 
 	return nil

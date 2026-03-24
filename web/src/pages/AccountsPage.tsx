@@ -1,3 +1,4 @@
+import QRCode from 'qrcode'
 import { type FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   createAccount,
@@ -25,12 +26,14 @@ export function AccountsPage() {
   const [busyAccountId, setBusyAccountId] = useState<string>()
   const [error, setError] = useState<string>()
   const [form, setForm] = useState(initialForm)
+  const [qrDataUrl, setQrDataUrl] = useState<string>()
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) ?? accounts[0]
 
-  const loadAccounts = useCallback(async (preferredAccountId?: string) => {
-    setLoading(true)
-    setError(undefined)
+  const loadAccounts = useCallback(async (preferredAccountId?: string, background = false) => {
+    if (!background) {
+      setLoading(true)
+    }
 
     try {
       const response = await listAccounts()
@@ -43,16 +46,67 @@ export function AccountsPage() {
 
         return response.accounts.some((item) => item.id === current) ? current : response.accounts[0]?.id
       })
+
+      if (!background) {
+        setError(undefined)
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载账号失败')
     } finally {
-      setLoading(false)
+      if (!background) {
+        setLoading(false)
+      }
     }
   }, [])
 
   useEffect(() => {
     void loadAccounts()
   }, [loadAccounts])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadAccounts(undefined, true)
+    }, 4000)
+
+    return () => window.clearInterval(timer)
+  }, [loadAccounts])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function renderQRCode() {
+      const qrContent = selectedAccount?.session?.pairing?.qr_code?.trim()
+      if (!qrContent) {
+        setQrDataUrl(undefined)
+        return
+      }
+
+      try {
+        const dataUrl = await QRCode.toDataURL(qrContent, {
+          width: 280,
+          margin: 1,
+          color: {
+            dark: '#14333a',
+            light: '#fffdf9',
+          },
+        })
+
+        if (!cancelled) {
+          setQrDataUrl(dataUrl)
+        }
+      } catch {
+        if (!cancelled) {
+          setQrDataUrl(undefined)
+        }
+      }
+    }
+
+    void renderQRCode()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedAccount?.session?.pairing?.qr_code])
 
   async function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -99,7 +153,7 @@ export function AccountsPage() {
       <PageHeader
         eyebrow="账号接入"
         title="先把账号卡片建好，再做后面的事"
-        description="新员工只需要理解一个动作链路：创建账号、点击配对、看状态是否变成已连接。看不懂协议名词也不影响使用。"
+        description="现在这里会持续轮询账号状态。点完配对后，不用手动狂点刷新，页面会自己把二维码、配对码、失败原因和连接结果刷出来。"
       />
 
       <section className="two-column-grid account-layout">
@@ -121,7 +175,7 @@ export function AccountsPage() {
               <input
                 value={form.phoneNumber}
                 onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
-                placeholder="可选，便于后续识别"
+                placeholder="配对码模式建议填写国际格式，如 86138..."
               />
             </label>
             <label className="field">
@@ -138,8 +192,8 @@ export function AccountsPage() {
           </form>
 
           <div className="helper-card">
-            <strong>新手说明</strong>
-            <p>这里不会直接连手机。这里只是先生成一个账号卡片，方便后续做扫码配对。</p>
+            <strong>使用说明</strong>
+            <p>二维码模式不强依赖手机号，配对码模式建议先填国际区号手机号。如果直连 WhatsApp 失败，优先检查网络，再考虑配置 `WHATSAPP_PROXY_URL`。</p>
           </div>
         </article>
 
@@ -194,10 +248,30 @@ export function AccountsPage() {
                 </div>
               </div>
 
+              {selectedAccount.session?.last_error ? (
+                <div className="warning-banner">
+                  {selectedAccount.session.last_error}
+                </div>
+              ) : null}
+
               {selectedAccount.session?.pairing ? (
                 <div className="pairing-card">
                   <p className="eyebrow">当前配对内容</p>
-                  <h4>{selectedAccount.session.pairing.method === 'qr' ? '二维码内容' : '配对码'}</h4>
+                  <h4>{selectedAccount.session.pairing.method === 'qr' ? '扫码配对' : '配对码'}</h4>
+
+                  {selectedAccount.session.pairing.qr_code ? (
+                    <div className="pairing-qr-stack">
+                      {qrDataUrl ? (
+                        <img className="pairing-qr-image" src={qrDataUrl} alt="WhatsApp 配对二维码" />
+                      ) : (
+                        <p className="pairing-value">二维码生成中...</p>
+                      )}
+                      <p className="pairing-raw-hint">
+                        如果扫码区空白，说明当前浏览器还没把二维码渲出来，下面保留原始内容便于排查。
+                      </p>
+                    </div>
+                  ) : null}
+
                   <p className="pairing-value">
                     {selectedAccount.session.pairing.qr_code ??
                       selectedAccount.session.pairing.pairing_code ??
@@ -249,7 +323,7 @@ export function AccountsPage() {
         ) : (
           <EmptyPanel
             title="还没有账号"
-            description="先在上面的表单里创建一个账号卡片，再开始配对。这个页面不需要先懂 WhatsApp 协议。"
+            description="先在上面的表单里创建一个账号卡片，再开始配对。这个页面现在已经会自动轮询状态。"
           />
         )}
       </section>

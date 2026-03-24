@@ -39,7 +39,7 @@
   - _Requirements: 1, 6_
   - _Prompt: Implement the task for spec whatsapp-agent-platform, first run spec-workflow-guide to get the workflow guide then implement the task: Role: Go Backend Engineer | Task: Implement PostgreSQL repositories for accounts and session credentials in `internal/accounts/repository.go`, `internal/sessions/credential_repository.go`, and `internal/storage/postgres.go` | Restrictions: Do not leak SQL details into handlers, keep encryption boundaries explicit, and make repository methods context-aware | _Leverage: `deploy/migrations/0001_accounts_and_sessions.sql`, `.spec-workflow/specs/whatsapp-agent-platform/design.md` | _Requirements: 1, 6 | Success: Account and credential state can be created, updated, and queried through typed repositories without coupling callers to SQL implementation details. After starting, mark the task in-progress in tasks.md, log implementation details with the log-implementation tool, and then mark the task complete._
 
-- [-] 5. Build the whatsmeow session manager and credential store adapter
+- [x] 5. Build the whatsmeow session manager and credential store adapter
   - File: `internal/sessions/manager.go`
   - File: `internal/sessions/whatsmeow_store.go`
   - File: `cmd/session-gateway/main.go`
@@ -78,7 +78,7 @@
   - _Requirements: 2, 6_
   - _Prompt: Implement the task for spec whatsapp-agent-platform, first run spec-workflow-guide to get the workflow guide then implement the task: Role: Ingestion Pipeline Engineer | Task: Implement raw-event normalization, idempotent persistence, and repository operations in `internal/ingest/normalizer.go`, `internal/ingest/service.go`, and `internal/ingest/repository.go` | Restrictions: Do not trust protocol payloads blindly, do not create duplicate messages on retries, and keep normalization rules testable outside network code | _Leverage: `refer/whatsmeow/README.md`, `.spec-workflow/specs/whatsapp-agent-platform/design.md`, `deploy/migrations/0002_chat_history.sql` | _Requirements: 2, 6 | Success: Incoming protocol events are normalized and stored without duplicate history rows, with clear seams for later media and receipt handling. After starting, mark the task in-progress in tasks.md, log implementation details with the log-implementation tool, and then mark the task complete._
 
-- [ ] 9. Wire live session events into the ingest service
+- [x] 9. Wire live session events into the ingest service
   - File: `internal/sessions/event_bridge.go`
   - File: `internal/sessions/manager.go`
   - Connect active `whatsmeow` sessions to the ingest pipeline and publish live update events.
@@ -147,7 +147,7 @@
   - _Requirements: 5, 6_
   - _Prompt: Implement the task for spec whatsapp-agent-platform, first run spec-workflow-guide to get the workflow guide then implement the task: Role: API and Domain Service Engineer | Task: Implement agent rule and run management services and handlers in `internal/agents/service.go`, `internal/agents/handler.go`, and update `internal/platform/router.go` to expose the routes | Restrictions: Do not allow unsafe default auto-send behavior, validate rule payloads rigorously, and keep HTTP handlers thin | _Leverage: `internal/agents/repository.go`, `.spec-workflow/specs/whatsapp-agent-platform/design.md` | _Requirements: 5, 6 | Success: The backend exposes safe, validated agent rule management and run inspection endpoints for the admin UI. After starting, mark the task in-progress in tasks.md, log implementation details with the log-implementation tool, and then mark the task complete._
 
-- [ ] 16. Implement the Python agent runner service
+- [x] 16. Implement the Python agent runner service
   - File: `agent_runner/app.py`
   - File: `agent_runner/policy.py`
   - File: `agent_runner/providers/base.py`
@@ -157,7 +157,7 @@
   - _Requirements: 5, 6_
   - _Prompt: Implement the task for spec whatsapp-agent-platform, first run spec-workflow-guide to get the workflow guide then implement the task: Role: Python AI Platform Engineer | Task: Build the standalone agent runner service in `agent_runner/app.py`, `agent_runner/policy.py`, and `agent_runner/providers/base.py` for context assembly, safety checks, and provider abstraction | Restrictions: Do not embed provider-specific code in core policy logic, never auto-send without explicit rule approval, and keep the service callable through a clean internal API | _Leverage: `.spec-workflow/specs/whatsapp-agent-platform/design.md` | _Requirements: 5, 6 | Success: The agent runner can accept a run request, build context, apply policy checks, and either return a draft, block the send, or prepare a dispatch request through a provider abstraction. After starting, mark the task in-progress in tasks.md, log implementation details with the log-implementation tool, and then mark the task complete._
 
-- [ ] 17. Add audit logging and system health services
+- [x] 17. Add audit logging and system health services
   - File: `internal/audit/service.go`
   - File: `internal/audit/handler.go`
   - File: `internal/health/service.go`

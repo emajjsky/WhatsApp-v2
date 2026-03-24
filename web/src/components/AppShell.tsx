@@ -4,8 +4,8 @@ const navItems = [
   { to: '/', label: '首页总览', hint: '先看状态，再开始操作' },
   { to: '/accounts', label: '账号接入', hint: '创建账号并完成配对' },
   { to: '/chats', label: '对话查看', hint: '按账号筛选并查看消息' },
-  { to: '/exports', label: '导出中心', hint: '后续接入任务导出' },
-  { to: '/agents', label: 'Agent 规则', hint: '后续接入建议回复与自动回复' },
+  { to: '/exports', label: '导出中心', hint: '创建任务并下载产物' },
+  { to: '/agents', label: 'Agent 规则', hint: '配置规则并查看运行记录' },
 ]
 
 export function AppShell() {

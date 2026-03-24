@@ -397,6 +397,12 @@ a {
   gap: 10px;
 }
 
+.media-block-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
 .primary-button,
 .secondary-button,
 .danger-button,
@@ -492,6 +498,27 @@ a {
   word-break: break-all;
   font-family: 'SFMono-Regular', Consolas, monospace;
   color: var(--text);
+}
+
+.pairing-qr-stack {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.pairing-qr-image {
+  width: min(100%, 280px);
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: #fffdf9;
+}
+
+.pairing-raw-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-soft);
 }
 
 .card-grid {
@@ -648,11 +675,15 @@ a {
   display: grid;
   grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   gap: 18px;
+  min-height: min(78vh, 920px);
+  align-items: stretch;
 }
 
 .chat-sidebar,
 .chat-stage {
-  min-height: 720px;
+  min-height: 0;
+  max-height: min(78vh, 920px);
+  overflow: hidden;
 }
 
 .chat-list,
@@ -661,10 +692,23 @@ a {
   gap: 12px;
 }
 
+.chat-sidebar {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.chat-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 8px;
+  align-content: start;
+}
+
 .chat-stage {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 14px;
-  align-content: start;
+  min-height: 0;
 }
 
 .chat-stage-meta {
@@ -676,6 +720,13 @@ a {
 
 .align-start {
   justify-self: start;
+}
+
+.message-timeline {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 10px;
+  align-content: start;
 }
 
 .message-card {
@@ -713,6 +764,51 @@ a {
   background: rgba(15, 125, 134, 0.09);
   color: var(--accent-strong);
   font-size: 13px;
+}
+
+.media-preview-card {
+  margin: 0;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  display: grid;
+  gap: 8px;
+}
+
+.media-preview-card figcaption {
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.media-preview-image,
+.media-preview-video {
+  width: min(100%, 320px);
+  max-height: 320px;
+  object-fit: contain;
+  border-radius: 14px;
+  background: #f8faf9;
+}
+
+.media-preview-image.sticker {
+  width: min(180px, 100%);
+  max-height: 180px;
+}
+
+.media-preview-audio {
+  width: min(100%, 320px);
+}
+
+.media-link {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 125, 134, 0.16);
+  background: rgba(15, 125, 134, 0.08);
+  color: var(--accent-strong);
+  font-weight: 600;
 }
 
 .chip-button {

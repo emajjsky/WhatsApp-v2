@@ -341,8 +341,8 @@ func normalizeFormat(value Format) Format {
 	}
 }
 
-func fallbackExportText(messageType string) string {
-	switch messageType {
+func fallbackExportText(messageType any) string {
+	switch strings.ToLower(strings.TrimSpace(fmt.Sprint(messageType))) {
 	case "image":
 		return "Image message"
 	case "video":

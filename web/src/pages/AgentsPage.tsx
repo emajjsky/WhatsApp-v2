@@ -264,7 +264,7 @@ export function AgentsPage() {
       <PageHeader
         eyebrow="Agent 规则"
         title="先把回复边界写清楚，再决定要不要让系统自己发"
-        description="这里已经能创建规则、启停规则、查看运行记录。页面默认偏保守，尽量避免新手员工一上来就把自动发送开到飞起。"
+        description="这里已经能创建规则、启停规则、查看运行记录。页面默认偏保守，尽量避免新手员工一上来就把自动发送开到飞起。后端也预留了 agent_runner 服务，方便后续把真实草稿生成和拦截判定接进来。"
         aside={
           <div className="header-meta-card">
             <span>已启用规则</span>
@@ -458,7 +458,7 @@ export function AgentsPage() {
         ) : (
           <EmptyPanel
             title="暂时还没有运行记录"
-            description="等后面的 agent_runner 接进来后，这里会显示每次建议回复、拦截原因和发送结果。"
+            description="等有消息真正触发规则后，这里会显示每次建议回复、拦截原因和发送准备结果。"
           />
         )}
 

@@ -44,6 +44,25 @@ export interface HealthResponse {
   timestamp: string
 }
 
+export type SystemHealthStatus = 'ok' | 'degraded' | 'down'
+export type SystemComponentStatus = 'ok' | 'warn' | 'down'
+
+export interface SystemHealthComponent {
+  name: string
+  status: SystemComponentStatus
+  summary: string
+  details?: Record<string, unknown>
+}
+
+export interface SystemHealthResponse {
+  service: string
+  environment: string
+  status: SystemHealthStatus
+  timestamp: string
+  components: SystemHealthComponent[]
+  metrics: Record<string, number>
+}
+
 export type ChatType = 'direct' | 'group' | 'broadcast' | 'status'
 
 export type MessageType =
@@ -223,6 +242,25 @@ export interface AgentRunListResponse {
   offset: number
 }
 
+export interface AuditEntry {
+  id: string
+  actor_type: 'user' | 'system' | 'agent'
+  actor_id?: string
+  action: string
+  target_type: string
+  target_id: string
+  outcome: 'success' | 'denied' | 'blocked' | 'failed'
+  detail: Record<string, unknown>
+  created_at: string
+}
+
+export interface AuditListResponse {
+  entries: AuditEntry[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export interface UpsertAgentRulePayload {
   id?: string
   account_id: string
@@ -294,6 +332,10 @@ export async function getHealth() {
   return request<HealthResponse>('/healthz')
 }
 
+export async function getSystemHealth() {
+  return request<SystemHealthResponse>('/api/system/health')
+}
+
 export async function listAccounts() {
   return request<{ accounts: AccountView[] }>('/api/accounts')
 }
@@ -363,6 +405,10 @@ export async function getChatMessages(chatId: string, params?: { limit?: number;
   return request<MessageHistoryResponse>(
     `/api/chats/${chatId}/messages${queryString ? `?${queryString}` : ''}`,
   )
+}
+
+export function getMediaAssetUrl(mediaId: string) {
+  return `${baseUrl}/api/media/${mediaId}/content`
 }
 
 export async function listExportJobs() {
@@ -444,4 +490,40 @@ export async function listAgentRuns(params?: {
 
   const queryString = searchParams.toString()
   return request<AgentRunListResponse>(`/api/agent-runs${queryString ? `?${queryString}` : ''}`)
+}
+
+export async function listAuditEntries(params?: {
+  action?: string
+  targetType?: string
+  targetId?: string
+  outcome?: AuditEntry['outcome'] | ''
+  actorType?: AuditEntry['actor_type'] | ''
+  limit?: number
+  offset?: number
+}) {
+  const searchParams = new URLSearchParams()
+  if (params?.action) {
+    searchParams.set('action', params.action)
+  }
+  if (params?.targetType) {
+    searchParams.set('target_type', params.targetType)
+  }
+  if (params?.targetId) {
+    searchParams.set('target_id', params.targetId)
+  }
+  if (params?.outcome) {
+    searchParams.set('outcome', params.outcome)
+  }
+  if (params?.actorType) {
+    searchParams.set('actor_type', params.actorType)
+  }
+  if (params?.limit) {
+    searchParams.set('limit', String(params.limit))
+  }
+  if (params?.offset) {
+    searchParams.set('offset', String(params.offset))
+  }
+
+  const queryString = searchParams.toString()
+  return request<AuditListResponse>(`/api/audit${queryString ? `?${queryString}` : ''}`)
 }

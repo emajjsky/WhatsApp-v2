@@ -32,6 +32,12 @@ function getTone(status: string): BadgeTone {
       return 'warning'
     case 'sent':
       return 'success'
+    case 'ok':
+      return 'success'
+    case 'warn':
+      return 'warning'
+    case 'down':
+      return 'danger'
     default:
       return accountToneMap[status as AccountStatus] ?? 'neutral'
   }
@@ -79,6 +85,12 @@ function getLabel(status: string) {
       return '待复核'
     case 'sent':
       return '已发出'
+    case 'ok':
+      return '正常'
+    case 'warn':
+      return '需关注'
+    case 'down':
+      return '异常'
     default:
       return status
   }

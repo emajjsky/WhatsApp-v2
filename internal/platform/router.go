@@ -6,17 +6,21 @@ import (
 	"time"
 
 	"whatsapp-agent-platform/internal/accounts"
+	"whatsapp-agent-platform/internal/audit"
 	"whatsapp-agent-platform/internal/agents"
 	"whatsapp-agent-platform/internal/chats"
 	"whatsapp-agent-platform/internal/config"
 	"whatsapp-agent-platform/internal/exports"
+	"whatsapp-agent-platform/internal/health"
 )
 
 type RouteDependencies struct {
 	AccountHandler *accounts.Handler
+	AuditHandler   *audit.Handler
 	ChatHandler    *chats.Handler
 	ExportHandler  *exports.Handler
 	AgentHandler   *agents.Handler
+	HealthService  *health.Service
 }
 
 func registerRoutes(mux *http.ServeMux, cfg config.Config, _ *slog.Logger, deps RouteDependencies) {
@@ -28,11 +32,24 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config, _ *slog.Logger, deps 
 	if deps.ChatHandler != nil {
 		deps.ChatHandler.RegisterRoutes(mux)
 	}
+	if deps.AuditHandler != nil {
+		deps.AuditHandler.RegisterRoutes(mux)
+	}
 	if deps.ExportHandler != nil {
 		deps.ExportHandler.RegisterRoutes(mux)
 	}
 	if deps.AgentHandler != nil {
 		deps.AgentHandler.RegisterRoutes(mux)
+	}
+	if deps.HealthService != nil {
+		mux.HandleFunc("/api/system/health", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+				return
+			}
+
+			writeJSON(w, http.StatusOK, deps.HealthService.Summary(r.Context()))
+		})
 	}
 }
 

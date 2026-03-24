@@ -20,6 +20,7 @@ type Postgres struct {
 }
 
 func Open(ctx context.Context, driverName, dsn string) (*Postgres, error) {
+	driverName = normalizeDriverName(driverName)
 	if strings.TrimSpace(driverName) == "" {
 		return nil, fmt.Errorf("database driver name must not be empty")
 	}
@@ -38,6 +39,15 @@ func Open(ctx context.Context, driverName, dsn string) (*Postgres, error) {
 	}
 
 	return &Postgres{db: db}, nil
+}
+
+func normalizeDriverName(driverName string) string {
+	switch strings.ToLower(strings.TrimSpace(driverName)) {
+	case "postgres", "postgresql", "pgx":
+		return "pgx"
+	default:
+		return strings.TrimSpace(driverName)
+	}
 }
 
 func NewPostgres(db *sql.DB) (*Postgres, error) {

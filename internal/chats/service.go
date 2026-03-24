@@ -135,6 +135,31 @@ func (s *Service) GetMessages(ctx context.Context, input GetMessagesInput) (Mess
 	}, nil
 }
 
+func (s *Service) GetMediaContentPath(ctx context.Context, mediaID string) (string, *string, error) {
+	mediaID = strings.TrimSpace(mediaID)
+	if mediaID == "" {
+		return "", nil, fmt.Errorf("media_id is required")
+	}
+
+	media, err := s.repository.GetMediaByID(ctx, mediaID)
+	if err != nil {
+		return "", nil, err
+	}
+	if media.DownloadStatus != ingest.DownloadStatusReady {
+		return "", nil, fmt.Errorf("media %s is not ready for download", mediaID)
+	}
+	if media.StorageKey == nil {
+		return "", nil, fmt.Errorf("media %s has no storage path", mediaID)
+	}
+
+	path, err := ResolveStoragePath(*media.StorageKey)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return path, media.MIMEType, nil
+}
+
 func mapRepositoryError(chatID string, err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: %s", ErrChatNotFound, chatID)

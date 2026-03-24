@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -405,6 +407,70 @@ ORDER BY created_at ASC`, strings.Join(placeholders, ", "))
 	}
 
 	return result, nil
+}
+
+func (r *Repository) GetMediaByID(ctx context.Context, mediaID string) (MediaAttachment, error) {
+	const query = `
+SELECT
+    id,
+    message_id,
+    media_type,
+    mime_type,
+    file_name,
+    byte_size,
+    sha256,
+    storage_key,
+    download_status
+FROM media_assets
+WHERE id = $1`
+
+	var (
+		item       MediaAttachment
+		mimeType   sql.NullString
+		fileName   sql.NullString
+		byteSize   sql.NullInt64
+		sha256     sql.NullString
+		storageKey sql.NullString
+		status     sql.NullString
+	)
+
+	if err := r.db.QueryRowContext(ctx, query, mediaID).Scan(
+		&item.ID,
+		&item.MessageID,
+		&item.MediaType,
+		&mimeType,
+		&fileName,
+		&byteSize,
+		&sha256,
+		&storageKey,
+		&status,
+	); err != nil {
+		return MediaAttachment{}, fmt.Errorf("get media %q: %w", mediaID, err)
+	}
+
+	item.MIMEType = nullableString(mimeType)
+	item.FileName = nullableString(fileName)
+	item.ByteSize = nullableInt64(byteSize)
+	item.SHA256 = nullableString(sha256)
+	item.StorageKey = nullableString(storageKey)
+	item.DownloadStatus = ingest.DownloadStatus(status.String)
+
+	return item, nil
+}
+
+func ResolveStoragePath(storageKey string) (string, error) {
+	trimmed := strings.TrimSpace(storageKey)
+	if trimmed == "" {
+		return "", fmt.Errorf("storage key is empty")
+	}
+
+	cleaned := filepath.Clean(trimmed)
+	base := filepath.Clean("data")
+	if cleaned == base || strings.HasPrefix(cleaned, base+string(os.PathSeparator)) {
+		return cleaned, nil
+	}
+
+	return "", fmt.Errorf("storage key must stay inside data/")
 }
 
 func buildChatListWhere(filters ChatListFilters) (string, []any) {

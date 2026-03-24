@@ -1,12 +1,48 @@
 import { useEffect, useState } from 'react'
-import { getHealth, listAccounts, listChats, type HealthResponse } from '../api/client'
+import {
+  getSystemHealth,
+  listAccounts,
+  listChats,
+  type SystemHealthResponse,
+} from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
 import { PageHeader } from '../components/PageHeader'
+import { StatusBadge } from '../components/StatusBadge'
 
 interface DashboardState {
-  health?: HealthResponse
+  systemHealth?: SystemHealthResponse
   accountCount: number
   chatCount: number
+}
+
+function formatComponentName(name: string) {
+  switch (name) {
+    case 'database':
+      return '数据库'
+    case 'sessions':
+      return '会话连接'
+    case 'exports':
+      return '导出任务'
+    case 'agents':
+      return 'Agent Runner'
+    case 'audit':
+      return '审计留痕'
+    default:
+      return name
+  }
+}
+
+function formatSystemStatus(status?: SystemHealthResponse['status']) {
+  switch (status) {
+    case 'ok':
+      return '在线'
+    case 'degraded':
+      return '降级运行'
+    case 'down':
+      return '异常'
+    default:
+      return '待连接'
+  }
 }
 
 export function DashboardPage() {
@@ -21,8 +57,8 @@ export function DashboardPage() {
       setLoading(true)
       setError(undefined)
 
-      const [healthResult, accountsResult, chatsResult] = await Promise.allSettled([
-        getHealth(),
+      const [systemHealthResult, accountsResult, chatsResult] = await Promise.allSettled([
+        getSystemHealth(),
         listAccounts(),
         listChats({ limit: 1 }),
       ])
@@ -31,14 +67,23 @@ export function DashboardPage() {
         return
       }
 
+      const systemHealth =
+        systemHealthResult.status === 'fulfilled' ? systemHealthResult.value : undefined
+
       setState({
-        health: healthResult.status === 'fulfilled' ? healthResult.value : undefined,
-        accountCount: accountsResult.status === 'fulfilled' ? accountsResult.value.accounts.length : 0,
-        chatCount: chatsResult.status === 'fulfilled' ? chatsResult.value.total : 0,
+        systemHealth,
+        accountCount:
+          accountsResult.status === 'fulfilled'
+            ? accountsResult.value.accounts.length
+            : (systemHealth?.metrics.accounts_total ?? 0),
+        chatCount:
+          chatsResult.status === 'fulfilled'
+            ? chatsResult.value.total
+            : (systemHealth?.metrics.chats_total ?? 0),
       })
 
       if (
-        healthResult.status === 'rejected' &&
+        systemHealthResult.status === 'rejected' &&
         accountsResult.status === 'rejected' &&
         chatsResult.status === 'rejected'
       ) {
@@ -55,16 +100,21 @@ export function DashboardPage() {
     }
   }, [])
 
+  const connectedSessions = state.systemHealth?.metrics.sessions_connected ?? 0
+  const enabledRules = state.systemHealth?.metrics.agent_rules_enabled ?? 0
+  const pendingRuns = state.systemHealth?.metrics.agent_runs_pending ?? 0
+  const componentCards = state.systemHealth?.components ?? []
+
   return (
     <div className="page-grid">
       <PageHeader
         eyebrow="首页总览"
         title="先看全局，再开始今天的操作"
-        description="这个首页只做一件事：告诉新手员工下一步该去哪。账号接入、对话查看、导出和 Agent 配置都有明确入口。"
+        description="现在首页会把数据库、会话连接、导出、Agent Runner 和审计留痕的状态一起告诉你，先判断系统稳不稳，再决定今天怎么操作。"
         aside={
           <div className="header-meta-card">
-            <span>服务状态</span>
-            <strong>{state.health?.status === 'ok' ? '在线' : '待连接'}</strong>
+            <span>系统状态</span>
+            <strong>{formatSystemStatus(state.systemHealth?.status)}</strong>
           </div>
         }
       />
@@ -98,21 +148,52 @@ export function DashboardPage() {
         <article className="metric-card">
           <span>已接入账号</span>
           <strong>{loading ? '...' : state.accountCount}</strong>
-          <p>账号卡片越少越好维护，先把常用账号接上。</p>
+          <p>账号越少越好维护，先把常用账号接稳，再逐步扩容。</p>
         </article>
         <article className="metric-card">
           <span>已归档会话</span>
           <strong>{loading ? '...' : state.chatCount}</strong>
-          <p>这里显示当前聊天总量，便于判断归档是否已经开始工作。</p>
+          <p>如果这里一直是 0，多半说明 live ingest 还没真正进来，别急着怪前端。</p>
         </article>
         <article className="metric-card">
-          <span>环境状态</span>
-          <strong>{state.health?.environment ?? '未连接'}</strong>
-          <p>建议先在开发环境完成流程验收，再切到正式环境。</p>
+          <span>已连接会话</span>
+          <strong>{loading ? '...' : connectedSessions}</strong>
+          <p>占位连接器也会模拟连上和来消息，方便你先把流程跑通。</p>
+        </article>
+        <article className="metric-card">
+          <span>启用规则 / 待处理运行</span>
+          <strong>
+            {loading ? '...' : `${enabledRules} / ${pendingRuns}`}
+          </strong>
+          <p>先看系统状态，再决定是不是该放开更多 Agent 规则。</p>
         </article>
       </section>
 
       <section className="two-column-grid">
+        <article className="panel">
+          <p className="eyebrow">组件体温表</p>
+          <h3>这几块一眼看完，基本就知道今天能不能顺利干活</h3>
+          {componentCards.length > 0 ? (
+            <div className="rule-list">
+              {componentCards.map((component) => (
+                <article key={component.name} className="rule-card">
+                  <div className="rule-card-header">
+                    <div>
+                      <strong>{formatComponentName(component.name)}</strong>
+                      <p>{component.summary}</p>
+                    </div>
+                    <div className="chip-row">
+                      <StatusBadge status={component.status} />
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <EmptyPanel title="还没拿到系统健康数据" description="先让后端跑起来，这里才会显示各个组件的状态。" />
+          )}
+        </article>
+
         <article className="panel">
           <p className="eyebrow">给新人的提示</p>
           <h3>最容易出错的三个地方</h3>
@@ -122,14 +203,26 @@ export function DashboardPage() {
             <li>没确认聊天范围，就急着导出或做自动回复规则。</li>
           </ul>
         </article>
+      </section>
 
+      <section className="two-column-grid">
         <article className="panel">
           <p className="eyebrow">安全边界</p>
           <h3>平台默认帮你避开的风险</h3>
           <ul className="plain-list">
-            <li>自动回复不会默认开启，后续 Agent 页会明确标红风险。</li>
-            <li>退出登录、删除产物这类动作会独立展示，不和普通按钮混在一起。</li>
-            <li>导出与 Agent 相关能力会保留审计线索，方便回看是谁做的。</li>
+            <li>自动回复不会默认开启，Agent 页会继续把风险动作单独标出来。</li>
+            <li>退出登录、导出任务、规则启停这些动作都会留下审计记录。</li>
+            <li>Agent Runner 没配置时，系统健康会直接提醒，不会假装一切正常。</li>
+          </ul>
+        </article>
+
+        <article className="panel">
+          <p className="eyebrow">现在能直接试</p>
+          <h3>这版已经不是 PPT 了，能真跑通这些流程</h3>
+          <ul className="plain-list">
+            <li>创建账号并发起配对，占位连接器会自动模拟连上。</li>
+            <li>连接完成后会自动灌入演示消息，聊天页能直接看见归档结果。</li>
+            <li>导出页可以创建任务并下载产物，Agent Runner 也能独立起服务做草稿和拦截判定。</li>
           </ul>
         </article>
       </section>

@@ -1,17 +1,22 @@
 package agents
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"whatsapp-agent-platform/internal/audit"
 	"whatsapp-agent-platform/internal/httpx"
 )
 
 type Handler struct {
-	service *Service
+	service       *Service
+	auditRecorder interface {
+		Record(ctx context.Context, input audit.RecordInput) error
+	}
 }
 
 func NewHandler(service *Service) (*Handler, error) {
@@ -20,6 +25,12 @@ func NewHandler(service *Service) (*Handler, error) {
 	}
 
 	return &Handler{service: service}, nil
+}
+
+func (h *Handler) SetAuditRecorder(recorder interface {
+	Record(ctx context.Context, input audit.RecordInput) error
+}) {
+	h.auditRecorder = recorder
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -61,6 +72,18 @@ func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(input.ID) == "" {
 			status = http.StatusCreated
 		}
+		h.recordAudit(r.Context(), r, audit.RecordInput{
+			ActorType:  audit.ActorTypeUser,
+			ActorID:    audit.RequestActorID(r),
+			Action:     "agent.rule.upsert",
+			TargetType: "agent_rule",
+			TargetID:   rule.ID,
+			Outcome:    audit.OutcomeSuccess,
+			Detail: map[string]any{
+				"reply_mode": rule.ReplyMode,
+				"enabled":    rule.Enabled,
+			},
+		})
 
 		httpx.WriteJSON(w, status, map[string]any{"rule": rule})
 	default:
@@ -108,6 +131,22 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		h.writeServiceError(w, err)
 		return
 	}
+	action := "agent.rule.disable"
+	if enabled {
+		action = "agent.rule.enable"
+	}
+	h.recordAudit(r.Context(), r, audit.RecordInput{
+		ActorType:  audit.ActorTypeUser,
+		ActorID:    audit.RequestActorID(r),
+		Action:     action,
+		TargetType: "agent_rule",
+		TargetID:   rule.ID,
+		Outcome:    audit.OutcomeSuccess,
+		Detail: map[string]any{
+			"enabled":    rule.Enabled,
+			"reply_mode": rule.ReplyMode,
+		},
+	})
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rule": rule})
 }
@@ -142,6 +181,14 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {
 	default:
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	}
+}
+
+func (h *Handler) recordAudit(ctx context.Context, r *http.Request, input audit.RecordInput) {
+	if h.auditRecorder == nil {
+		return
+	}
+
+	_ = h.auditRecorder.Record(ctx, input)
 }
 
 func parseRuleFilters(r *http.Request) (RuleListFilters, error) {

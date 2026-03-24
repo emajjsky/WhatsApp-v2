@@ -2,6 +2,7 @@ package exports
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"whatsapp-agent-platform/internal/chats"
@@ -40,7 +41,16 @@ func renderMarkdownMessage(message chats.MessageView) string {
 	if len(message.Media) > 0 {
 		line += "\n### Media\n"
 		for _, media := range message.Media {
-			line += fmt.Sprintf("- %s %s\n", media.MediaType, mediaLabel(media.FileName, media.StorageKey))
+			label := mediaLabel(media.FileName, media.StorageKey)
+			if media.StorageKey != nil && strings.TrimSpace(*media.StorageKey) != "" {
+				href := filepath.ToSlash(*media.StorageKey)
+				if strings.HasPrefix(href, "data/") {
+					href = "../" + strings.TrimPrefix(href, "data/")
+				}
+				line += fmt.Sprintf("- %s [%s](%s)\n", media.MediaType, label, href)
+			} else {
+				line += fmt.Sprintf("- %s %s\n", media.MediaType, label)
+			}
 		}
 	}
 

@@ -1,17 +1,22 @@
 package accounts
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"whatsapp-agent-platform/internal/audit"
 	"whatsapp-agent-platform/internal/httpx"
 	"whatsapp-agent-platform/internal/sessions"
 )
 
 type Handler struct {
-	service *Service
+	service       *Service
+	auditRecorder interface {
+		Record(ctx context.Context, input audit.RecordInput) error
+	}
 }
 
 func NewHandler(service *Service) (*Handler, error) {
@@ -20,6 +25,12 @@ func NewHandler(service *Service) (*Handler, error) {
 	}
 
 	return &Handler{service: service}, nil
+}
+
+func (h *Handler) SetAuditRecorder(recorder interface {
+	Record(ctx context.Context, input audit.RecordInput) error
+}) {
+	h.auditRecorder = recorder
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -49,6 +60,18 @@ func (h *Handler) handleAccounts(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		h.recordAudit(r.Context(), r, audit.RecordInput{
+			ActorType:  audit.ActorTypeUser,
+			ActorID:    audit.RequestActorID(r),
+			Action:     "account.create",
+			TargetType: "account",
+			TargetID:   account.ID,
+			Outcome:    audit.OutcomeSuccess,
+			Detail: map[string]any{
+				"display_name": account.DisplayName,
+				"status":       account.Status,
+			},
+		})
 
 		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"account": account})
 	default:
@@ -91,6 +114,18 @@ func (h *Handler) handleAccountByID(w http.ResponseWriter, r *http.Request) {
 			h.writeServiceError(w, err)
 			return
 		}
+		h.recordAudit(r.Context(), r, audit.RecordInput{
+			ActorType:  audit.ActorTypeUser,
+			ActorID:    audit.RequestActorID(r),
+			Action:     "account.pair.start",
+			TargetType: "account",
+			TargetID:   account.ID,
+			Outcome:    audit.OutcomeSuccess,
+			Detail: map[string]any{
+				"method": payload.Method,
+				"status": account.Status,
+			},
+		})
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"account": account})
 	case r.Method == http.MethodPost && action == "logout":
 		account, err := h.service.Logout(r.Context(), accountID)
@@ -98,10 +133,29 @@ func (h *Handler) handleAccountByID(w http.ResponseWriter, r *http.Request) {
 			h.writeServiceError(w, err)
 			return
 		}
+		h.recordAudit(r.Context(), r, audit.RecordInput{
+			ActorType:  audit.ActorTypeUser,
+			ActorID:    audit.RequestActorID(r),
+			Action:     "account.logout",
+			TargetType: "account",
+			TargetID:   account.ID,
+			Outcome:    audit.OutcomeSuccess,
+			Detail: map[string]any{
+				"status": account.Status,
+			},
+		})
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"account": account})
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *Handler) recordAudit(ctx context.Context, r *http.Request, input audit.RecordInput) {
+	if h.auditRecorder == nil {
+		return
+	}
+
+	_ = h.auditRecorder.Record(ctx, input)
 }
 
 func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {

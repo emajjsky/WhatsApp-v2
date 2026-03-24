@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ func NewHandler(service *Service) (*Handler, error) {
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/chats", h.handleChats)
 	mux.HandleFunc("/api/chats/", h.handleChatByID)
+	mux.HandleFunc("/api/media/", h.handleMediaByID)
 }
 
 func (h *Handler) handleChats(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +103,35 @@ func (h *Handler) handleChatByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *Handler) handleMediaByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/media/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || parts[1] != "content" {
+		http.NotFound(w, r)
+		return
+	}
+
+	filePath, mimeType, err := h.service.GetMediaContentPath(r.Context(), parts[0])
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	if mimeType != nil && strings.TrimSpace(*mimeType) != "" {
+		w.Header().Set("Content-Type", *mimeType)
+	}
+	if _, statErr := os.Stat(filePath); statErr != nil {
+		httpx.WriteError(w, http.StatusNotFound, statErr.Error())
+		return
+	}
+
+	http.ServeFile(w, r, filePath)
 }
 
 func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {

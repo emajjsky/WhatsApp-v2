@@ -1,6 +1,14 @@
-import { startTransition, useDeferredValue, useEffect, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import {
   getChatMessages,
+  getMediaAssetUrl,
   listAccounts,
   listChats,
   type AccountView,
@@ -32,40 +40,27 @@ export function ChatsPage() {
   const [listLoading, setListLoading] = useState(true)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [error, setError] = useState<string>()
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const pendingScrollModeRef = useRef<'bottom' | 'preserve' | 'none'>('bottom')
+  const previousTimelineMetricsRef = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(
+    undefined,
+  )
 
-  useEffect(() => {
-    let active = true
-
-    async function loadAccountsList() {
-      try {
-        const response = await listAccounts()
-        if (!active) {
-          return
-        }
-
-        setAccounts(response.accounts)
-      } catch (loadError) {
-        if (!active) {
-          return
-        }
-
-        setError(loadError instanceof Error ? loadError.message : '加载账号失败')
-      }
-    }
-
-    void loadAccountsList()
-
-    return () => {
-      active = false
+  const loadAccountsList = useCallback(async () => {
+    try {
+      const response = await listAccounts()
+      setAccounts(response.accounts)
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载账号失败')
     }
   }, [])
 
-  useEffect(() => {
-    let active = true
-
-    async function loadChatsList() {
-      setListLoading(true)
-      setError(undefined)
+  const loadChatsList = useCallback(
+    async (background = false) => {
+      if (!background) {
+        setListLoading(true)
+        setError(undefined)
+      }
 
       try {
         const response = await listChats({
@@ -75,35 +70,74 @@ export function ChatsPage() {
           limit: 60,
         })
 
-        if (!active) {
-          return
-        }
-
         setChats(response.chats)
 
         const currentStillVisible = response.chats.some((item) => item.id === selectedChatId)
         const nextChatId = currentStillVisible ? selectedChatId : response.chats[0]?.id
         startTransition(() => setSelectedChatId(nextChatId))
       } catch (loadError) {
-        if (!active) {
-          return
+        if (!background) {
+          setChats([])
+          setError(loadError instanceof Error ? loadError.message : '加载聊天失败')
         }
-
-        setChats([])
-        setError(loadError instanceof Error ? loadError.message : '加载聊天失败')
       } finally {
-        if (active) {
+        if (!background) {
           setListLoading(false)
         }
       }
-    }
+    },
+    [deferredSearch, selectedAccountId, selectedChatId, selectedChatType],
+  )
 
+  const loadHistory = useCallback(
+    async (chatId: string, background = false) => {
+      if (background) {
+        pendingScrollModeRef.current = isNearBottom(timelineRef.current) ? 'bottom' : 'none'
+      } else {
+        pendingScrollModeRef.current = 'bottom'
+      }
+
+      if (!background) {
+        setHistoryLoading(true)
+        setError(undefined)
+      }
+
+      try {
+        const response = await getChatMessages(chatId, { limit: 50 })
+        setHistory((current) => {
+          if (!current || current.chat.id !== response.chat.id || !background) {
+            return response
+          }
+
+          const latestIDs = new Set(response.messages.map((message) => message.id))
+          const olderMessages = current.messages.filter((message) => !latestIDs.has(message.id))
+
+          return {
+            ...response,
+            messages: [...olderMessages, ...response.messages],
+          }
+        })
+      } catch (loadError) {
+        if (!background) {
+          setHistory(undefined)
+          setError(loadError instanceof Error ? loadError.message : '加载消息失败')
+        }
+      } finally {
+        if (!background) {
+          setHistoryLoading(false)
+        }
+      }
+    },
+    [],
+  )
+
+  useEffect(() => {
+    void loadAccountsList()
+  }, [loadAccountsList])
+
+  useEffect(() => {
     void loadChatsList()
-
-    return () => {
-      active = false
-    }
-  }, [deferredSearch, selectedAccountId, selectedChatId, selectedChatType])
+  }, [loadChatsList])
 
   useEffect(() => {
     if (!selectedChatId) {
@@ -111,50 +145,64 @@ export function ChatsPage() {
       return
     }
 
-    let active = true
+    void loadHistory(selectedChatId)
+  }, [loadHistory, selectedChatId])
 
-    async function loadHistory() {
-      const chatId = selectedChatId
-      if (!chatId) {
-        return
-      }
-
-      setHistoryLoading(true)
-      setError(undefined)
-
-      try {
-        const response = await getChatMessages(chatId, { limit: 50 })
-        if (!active) {
-          return
-        }
-
-        setHistory(response)
-      } catch (loadError) {
-        if (!active) {
-          return
-        }
-
-        setHistory(undefined)
-        setError(loadError instanceof Error ? loadError.message : '加载消息失败')
-      } finally {
-        if (active) {
-          setHistoryLoading(false)
-        }
-      }
+  useEffect(() => {
+    const timeline = timelineRef.current
+    if (!timeline || !history) {
+      return
     }
 
-    void loadHistory()
+    const frame = window.requestAnimationFrame(() => {
+      switch (pendingScrollModeRef.current) {
+        case 'preserve': {
+          const previous = previousTimelineMetricsRef.current
+          if (previous) {
+            const delta = timeline.scrollHeight - previous.scrollHeight
+            timeline.scrollTop = previous.scrollTop + delta
+          }
+          break
+        }
+        case 'bottom':
+          timeline.scrollTop = timeline.scrollHeight
+          break
+        default:
+          break
+      }
+
+      previousTimelineMetricsRef.current = undefined
+      pendingScrollModeRef.current = 'none'
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [history])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void loadChatsList(true)
+      if (selectedChatId) {
+        void loadHistory(selectedChatId, true)
+      }
+    }, 5000)
 
     return () => {
-      active = false
+      window.clearInterval(timer)
     }
-  }, [selectedChatId])
+  }, [loadChatsList, loadHistory, selectedChatId])
 
   async function loadMoreMessages() {
     if (!selectedChatId || !history?.next_before) {
       return
     }
 
+    if (timelineRef.current) {
+      previousTimelineMetricsRef.current = {
+        scrollHeight: timelineRef.current.scrollHeight,
+        scrollTop: timelineRef.current.scrollTop,
+      }
+    }
+    pendingScrollModeRef.current = 'preserve'
     setHistoryLoading(true)
     setError(undefined)
 
@@ -287,7 +335,7 @@ export function ChatsPage() {
                 </button>
               ) : null}
 
-              <div className="message-timeline">
+              <div ref={timelineRef} className="message-timeline">
                 {history.messages.map((message) => (
                   <article key={message.id} className={`message-card${message.from_me ? ' own' : ''}`}>
                     <div className="message-meta">
@@ -297,13 +345,68 @@ export function ChatsPage() {
                     <p>{message.text_content || fallbackMessageCopy(message.message_type)}</p>
 
                     {message.media.length > 0 ? (
-                      <div className="media-chip-list">
-                        {message.media.map((media) => (
-                          <span key={media.id} className="media-chip">
-                            {media.media_type}
-                            {media.file_name ? ` · ${media.file_name}` : ''}
-                          </span>
-                        ))}
+                      <div className="media-block-list">
+                        {message.media.map((media) => {
+                          const mediaUrl = getMediaAssetUrl(media.id)
+                          const label = media.file_name || media.media_type
+
+                          if (
+                            (media.media_type === 'image' || media.media_type === 'sticker') &&
+                            media.download_status === 'ready'
+                          ) {
+                            return (
+                              <figure key={media.id} className="media-preview-card">
+                                <img
+                                  className={`media-preview-image${media.media_type === 'sticker' ? ' sticker' : ''}`}
+                                  src={mediaUrl}
+                                  alt={label}
+                                  loading="lazy"
+                                />
+                                <figcaption>{label}</figcaption>
+                              </figure>
+                            )
+                          }
+
+                          if (media.media_type === 'video' && media.download_status === 'ready') {
+                            return (
+                              <figure key={media.id} className="media-preview-card">
+                                <video className="media-preview-video" src={mediaUrl} controls preload="metadata" />
+                                <figcaption>{label}</figcaption>
+                              </figure>
+                            )
+                          }
+
+                          if (media.media_type === 'audio' && media.download_status === 'ready') {
+                            return (
+                              <figure key={media.id} className="media-preview-card">
+                                <audio className="media-preview-audio" src={mediaUrl} controls preload="metadata" />
+                                <figcaption>{label}</figcaption>
+                              </figure>
+                            )
+                          }
+
+                          if (media.download_status === 'ready') {
+                            return (
+                              <a
+                                key={media.id}
+                                className="media-link"
+                                href={mediaUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                打开附件 · {label}
+                              </a>
+                            )
+                          }
+
+                          return (
+                            <span key={media.id} className={`media-chip status-${media.download_status}`}>
+                              {media.media_type}
+                              {media.file_name ? ` · ${media.file_name}` : ''}
+                              {media.download_status === 'failed' ? ' · 下载失败' : ' · 下载中'}
+                            </span>
+                          )
+                        })}
                       </div>
                     ) : null}
                   </article>
@@ -322,6 +425,15 @@ export function ChatsPage() {
       {error ? <div className="error-banner">{error}</div> : null}
     </div>
   )
+}
+
+function isNearBottom(element: HTMLDivElement | null) {
+  if (!element) {
+    return true
+  }
+
+  const distance = element.scrollHeight - element.scrollTop - element.clientHeight
+  return distance < 56
 }
 
 function formatDateTime(value?: string) {

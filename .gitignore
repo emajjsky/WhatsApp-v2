@@ -10,6 +10,14 @@ data/
 web/node_modules/
 web/dist/
 
+# Local toolchains and caches
+.cache/
+.tools/
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+
 # Local reference repositories
 refer/
 

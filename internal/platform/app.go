@@ -2,16 +2,20 @@ package platform
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	"whatsapp-agent-platform/internal/accounts"
+	"whatsapp-agent-platform/internal/audit"
 	"whatsapp-agent-platform/internal/agents"
 	"whatsapp-agent-platform/internal/chats"
 	"whatsapp-agent-platform/internal/config"
 	"whatsapp-agent-platform/internal/exports"
+	"whatsapp-agent-platform/internal/health"
+	"whatsapp-agent-platform/internal/ingest"
 	"whatsapp-agent-platform/internal/sessions"
 	"whatsapp-agent-platform/internal/storage"
 )
@@ -35,8 +39,9 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	var (
-		database *storage.Postgres
-		deps     RouteDependencies
+		database       *storage.Postgres
+		sessionManager *sessions.Manager
+		deps           RouteDependencies
 	)
 
 	if cfg.Database.DSN != "" {
@@ -71,11 +76,37 @@ func New(cfg config.Config) (*App, error) {
 			return nil, err
 		}
 
-		sessionManager := sessions.NewManager(
-			sessions.NewPlaceholderConnector(logger),
+		realConnector, err := sessions.NewWhatsmeowConnector(
+			database.DB(),
+			credentialStore,
+			accountPhoneLookup{repository: accountRepo},
+			cfg.Integrations.WhatsAppProxyURL,
+			logger,
+		)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		sessionManager = sessions.NewManager(
+			realConnector,
 			credentialStore,
 			logger,
 		)
+
+		ingestRepo, err := ingest.NewRepository(database.DB())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		ingestService, err := ingest.NewService(ingestRepo, nil)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		sessionManager.SetEventBridge(sessions.NewEventBridge(ingestService, accountRepo, logger))
 
 		accountService, err := accounts.NewService(accountRepo, sessionManager)
 		if err != nil {
@@ -143,13 +174,43 @@ func New(cfg config.Config) (*App, error) {
 			return nil, err
 		}
 
+		auditService, err := audit.NewService(database.DB(), logger)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		auditHandler, err := audit.NewHandler(auditService)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
+		accountHandler.SetAuditRecorder(auditService)
+		exportHandler.SetAuditRecorder(auditService)
+		agentHandler.SetAuditRecorder(auditService)
+
+		existingAccounts, err := accountRepo.List(context.Background())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+		for _, account := range existingAccounts {
+			if restoreErr := sessionManager.Restore(context.Background(), account.ID); restoreErr != nil {
+				logger.Warn("failed to restore whatsapp session", "account_id", account.ID, "error", restoreErr)
+			}
+		}
+
 		deps.AccountHandler = accountHandler
+		deps.AuditHandler = auditHandler
 		deps.ChatHandler = chatHandler
 		deps.ExportHandler = exportHandler
 		deps.AgentHandler = agentHandler
 	} else {
 		logger.Warn("database is not configured; account, chat, export, and agent APIs are disabled")
 	}
+
+	deps.HealthService = health.NewService(cfg, databaseSQL(database), sessionManager)
 
 	router := NewRouter(cfg, logger, deps)
 	httpServer := NewHTTPServer(cfg, router, logger)
@@ -165,6 +226,31 @@ func New(cfg config.Config) (*App, error) {
 	app.logger.Info("application assembled", "http_addr", cfg.HTTP.Address())
 
 	return app, nil
+}
+
+func databaseSQL(database *storage.Postgres) *sql.DB {
+	if database == nil {
+		return nil
+	}
+
+	return database.DB()
+}
+
+type accountPhoneLookup struct {
+	repository *accounts.Repository
+}
+
+func (l accountPhoneLookup) LookupPhone(ctx context.Context, accountID string) (*string, error) {
+	if l.repository == nil {
+		return nil, fmt.Errorf("account repository is not configured")
+	}
+
+	account, err := l.repository.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	return account.PhoneNumber, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
