@@ -12,14 +12,6 @@ export function AppShell() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand-card">
-          <p className="eyebrow">WhatsApp 工作台</p>
-          <h1>对话台</h1>
-          <p className="brand-copy">
-            给新手员工准备的日常操作台。先连账号，再看聊天，再决定是否导出或交给 Agent。
-          </p>
-        </div>
-
         <nav className="nav-list" aria-label="主导航">
           {navItems.map((item) => (
             <NavLink

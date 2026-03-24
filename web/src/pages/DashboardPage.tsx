@@ -6,7 +6,6 @@ import {
   type SystemHealthResponse,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
-import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 
 interface DashboardState {
@@ -29,19 +28,6 @@ function formatComponentName(name: string) {
       return '审计留痕'
     default:
       return name
-  }
-}
-
-function formatSystemStatus(status?: SystemHealthResponse['status']) {
-  switch (status) {
-    case 'ok':
-      return '在线'
-    case 'degraded':
-      return '降级运行'
-    case 'down':
-      return '异常'
-    default:
-      return '待连接'
   }
 }
 
@@ -107,18 +93,6 @@ export function DashboardPage() {
 
   return (
     <div className="page-grid">
-      <PageHeader
-        eyebrow="首页总览"
-        title="先看全局，再开始今天的操作"
-        description="现在首页会把数据库、会话连接、导出、Agent Runner 和审计留痕的状态一起告诉你，先判断系统稳不稳，再决定今天怎么操作。"
-        aside={
-          <div className="header-meta-card">
-            <span>系统状态</span>
-            <strong>{formatSystemStatus(state.systemHealth?.status)}</strong>
-          </div>
-        }
-      />
-
       <section className="hero-strip">
         <div className="hero-copy">
           <p className="eyebrow">今日流程</p>

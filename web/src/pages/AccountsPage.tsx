@@ -10,7 +10,6 @@ import {
   type PairingMethod,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
-import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 
 const initialForm = {
@@ -166,12 +165,6 @@ export function AccountsPage() {
 
   return (
     <div className="page-grid">
-      <PageHeader
-        eyebrow="账号接入"
-        title="先把账号卡片建好，再做后面的事"
-        description="现在这里会持续轮询账号状态。点完配对后，不用手动狂点刷新，页面会自己把二维码、配对码、失败原因和连接结果刷出来。"
-      />
-
       <section className="two-column-grid account-layout">
         <article className="panel">
           <p className="eyebrow">第一步</p>

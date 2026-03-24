@@ -9,7 +9,6 @@ import {
   type ExportJobView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
-import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 
 const formatCards: Array<{ title: ExportFormat; description: string }> = [
@@ -90,12 +89,6 @@ export function ExportsPage() {
 
   return (
     <div className="page-grid">
-      <PageHeader
-        eyebrow="导出中心"
-        title="把聊天整理成可下载产物"
-        description="这里先支持按单个聊天发起导出任务。新手员工只需要选聊天、选格式，再决定要不要带媒体信息。"
-      />
-
       <section className="two-column-grid">
         <article className="panel">
           <p className="eyebrow">创建导出</p>

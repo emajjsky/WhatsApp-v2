@@ -15,7 +15,6 @@ import {
   type ChatSummary,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
-import { PageHeader } from '../components/PageHeader'
 import { RuleEditor, type RuleEditorValue } from '../components/RuleEditor'
 import { StatusBadge } from '../components/StatusBadge'
 
@@ -275,25 +274,12 @@ export function AgentsPage() {
     }
   }
 
-  const enabledRuleCount = rules.filter((rule) => rule.enabled).length
   const autoSendRuleCount = rules.filter((rule) => rule.reply_mode === 'auto_send').length
   const blockedRunCount = runs.filter((run) => run.status === 'blocked').length
   const accountNameMap = new Map(accounts.map((account) => [account.id, account.display_name]))
 
   return (
     <div className="page-grid">
-      <PageHeader
-        eyebrow="Agent 规则"
-        title="先把回复边界写清楚，再决定要不要让系统自己发"
-        description="这里已经能创建规则、启停规则、查看运行记录。页面默认偏保守，尽量避免新手员工一上来就把自动发送开到飞起。后端也预留了 agent_runner 服务，方便后续把真实草稿生成和拦截判定接进来。"
-        aside={
-          <div className="header-meta-card">
-            <span>已启用规则</span>
-            <strong>{loading ? '...' : enabledRuleCount}</strong>
-          </div>
-        }
-      />
-
       <section className="hero-strip">
         <div className="hero-copy">
           <p className="eyebrow">推荐顺序</p>

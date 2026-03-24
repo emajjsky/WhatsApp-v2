@@ -188,34 +188,27 @@ func (c *WhatsmeowConnector) Restore(ctx context.Context, accountID string) erro
 
 func (c *WhatsmeowConnector) Status(ctx context.Context, accountID string) (SessionSnapshot, error) {
 	session, found := c.getSession(accountID)
-	if !found {
-		deviceID, err := c.loadDeviceBinding(ctx, accountID)
-		if err != nil {
-			return SessionSnapshot{}, err
-		}
-		if deviceID == nil {
-			return SessionSnapshot{}, ErrSessionNotFound
-		}
-		session, err = c.ensureSession(ctx, accountID)
-		if err != nil {
-			return SessionSnapshot{}, err
-		}
+	if found {
+		return session.snapshot, nil
 	}
 
-	snapshot := session.snapshot
-	if session.client.IsConnected() && session.client.IsLoggedIn() {
-		snapshot.Status = "connected"
-		snapshot.Pairing = nil
-		if snapshot.ConnectedAt == nil {
-			now := c.now()
-			snapshot.ConnectedAt = &now
-		}
-		snapshot.LastError = ""
-		snapshot.UpdatedAt = c.now()
-		c.setSnapshot(accountID, snapshot)
+	deviceID, err := c.loadDeviceBinding(ctx, accountID)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+	if deviceID == nil {
+		return SessionSnapshot{}, ErrSessionNotFound
 	}
 
-	return snapshot, nil
+	// Keep account list/status reads non-blocking. A persisted device binding means this
+	// account had a real session before, but we intentionally avoid spinning up or probing
+	// a whatsmeow client from a read path because that can stall the whole /api/accounts
+	// response when live protocol handling is busy.
+	return SessionSnapshot{
+		AccountID: accountID,
+		Status:    "disconnected",
+		UpdatedAt: c.now(),
+	}, nil
 }
 
 func (c *WhatsmeowConnector) Logout(ctx context.Context, accountID string) error {
