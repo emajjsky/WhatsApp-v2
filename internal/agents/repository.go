@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -279,6 +280,17 @@ WHERE id = $1`
 	return ensureAffected(result, id)
 }
 
+func (r *Repository) DeleteRule(ctx context.Context, id string) error {
+	const query = `DELETE FROM agent_rules WHERE id = $1`
+
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("delete agent rule %q: %w", id, err)
+	}
+
+	return ensureAffected(result, id)
+}
+
 func (r *Repository) CreateRun(ctx context.Context, run AgentRun) error {
 	if len(run.InputContext) == 0 {
 		run.InputContext = json.RawMessage(`{}`)
@@ -346,6 +358,122 @@ WHERE id = $1`
 	}
 
 	return ensureAffected(result, id)
+}
+
+func (r *Repository) GetRunIDByRuleAndTriggerMessage(ctx context.Context, ruleID, triggerMessageID string) (string, error) {
+	const query = `
+SELECT id
+FROM agent_runs
+WHERE rule_id = $1 AND trigger_message_id = $2
+ORDER BY created_at DESC, id DESC
+LIMIT 1`
+
+	var runID string
+	if err := r.db.QueryRowContext(ctx, query, ruleID, triggerMessageID).Scan(&runID); err != nil {
+		return "", fmt.Errorf("get agent run id for rule %q and trigger message %q: %w", ruleID, triggerMessageID, err)
+	}
+
+	return runID, nil
+}
+
+func (r *Repository) CountSentRunsSince(ctx context.Context, ruleID, chatID string, since time.Time) (int, error) {
+	const query = `
+SELECT COUNT(*)
+FROM agent_runs
+WHERE rule_id = $1
+  AND chat_id = $2
+  AND status = 'sent'
+  AND created_at >= $3`
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query, ruleID, chatID, since).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count sent agent runs for rule %q: %w", ruleID, err)
+	}
+
+	return count, nil
+}
+
+func (r *Repository) GetLastSentRunAt(ctx context.Context, ruleID, chatID string) (*time.Time, error) {
+	const query = `
+SELECT created_at
+FROM agent_runs
+WHERE rule_id = $1
+  AND chat_id = $2
+  AND status = 'sent'
+ORDER BY created_at DESC, id DESC
+LIMIT 1`
+
+	var createdAt time.Time
+	if err := r.db.QueryRowContext(ctx, query, ruleID, chatID).Scan(&createdAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get last sent agent run for rule %q: %w", ruleID, err)
+	}
+
+	return &createdAt, nil
+}
+
+func (r *Repository) GetRunViewByID(ctx context.Context, id string) (RunView, error) {
+	const query = `
+SELECT
+    ar.id,
+    ar.rule_id,
+    rules.name,
+    ar.account_id,
+    ar.chat_id,
+    chats.title,
+    chats.wa_chat_jid,
+    ar.trigger_message_id,
+    trigger_message.text_content,
+    ar.status,
+    ar.output_draft,
+    ar.block_reason,
+    ar.created_at,
+    ar.completed_at
+FROM agent_runs ar
+JOIN agent_rules rules ON rules.id = ar.rule_id
+LEFT JOIN chats ON chats.id = ar.chat_id
+LEFT JOIN messages trigger_message ON trigger_message.id = ar.trigger_message_id
+WHERE ar.id = $1`
+
+	var (
+		item           RunView
+		chatTitle      sql.NullString
+		waChatJID      sql.NullString
+		triggerPreview sql.NullString
+		outputDraft    sql.NullString
+		blockReason    sql.NullString
+		completedAt    sql.NullTime
+	)
+
+	if err := r.db.QueryRowContext(ctx, query, id).Scan(
+		&item.ID,
+		&item.RuleID,
+		&item.RuleName,
+		&item.AccountID,
+		&item.ChatID,
+		&chatTitle,
+		&waChatJID,
+		&item.TriggerMessageID,
+		&triggerPreview,
+		&item.Status,
+		&outputDraft,
+		&blockReason,
+		&item.CreatedAt,
+		&completedAt,
+	); err != nil {
+		return RunView{}, fmt.Errorf("get agent run %q: %w", id, err)
+	}
+
+	item.ChatTitle = nullableString(chatTitle)
+	item.WAChatJID = nullableString(waChatJID)
+	item.TriggerPreview = nullableString(triggerPreview)
+	item.OutputDraft = nullableString(outputDraft)
+	item.BlockReason = nullableString(blockReason)
+	item.CompletedAt = nullableTime(completedAt)
+
+	return item, nil
 }
 
 func (r *Repository) ListRuns(ctx context.Context, filters RunListFilters) ([]RunView, int, error) {
@@ -458,7 +586,7 @@ func buildRuleWhere(filters RuleListFilters) (string, []any) {
 
 func buildRunWhere(filters RunListFilters) (string, []any) {
 	conditions := []string{"1 = 1"}
-	args := make([]any, 0, 3)
+	args := make([]any, 0, 4)
 
 	if filters.AccountID != "" {
 		args = append(args, filters.AccountID)
@@ -467,6 +595,10 @@ func buildRunWhere(filters RunListFilters) (string, []any) {
 	if filters.RuleID != "" {
 		args = append(args, filters.RuleID)
 		conditions = append(conditions, fmt.Sprintf("ar.rule_id = $%d", len(args)))
+	}
+	if filters.ChatID != "" {
+		args = append(args, filters.ChatID)
+		conditions = append(conditions, fmt.Sprintf("ar.chat_id = $%d", len(args)))
 	}
 	if filters.Status != "" {
 		args = append(args, filters.Status)

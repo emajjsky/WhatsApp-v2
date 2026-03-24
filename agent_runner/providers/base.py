@@ -112,6 +112,10 @@ def build_provider(config: Mapping[str, Any] | None) -> BaseProvider:
     if provider_type == "static":
         response_text = str((config or {}).get("response") or "").strip()
         return StaticProvider(response_text)
+    if provider_type in {"openai_compatible", "openaicompatible", "openai-compatible", "openai"}:
+        from .openai_compatible import OpenAICompatibleProvider
+
+        return OpenAICompatibleProvider(config)
 
     raise ProviderError(f"unsupported provider type: {provider_type}")
 
@@ -120,4 +124,5 @@ def available_providers() -> list[dict[str, str]]:
     return [
         {"type": "mock", "description": "Built-in deterministic draft provider for local development"},
         {"type": "static", "description": "Return a fixed templated response supplied in the request"},
+        {"type": "openai_compatible", "description": "Call an OpenAI-compatible /v1/chat/completions endpoint"},
     ]

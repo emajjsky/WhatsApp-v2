@@ -218,6 +218,19 @@ func (s *Service) SetRuleEnabled(ctx context.Context, ruleID string, enabled boo
 	return mapRuleToView(stored), nil
 }
 
+func (s *Service) DeleteRule(ctx context.Context, ruleID string) (RuleView, error) {
+	rule, err := s.repository.GetRuleByID(ctx, strings.TrimSpace(ruleID))
+	if err != nil {
+		return RuleView{}, mapRuleError(ruleID, err)
+	}
+
+	if err := s.repository.DeleteRule(ctx, rule.ID); err != nil {
+		return RuleView{}, mapRuleError(ruleID, err)
+	}
+
+	return mapRuleToView(rule), nil
+}
+
 func (s *Service) ListRuns(ctx context.Context, filters RunListFilters) (RunListResult, error) {
 	limit := filters.Limit
 	if limit <= 0 {
@@ -240,6 +253,7 @@ func (s *Service) ListRuns(ctx context.Context, filters RunListFilters) (RunList
 	items, total, err := s.repository.ListRuns(ctx, RunListFilters{
 		AccountID: strings.TrimSpace(filters.AccountID),
 		RuleID:    strings.TrimSpace(filters.RuleID),
+		ChatID:    strings.TrimSpace(filters.ChatID),
 		Status:    status,
 		Limit:     limit,
 		Offset:    offset,

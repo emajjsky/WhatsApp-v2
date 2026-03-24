@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import {
+  deleteAgentRule,
   disableAgentRule,
   enableAgentRule,
   listAccounts,
@@ -48,19 +49,19 @@ function mapRuleToDraft(rule: AgentRuleView): RuleEditorValue {
     name: rule.name,
     enabled: rule.enabled,
     replyMode: rule.reply_mode,
-    scopeChatTypes: rule.scope_filter.chat_types,
-    scopeChatIds: rule.scope_filter.chat_ids,
-    triggerKeywordsText: rule.trigger_filter.keywords.join('\n'),
+    scopeChatTypes: (rule.scope_filter.chat_types ?? []),
+    scopeChatIds: (rule.scope_filter.chat_ids ?? []),
+    triggerKeywordsText: (rule.trigger_filter.keywords ?? []).join('\n'),
     matchMode: rule.trigger_filter.match_mode,
     ignoreFromMe: rule.trigger_filter.ignore_from_me,
-    minMessageChars: rule.trigger_filter.min_message_chars,
+    minMessageChars: rule.trigger_filter.min_message_chars ?? 0,
     cooldownSeconds: rule.cooldown_seconds,
     maxAutoRepliesPerThread: rule.max_auto_replies_per_thread,
-    blockedKeywordsText: rule.blacklist_filter.blocked_keywords.join('\n'),
-    sensitiveTopicsText: rule.blacklist_filter.sensitive_topics.join('\n'),
+    blockedKeywordsText: (rule.blacklist_filter.blocked_keywords ?? []).join('\n'),
+    sensitiveTopicsText: (rule.blacklist_filter.sensitive_topics ?? []).join('\n'),
     promptTemplate: rule.prompt_template,
     knowledgeSummary: rule.knowledge_binding?.summary ?? '',
-    knowledgeReferencesText: rule.knowledge_binding?.references.join('\n') ?? '',
+    knowledgeReferencesText: rule.knowledge_binding?.references?.join('\n') ?? '',
   }
 }
 
@@ -232,6 +233,26 @@ export function AgentsPage() {
     }
   }
 
+  async function handleDeleteRule(rule: AgentRuleView) {
+    setError(undefined)
+    setNotice(undefined)
+
+    const confirmed = window.confirm(
+      `确定要删除规则「${rule.name}」吗？\n\n删除后将同时删除该规则的运行记录，且不可恢复。`,
+    )
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      await deleteAgentRule(rule.id)
+      await loadData()
+      setNotice(`已删除规则：${rule.name}`)
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : '删除规则失败')
+    }
+  }
+
   function handleCreateRule() {
     setSelectedRuleId('new')
     setDraft(createEmptyDraft(accounts[0]?.id ?? ''))
@@ -360,7 +381,7 @@ export function AgentsPage() {
                       </div>
 
                       <p className="subtle-text">
-                        关键词 {rule.trigger_filter.keywords.length} 个，固定聊天 {rule.scope_filter.chat_ids.length} 个，
+                        关键词 {(rule.trigger_filter.keywords ?? []).length} 个，固定聊天 {(rule.scope_filter.chat_ids ?? []).length} 个，
                         更新于 {formatDateTime(rule.updated_at)}
                       </p>
                     </button>
@@ -372,6 +393,13 @@ export function AgentsPage() {
                         onClick={() => void handleToggleRule(rule)}
                       >
                         {rule.enabled ? '停用规则' : '启用规则'}
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        onClick={() => void handleDeleteRule(rule)}
+                      >
+                        删除规则
                       </button>
                     </div>
                   </article>

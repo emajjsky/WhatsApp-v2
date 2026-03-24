@@ -51,6 +51,15 @@ type Connector interface {
 	Logout(ctx context.Context, accountID string) error
 }
 
+type SendResult struct {
+	WAMessageID string
+	SentAt      time.Time
+}
+
+type messageSender interface {
+	SendText(ctx context.Context, accountID, chatJID, text string) (SendResult, error)
+}
+
 type Manager struct {
 	connector       Connector
 	credentialStore *CredentialStoreAdapter
@@ -294,6 +303,76 @@ func (c *PlaceholderConnector) Logout(_ context.Context, accountID string) error
 	})
 
 	return nil
+}
+
+func (c *PlaceholderConnector) SendText(_ context.Context, accountID, chatJID, text string) (SendResult, error) {
+	trimmedChat := strings.TrimSpace(chatJID)
+	if trimmedChat == "" {
+		return SendResult{}, fmt.Errorf("chat_jid is required")
+	}
+	trimmedText := strings.TrimSpace(text)
+	if trimmedText == "" {
+		return SendResult{}, fmt.Errorf("text must not be empty")
+	}
+
+	c.mu.RLock()
+	snapshot, ok := c.sessions[accountID]
+	c.mu.RUnlock()
+	if !ok {
+		return SendResult{}, ErrSessionNotFound
+	}
+	if snapshot.Status != "connected" {
+		return SendResult{}, fmt.Errorf("session is not connected")
+	}
+
+	messageID, err := randomToken(8)
+	if err != nil {
+		return SendResult{}, err
+	}
+
+	now := c.now()
+	event := Event{
+		Type:      EventTypeMessageReceived,
+		AccountID: accountID,
+		EmittedAt: now,
+		Message: &MessageEnvelope{
+			Chat: ingest.ChatSnapshot{
+				AccountID:     accountID,
+				WAChatJID:     trimmedChat,
+				ChatType:      ingest.ChatTypeDirect,
+				LastMessageAt: &now,
+			},
+			Message: ingest.MessageInput{
+				AccountID:   accountID,
+				WAMessageID: strings.ToUpper(messageID),
+				SenderJID:   "me@wa",
+				FromMe:      true,
+				MessageType: ingest.MessageTypeText,
+				TextContent: stringPointer(trimmedText),
+				SentAt:      now,
+			},
+			Payload: map[string]any{
+				"source": "placeholder-connector",
+				"text":   trimmedText,
+			},
+		},
+	}
+
+	c.emit(event)
+
+	return SendResult{
+		WAMessageID: strings.ToUpper(messageID),
+		SentAt:      now,
+	}, nil
+}
+
+func (m *Manager) SendText(ctx context.Context, accountID, chatJID, text string) (SendResult, error) {
+	sender, ok := m.connector.(messageSender)
+	if !ok {
+		return SendResult{}, fmt.Errorf("session connector does not support sending messages")
+	}
+
+	return sender.SendText(ctx, accountID, chatJID, text)
 }
 
 func (c *PlaceholderConnector) SetEventHandler(handler func(Event)) {

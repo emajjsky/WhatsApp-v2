@@ -9,8 +9,8 @@ import (
 	"net/http"
 
 	"whatsapp-agent-platform/internal/accounts"
-	"whatsapp-agent-platform/internal/audit"
 	"whatsapp-agent-platform/internal/agents"
+	"whatsapp-agent-platform/internal/audit"
 	"whatsapp-agent-platform/internal/chats"
 	"whatsapp-agent-platform/internal/config"
 	"whatsapp-agent-platform/internal/exports"
@@ -21,11 +21,12 @@ import (
 )
 
 type App struct {
-	cfg        config.Config
-	logger     *slog.Logger
-	router     http.Handler
-	httpServer *http.Server
-	database   *storage.Postgres
+	cfg             config.Config
+	logger          *slog.Logger
+	router          http.Handler
+	httpServer      *http.Server
+	database        *storage.Postgres
+	agentAutomation *agents.Automation
 }
 
 func New(cfg config.Config) (*App, error) {
@@ -39,9 +40,10 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	var (
-		database       *storage.Postgres
-		sessionManager *sessions.Manager
-		deps           RouteDependencies
+		database        *storage.Postgres
+		sessionManager  *sessions.Manager
+		deps            RouteDependencies
+		agentAutomation *agents.Automation
 	)
 
 	if cfg.Database.DSN != "" {
@@ -174,6 +176,21 @@ func New(cfg config.Config) (*App, error) {
 			return nil, err
 		}
 
+		runnerClient := agents.NewRunnerClient(cfg.Integrations.AgentRunnerBaseURL)
+		agentAutomation, err = agents.NewAutomation(
+			agentRepo,
+			chatRepo,
+			sessionManager,
+			runnerClient,
+			cfg.Integrations.AgentAutoSendEnabled,
+			logger,
+		)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+		agentHandler.SetAutomation(agentAutomation)
+
 		auditService, err := audit.NewService(database.DB(), logger)
 		if err != nil {
 			_ = database.Close()
@@ -216,11 +233,12 @@ func New(cfg config.Config) (*App, error) {
 	httpServer := NewHTTPServer(cfg, router, logger)
 
 	app := &App{
-		cfg:        cfg,
-		logger:     logger,
-		router:     router,
-		httpServer: httpServer,
-		database:   database,
+		cfg:             cfg,
+		logger:          logger,
+		router:          router,
+		httpServer:      httpServer,
+		database:        database,
+		agentAutomation: agentAutomation,
 	}
 
 	app.logger.Info("application assembled", "http_addr", cfg.HTTP.Address())
@@ -256,6 +274,10 @@ func (l accountPhoneLookup) LookupPhone(ctx context.Context, accountID string) (
 func (a *App) Run(ctx context.Context) error {
 	if a.httpServer == nil {
 		return fmt.Errorf("http server is not initialized")
+	}
+
+	if a.agentAutomation != nil {
+		go a.agentAutomation.Run(ctx)
 	}
 
 	serverErrCh := make(chan error, 1)

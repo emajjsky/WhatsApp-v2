@@ -10,8 +10,11 @@ import {
   getChatMessages,
   getMediaAssetUrl,
   listAccounts,
+  listAgentRuns,
   listChats,
+  sendAgentRun,
   type AccountView,
+  type AgentRunView,
   type ChatSummary,
   type ChatType,
   type MessageHistoryResponse,
@@ -37,6 +40,11 @@ export function ChatsPage() {
   const deferredSearch = useDeferredValue(search)
   const [selectedChatId, setSelectedChatId] = useState<string>()
   const [history, setHistory] = useState<MessageHistoryResponse>()
+  const [draftRun, setDraftRun] = useState<AgentRunView>()
+  const [draftText, setDraftText] = useState('')
+  const [draftLoading, setDraftLoading] = useState(false)
+  const [draftSending, setDraftSending] = useState(false)
+  const [draftError, setDraftError] = useState<string>()
   const [listLoading, setListLoading] = useState(true)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [error, setError] = useState<string>()
@@ -45,6 +53,7 @@ export function ChatsPage() {
   const previousTimelineMetricsRef = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(
     undefined,
   )
+  const draftRunIdRef = useRef<string | undefined>(undefined)
 
   const loadAccountsList = useCallback(async () => {
     try {
@@ -131,6 +140,49 @@ export function ChatsPage() {
     [],
   )
 
+  const loadDraftRun = useCallback(async (chatId: string | undefined, background = false) => {
+    if (!chatId) {
+      setDraftRun(undefined)
+      setDraftText('')
+      setDraftError(undefined)
+      draftRunIdRef.current = undefined
+      return
+    }
+
+    if (!background) {
+      setDraftLoading(true)
+      setDraftError(undefined)
+    }
+
+    try {
+      const response = await listAgentRuns({ chatId, status: 'ready_for_review', limit: 1 })
+      const run = response.runs[0]
+      setDraftRun(run)
+
+      if (!run) {
+        setDraftText('')
+        draftRunIdRef.current = undefined
+        return
+      }
+
+      if (draftRunIdRef.current !== run.id) {
+        setDraftText(run.output_draft ?? '')
+        draftRunIdRef.current = run.id
+      }
+    } catch (loadError) {
+      if (!background) {
+        setDraftRun(undefined)
+        setDraftText('')
+        setDraftError(loadError instanceof Error ? loadError.message : '加载草稿失败')
+        draftRunIdRef.current = undefined
+      }
+    } finally {
+      if (!background) {
+        setDraftLoading(false)
+      }
+    }
+  }, [])
+
   useEffect(() => {
     void loadAccountsList()
   }, [loadAccountsList])
@@ -142,11 +194,13 @@ export function ChatsPage() {
   useEffect(() => {
     if (!selectedChatId) {
       setHistory(undefined)
+      void loadDraftRun(undefined)
       return
     }
 
     void loadHistory(selectedChatId)
-  }, [loadHistory, selectedChatId])
+    void loadDraftRun(selectedChatId)
+  }, [loadDraftRun, loadHistory, selectedChatId])
 
   useEffect(() => {
     const timeline = timelineRef.current
@@ -183,13 +237,39 @@ export function ChatsPage() {
       void loadChatsList(true)
       if (selectedChatId) {
         void loadHistory(selectedChatId, true)
+        void loadDraftRun(selectedChatId, true)
       }
     }, 5000)
 
     return () => {
       window.clearInterval(timer)
     }
-  }, [loadChatsList, loadHistory, selectedChatId])
+  }, [loadChatsList, loadDraftRun, loadHistory, selectedChatId])
+
+  async function handleSendDraft() {
+    if (!selectedChatId || !draftRun) {
+      return
+    }
+
+    const messageText = draftText.trim()
+    if (!messageText) {
+      setDraftError('草稿内容为空')
+      return
+    }
+
+    setDraftSending(true)
+    setDraftError(undefined)
+
+    try {
+      await sendAgentRun(draftRun.id, { message_text: messageText })
+      await loadHistory(selectedChatId, true)
+      await loadDraftRun(selectedChatId, true)
+    } catch (sendError) {
+      setDraftError(sendError instanceof Error ? sendError.message : '发送草稿失败')
+    } finally {
+      setDraftSending(false)
+    }
+  }
 
   async function loadMoreMessages() {
     if (!selectedChatId || !history?.next_before) {
@@ -328,6 +408,49 @@ export function ChatsPage() {
                   <span>{history.messages.length} 条已加载消息</span>
                 </div>
               </div>
+
+              <section className="panel highlight-panel agent-draft-panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Agent 草稿</p>
+                    <h3>建议回复</h3>
+                  </div>
+                  <span className="subtle-text">
+                    {draftLoading ? '生成中...' : draftRun ? `规则：${draftRun.rule_name}` : '暂无草稿'}
+                  </span>
+                </div>
+
+                {draftRun ? (
+                  <div className="detail-stack">
+                    <label className="field">
+                      <span>草稿内容</span>
+                      <textarea
+                        value={draftText}
+                        onChange={(event) => setDraftText(event.target.value)}
+                        rows={4}
+                        placeholder="等 Agent 生成草稿后，这里会出现可编辑的回复内容。"
+                      />
+                    </label>
+
+                    <div className="button-row">
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() => void handleSendDraft()}
+                        disabled={draftSending || draftLoading || !draftText.trim()}
+                      >
+                        {draftSending ? '发送中...' : '一键发送'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="subtle-text">
+                    没有可发送草稿。等客户发新消息并命中 Agent 规则后，这里会自动出现建议回复。
+                  </p>
+                )}
+
+                {draftError ? <div className="error-banner">{draftError}</div> : null}
+              </section>
 
               {history.has_more ? (
                 <button className="secondary-button align-start" type="button" onClick={() => void loadMoreMessages()}>

@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	"whatsapp-agent-platform/internal/support/ids"
 	"whatsapp-agent-platform/internal/storage"
+	"whatsapp-agent-platform/internal/support/ids"
 )
 
 type Repository struct {
@@ -79,11 +79,11 @@ INSERT INTO chats (
 ON CONFLICT (account_id, wa_chat_jid)
 DO UPDATE SET
     chat_type = EXCLUDED.chat_type,
-    title = EXCLUDED.title,
-    participant_count = EXCLUDED.participant_count,
+    title = COALESCE(EXCLUDED.title, chats.title),
+    participant_count = COALESCE(EXCLUDED.participant_count, chats.participant_count),
     archived = EXCLUDED.archived,
-    muted_until = EXCLUDED.muted_until,
-    last_message_at = EXCLUDED.last_message_at,
+    muted_until = COALESCE(EXCLUDED.muted_until, chats.muted_until),
+    last_message_at = COALESCE(EXCLUDED.last_message_at, chats.last_message_at),
     updated_at = NOW()
 RETURNING id`
 

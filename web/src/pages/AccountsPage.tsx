@@ -2,6 +2,7 @@ import QRCode from 'qrcode'
 import { type FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   createAccount,
+  deleteAccount,
   listAccounts,
   logoutAccount,
   startPairing,
@@ -129,11 +130,26 @@ export function AccountsPage() {
     }
   }
 
-  async function runAccountAction(accountId: string, method: PairingMethod | 'logout') {
+  async function runAccountAction(accountId: string, method: PairingMethod | 'logout' | 'delete') {
     setBusyAccountId(accountId)
     setError(undefined)
 
     try {
+      if (method === 'delete') {
+        const account = accounts.find((item) => item.id === accountId)
+        const name = account?.display_name ?? accountId
+        const confirmed = window.confirm(
+          `确定要删除账号「${name}」吗？\n\n这会同时删除该账号的会话凭据、聊天记录、导出任务、Agent 规则与运行记录。`,
+        )
+        if (!confirmed) {
+          return
+        }
+
+        await deleteAccount(accountId)
+        await loadAccounts(undefined)
+        return
+      }
+
       if (method === 'logout') {
         await logoutAccount(accountId)
       } else {
@@ -244,6 +260,14 @@ export function AccountsPage() {
                     onClick={() => void runAccountAction(selectedAccount.id, 'logout')}
                   >
                     退出登录
+                  </button>
+                  <button
+                    className="danger-button"
+                    type="button"
+                    disabled={busyAccountId === selectedAccount.id}
+                    onClick={() => void runAccountAction(selectedAccount.id, 'delete')}
+                  >
+                    删除账号
                   </button>
                 </div>
               </div>

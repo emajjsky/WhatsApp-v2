@@ -10,14 +10,14 @@ import (
 )
 
 type Account struct {
-	ID           string
-	DisplayName  string
-	PhoneNumber  *string
-	Status       string
+	ID            string
+	DisplayName   string
+	PhoneNumber   *string
+	Status        string
 	PlatformLabel *string
-	LastSeenAt   *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	LastSeenAt    *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type Repository struct {
@@ -175,8 +175,17 @@ WHERE id = $1`
 func (r *Repository) Delete(ctx context.Context, id string) error {
 	const query = `DELETE FROM accounts WHERE id = $1`
 
-	if _, err := r.db.ExecContext(ctx, query, id); err != nil {
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
 		return fmt.Errorf("delete account %q: %w", id, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete account %q: read rows affected: %w", id, err)
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
 	}
 
 	return nil

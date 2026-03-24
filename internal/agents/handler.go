@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 type Handler struct {
 	service       *Service
+	automation    *Automation
 	auditRecorder interface {
 		Record(ctx context.Context, input audit.RecordInput) error
 	}
@@ -27,6 +29,10 @@ func NewHandler(service *Service) (*Handler, error) {
 	return &Handler{service: service}, nil
 }
 
+func (h *Handler) SetAutomation(automation *Automation) {
+	h.automation = automation
+}
+
 func (h *Handler) SetAuditRecorder(recorder interface {
 	Record(ctx context.Context, input audit.RecordInput) error
 }) {
@@ -37,6 +43,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agents/rules", h.handleRules)
 	mux.HandleFunc("/api/agents/rules/", h.handleRuleByID)
 	mux.HandleFunc("/api/agent-runs", h.handleRuns)
+	mux.HandleFunc("/api/agent-runs/", h.handleRunByID)
 }
 
 func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +117,29 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"rule": rule})
 		return
 	}
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		rule, err := h.service.DeleteRule(r.Context(), ruleID)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+
+		h.recordAudit(r.Context(), r, audit.RecordInput{
+			ActorType:  audit.ActorTypeUser,
+			ActorID:    audit.RequestActorID(r),
+			Action:     "agent.rule.delete",
+			TargetType: "agent_rule",
+			TargetID:   rule.ID,
+			Outcome:    audit.OutcomeSuccess,
+			Detail: map[string]any{
+				"account_id": rule.AccountID,
+				"name":       rule.Name,
+			},
+		})
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if len(parts) != 2 || r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
@@ -172,6 +202,60 @@ func (h *Handler) handleRuns(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) handleRunByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/agent-runs/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 2 {
+		http.NotFound(w, r)
+		return
+	}
+
+	runID := strings.TrimSpace(parts[0])
+	if runID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	if parts[1] != "send" || r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload struct {
+		MessageText *string `json:"message_text,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &payload); err != nil && !errors.Is(err, io.EOF) {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	updated, err := h.automation.SendRun(r.Context(), runID, SendRunInput{MessageText: payload.MessageText})
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.recordAudit(r.Context(), r, audit.RecordInput{
+		ActorType:  audit.ActorTypeUser,
+		ActorID:    audit.RequestActorID(r),
+		Action:     "agent.run.send",
+		TargetType: "agent_run",
+		TargetID:   runID,
+		Outcome:    audit.OutcomeSuccess,
+		Detail: map[string]any{
+			"chat_id":    updated.ChatID,
+			"account_id": updated.AccountID,
+		},
+	})
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"run": updated})
+}
+
 func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrRuleNotFound):
@@ -228,6 +312,7 @@ func parseRunFilters(r *http.Request) (RunListFilters, error) {
 	return RunListFilters{
 		AccountID: strings.TrimSpace(r.URL.Query().Get("account_id")),
 		RuleID:    strings.TrimSpace(r.URL.Query().Get("rule_id")),
+		ChatID:    strings.TrimSpace(r.URL.Query().Get("chat_id")),
 		Status:    RunStatus(strings.TrimSpace(r.URL.Query().Get("status"))),
 		Limit:     limit,
 		Offset:    offset,

@@ -20,25 +20,25 @@ const (
 )
 
 type ScopeFilter struct {
-	ChatIDs   []string `json:"chat_ids,omitempty"`
-	ChatTypes []string `json:"chat_types,omitempty"`
+	ChatIDs   []string `json:"chat_ids"`
+	ChatTypes []string `json:"chat_types"`
 }
 
 type TriggerFilter struct {
-	Keywords        []string  `json:"keywords,omitempty"`
+	Keywords        []string  `json:"keywords"`
 	MatchMode       MatchMode `json:"match_mode,omitempty"`
 	IgnoreFromMe    bool      `json:"ignore_from_me"`
-	MinMessageChars int       `json:"min_message_chars,omitempty"`
+	MinMessageChars int       `json:"min_message_chars"`
 }
 
 type BlacklistFilter struct {
-	BlockedKeywords []string `json:"blocked_keywords,omitempty"`
-	SensitiveTopics []string `json:"sensitive_topics,omitempty"`
+	BlockedKeywords []string `json:"blocked_keywords"`
+	SensitiveTopics []string `json:"sensitive_topics"`
 }
 
 type KnowledgeBinding struct {
 	Summary    *string  `json:"summary,omitempty"`
-	References []string `json:"references,omitempty"`
+	References []string `json:"references"`
 }
 
 type AgentRule struct {
@@ -141,6 +141,7 @@ type RunView struct {
 type RunListFilters struct {
 	AccountID string
 	RuleID    string
+	ChatID    string
 	Status    RunStatus
 	Limit     int
 	Offset    int
@@ -162,7 +163,7 @@ type RunStatusUpdate struct {
 }
 
 func mapRuleToView(rule AgentRule) RuleView {
-	return RuleView{
+	view := RuleView{
 		ID:                      rule.ID,
 		AccountID:               rule.AccountID,
 		Name:                    rule.Name,
@@ -178,4 +179,25 @@ func mapRuleToView(rule AgentRule) RuleView {
 		CreatedAt:               rule.CreatedAt,
 		UpdatedAt:               rule.UpdatedAt,
 	}
+
+	if view.ScopeFilter.ChatIDs == nil {
+		view.ScopeFilter.ChatIDs = make([]string, 0)
+	}
+	if view.ScopeFilter.ChatTypes == nil {
+		view.ScopeFilter.ChatTypes = make([]string, 0)
+	}
+	if view.TriggerFilter.Keywords == nil {
+		view.TriggerFilter.Keywords = make([]string, 0)
+	}
+	if view.BlacklistFilter.BlockedKeywords == nil {
+		view.BlacklistFilter.BlockedKeywords = make([]string, 0)
+	}
+	if view.BlacklistFilter.SensitiveTopics == nil {
+		view.BlacklistFilter.SensitiveTopics = make([]string, 0)
+	}
+	if view.KnowledgeBinding != nil && view.KnowledgeBinding.References == nil {
+		view.KnowledgeBinding.References = make([]string, 0)
+	}
+
+	return view
 }

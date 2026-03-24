@@ -82,12 +82,40 @@ func (h *Handler) handleAccounts(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleAccountByID(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/accounts/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
+	if len(parts) < 1 || strings.TrimSpace(parts[0]) == "" {
 		http.NotFound(w, r)
 		return
 	}
 
 	accountID := parts[0]
+	if len(parts) == 1 {
+		if r.Method == http.MethodDelete {
+			account, err := h.service.DeleteAccount(r.Context(), accountID)
+			if err != nil {
+				h.writeServiceError(w, err)
+				return
+			}
+
+			h.recordAudit(r.Context(), r, audit.RecordInput{
+				ActorType:  audit.ActorTypeUser,
+				ActorID:    audit.RequestActorID(r),
+				Action:     "account.delete",
+				TargetType: "account",
+				TargetID:   account.ID,
+				Outcome:    audit.OutcomeSuccess,
+				Detail: map[string]any{
+					"display_name": account.DisplayName,
+				},
+			})
+
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		http.NotFound(w, r)
+		return
+	}
+
 	action := parts[1]
 
 	switch {

@@ -17,12 +17,13 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	waTypes "go.mau.fi/whatsmeow/types"
 	waEvents "go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	"go.mau.fi/whatsmeow"
 
@@ -269,6 +270,86 @@ func (c *WhatsmeowConnector) Logout(ctx context.Context, accountID string) error
 	c.emitSnapshot(snapshot)
 	c.removeSession(accountID)
 	return nil
+}
+
+func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, text string) (SendResult, error) {
+	trimmedChat := strings.TrimSpace(chatJID)
+	if trimmedChat == "" {
+		return SendResult{}, fmt.Errorf("chat_jid is required")
+	}
+	trimmedText := strings.TrimSpace(text)
+	if trimmedText == "" {
+		return SendResult{}, fmt.Errorf("text must not be empty")
+	}
+
+	session, err := c.ensureSession(ctx, accountID)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if !session.client.IsConnected() || !session.client.IsLoggedIn() {
+		return SendResult{}, fmt.Errorf("whatsapp session is not connected")
+	}
+
+	targetJID, err := waTypes.ParseJID(trimmedChat)
+	if err != nil {
+		return SendResult{}, fmt.Errorf("parse chat jid %q: %w", trimmedChat, err)
+	}
+	targetJID = targetJID.ToNonAD()
+
+	resp, err := session.client.SendMessage(ctx, targetJID, &waProto.Message{
+		Conversation: proto.String(trimmedText),
+	})
+	if err != nil {
+		return SendResult{}, fmt.Errorf("send whatsapp message: %w", err)
+	}
+
+	sentAt := resp.Timestamp
+	if sentAt.IsZero() {
+		sentAt = c.now()
+	}
+
+	senderJID := resp.Sender.ToNonAD()
+	if senderJID.IsEmpty() && session.client.Store != nil && session.client.Store.ID != nil {
+		senderJID = session.client.Store.ID.ToNonAD()
+	}
+
+	messageID := string(resp.ID)
+	envelope := &MessageEnvelope{
+		Chat: ingest.ChatSnapshot{
+			AccountID:     accountID,
+			WAChatJID:     targetJID.String(),
+			ChatType:      mapChatType(targetJID),
+			LastMessageAt: &sentAt,
+		},
+		Contact: nil,
+		Message: ingest.MessageInput{
+			AccountID:   accountID,
+			WAMessageID: messageID,
+			SenderJID:   senderJID.String(),
+			FromMe:      true,
+			MessageType: ingest.MessageTypeText,
+			TextContent: stringPointer(trimmedText),
+			SentAt:      sentAt,
+		},
+		Media: nil,
+		Payload: map[string]any{
+			"source":      "whatsmeow",
+			"direction":   "outbound",
+			"chat_jid":    targetJID.String(),
+			"message_id":  messageID,
+			"text":        trimmedText,
+			"sent_at_utc": sentAt,
+		},
+	}
+
+	c.emit(Event{
+		Type:      EventTypeMessageReceived,
+		AccountID: accountID,
+		EmittedAt: sentAt,
+		Message:   envelope,
+	})
+
+	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
 }
 
 func (c *WhatsmeowConnector) ListSnapshots(_ context.Context) ([]SessionSnapshot, error) {
@@ -717,6 +798,12 @@ func (c *WhatsmeowConnector) mapIncomingMessage(accountID string, client *whatsm
 			"sender_jid":   senderJID.String(),
 			"is_from_me":   event.Info.IsFromMe,
 		},
+	}
+
+	if meta != nil {
+		envelope.Payload["source"] = "history_sync"
+	} else {
+		envelope.Payload["source"] = "whatsmeow"
 	}
 
 	if event.Info.IsFromMe {

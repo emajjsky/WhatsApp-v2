@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,9 +11,11 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 try:
+    from .dotenv import load_dotenv
     from .policy import evaluate_reply
     from .providers.base import ProviderError, ProviderRequest, available_providers, build_provider
 except ImportError:
+    from dotenv import load_dotenv
     from policy import evaluate_reply
     from providers.base import ProviderError, ProviderRequest, available_providers, build_provider
 
@@ -24,9 +26,12 @@ def utc_now() -> datetime:
 
 @dataclass
 class RunnerConfig:
-    host: str = os.getenv("AGENT_RUNNER_HOST", "127.0.0.1")
-    port: int = int(os.getenv("AGENT_RUNNER_PORT", "8090"))
-    default_provider: str = os.getenv("AGENT_RUNNER_DEFAULT_PROVIDER", "mock").strip() or "mock"
+    # Use default_factory to ensure `.env` is loaded before reading env vars.
+    host: str = field(default_factory=lambda: os.getenv("AGENT_RUNNER_HOST", "127.0.0.1"))
+    port: int = field(default_factory=lambda: int(os.getenv("AGENT_RUNNER_PORT", "8090")))
+    default_provider: str = field(
+        default_factory=lambda: os.getenv("AGENT_RUNNER_DEFAULT_PROVIDER", "mock").strip() or "mock"
+    )
 
 
 class AgentRunnerHandler(BaseHTTPRequestHandler):
@@ -240,6 +245,8 @@ def normalize_recent_messages(value: Any) -> list[dict[str, Any]]:
 
 
 def main() -> None:
+    # Convenience for local development: allow `.env` to override stale PowerShell session env vars.
+    load_dotenv(override=True)
     config = RunnerConfig()
     server = AgentRunnerServer(config)
     print(

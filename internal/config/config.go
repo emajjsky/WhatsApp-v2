@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"net/url"
@@ -11,11 +12,11 @@ import (
 )
 
 type Config struct {
-	AppName     string
-	Environment string
-	HTTP        HTTPConfig
-	Database    DatabaseConfig
-	Logging     LoggingConfig
+	AppName      string
+	Environment  string
+	HTTP         HTTPConfig
+	Database     DatabaseConfig
+	Logging      LoggingConfig
 	Integrations IntegrationConfig
 }
 
@@ -41,11 +42,14 @@ type DatabaseConfig struct {
 }
 
 type IntegrationConfig struct {
-	AgentRunnerBaseURL string
-	WhatsAppProxyURL   string
+	AgentRunnerBaseURL   string
+	WhatsAppProxyURL     string
+	AgentAutoSendEnabled bool
 }
 
 func Load() (Config, error) {
+	loadDotenv()
+
 	cfg := Config{
 		AppName:     stringEnv("APP_NAME", "whatsapp-agent-platform"),
 		Environment: stringEnv("APP_ENV", "development"),
@@ -68,8 +72,9 @@ func Load() (Config, error) {
 			Format: stringEnv("LOG_FORMAT", "text"),
 		},
 		Integrations: IntegrationConfig{
-			AgentRunnerBaseURL: strings.TrimSpace(os.Getenv("AGENT_RUNNER_BASE_URL")),
-			WhatsAppProxyURL:   strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
+			AgentRunnerBaseURL:   strings.TrimSpace(os.Getenv("AGENT_RUNNER_BASE_URL")),
+			WhatsAppProxyURL:     strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
+			AgentAutoSendEnabled: boolEnv("AGENT_AUTO_SEND_ENABLED", false),
 		},
 	}
 
@@ -78,6 +83,52 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func loadDotenv() {
+	env := strings.TrimSpace(os.Getenv("APP_ENV"))
+	if env != "" && !strings.EqualFold(env, "development") && !strings.EqualFold(env, "dev") {
+		return
+	}
+
+	file, err := os.Open(".env")
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
+		idx := strings.Index(line, "=")
+		if idx <= 0 {
+			continue
+		}
+
+		key := strings.TrimSpace(strings.TrimPrefix(line[:idx], "\ufeff"))
+		if key == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+
+		value := strings.TrimSpace(line[idx+1:])
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
+
+		_ = os.Setenv(key, value)
+	}
 }
 
 func (c Config) Validate() error {

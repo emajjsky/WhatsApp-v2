@@ -360,6 +360,10 @@ export async function logoutAccount(accountId: string) {
   })
 }
 
+export async function deleteAccount(accountId: string) {
+  return request<void>(`/api/accounts/${accountId}`, { method: 'DELETE' })
+}
+
 export async function getAccountStatus(accountId: string) {
   return request<{ account: AccountView }>(`/api/accounts/${accountId}/status`)
 }
@@ -464,9 +468,14 @@ export async function disableAgentRule(ruleId: string) {
   })
 }
 
+export async function deleteAgentRule(ruleId: string) {
+  return request<void>(`/api/agents/rules/${ruleId}`, { method: 'DELETE' })
+}
+
 export async function listAgentRuns(params?: {
   accountId?: string
   ruleId?: string
+  chatId?: string
   status?: AgentRunStatus | ''
   limit?: number
   offset?: number
@@ -477,6 +486,9 @@ export async function listAgentRuns(params?: {
   }
   if (params?.ruleId) {
     searchParams.set('rule_id', params.ruleId)
+  }
+  if (params?.chatId) {
+    searchParams.set('chat_id', params.chatId)
   }
   if (params?.status) {
     searchParams.set('status', params.status)
@@ -490,6 +502,13 @@ export async function listAgentRuns(params?: {
 
   const queryString = searchParams.toString()
   return request<AgentRunListResponse>(`/api/agent-runs${queryString ? `?${queryString}` : ''}`)
+}
+
+export async function sendAgentRun(runId: string, payload?: { message_text?: string }) {
+  return request<{ run: AgentRunView }>(`/api/agent-runs/${runId}/send`, {
+    method: 'POST',
+    jsonBody: payload ?? {},
+  })
 }
 
 export async function listAuditEntries(params?: {

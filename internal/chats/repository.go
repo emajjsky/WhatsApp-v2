@@ -26,24 +26,24 @@ type ChatListFilters struct {
 }
 
 type MessageListFilters struct {
-	ChatID  string
-	Limit   int
-	Before  *time.Time
+	ChatID string
+	Limit  int
+	Before *time.Time
 }
 
 type ChatSummary struct {
-	ID                   string            `json:"id"`
-	AccountID            string            `json:"account_id"`
-	WAChatJID            string            `json:"wa_chat_jid"`
-	ChatType             ingest.ChatType   `json:"chat_type"`
-	Title                *string           `json:"title,omitempty"`
-	ParticipantCount     *int              `json:"participant_count,omitempty"`
-	Archived             bool              `json:"archived"`
-	LastMessageAt        *time.Time        `json:"last_message_at,omitempty"`
-	LatestMessagePreview *string           `json:"latest_message_preview,omitempty"`
+	ID                   string              `json:"id"`
+	AccountID            string              `json:"account_id"`
+	WAChatJID            string              `json:"wa_chat_jid"`
+	ChatType             ingest.ChatType     `json:"chat_type"`
+	Title                *string             `json:"title,omitempty"`
+	ParticipantCount     *int                `json:"participant_count,omitempty"`
+	Archived             bool                `json:"archived"`
+	LastMessageAt        *time.Time          `json:"last_message_at,omitempty"`
+	LatestMessagePreview *string             `json:"latest_message_preview,omitempty"`
 	LatestMessageType    *ingest.MessageType `json:"latest_message_type,omitempty"`
-	LatestSenderJID      *string           `json:"latest_sender_jid,omitempty"`
-	LatestFromMe         *bool             `json:"latest_from_me,omitempty"`
+	LatestSenderJID      *string             `json:"latest_sender_jid,omitempty"`
+	LatestFromMe         *bool               `json:"latest_from_me,omitempty"`
 }
 
 type ChatHeader struct {
@@ -70,19 +70,19 @@ type MediaAttachment struct {
 }
 
 type MessageView struct {
-	ID                 string                `json:"id"`
-	AccountID          string                `json:"account_id"`
-	ChatID             string                `json:"chat_id"`
-	WAMessageID        string                `json:"wa_message_id"`
-	SenderJID          string                `json:"sender_jid"`
-	FromMe             bool                  `json:"from_me"`
-	MessageType        ingest.MessageType    `json:"message_type"`
-	TextContent        *string               `json:"text_content,omitempty"`
-	ReplyToWAMessageID *string               `json:"reply_to_wa_message_id,omitempty"`
-	SentAt             time.Time             `json:"sent_at"`
-	DeliveredAt        *time.Time            `json:"delivered_at,omitempty"`
-	ReadAt             *time.Time            `json:"read_at,omitempty"`
-	Media              []MediaAttachment     `json:"media"`
+	ID                 string             `json:"id"`
+	AccountID          string             `json:"account_id"`
+	ChatID             string             `json:"chat_id"`
+	WAMessageID        string             `json:"wa_message_id"`
+	SenderJID          string             `json:"sender_jid"`
+	FromMe             bool               `json:"from_me"`
+	MessageType        ingest.MessageType `json:"message_type"`
+	TextContent        *string            `json:"text_content,omitempty"`
+	ReplyToWAMessageID *string            `json:"reply_to_wa_message_id,omitempty"`
+	SentAt             time.Time          `json:"sent_at"`
+	DeliveredAt        *time.Time         `json:"delivered_at,omitempty"`
+	ReadAt             *time.Time         `json:"read_at,omitempty"`
+	Media              []MediaAttachment  `json:"media"`
 }
 
 func NewRepository(db storage.DBTX) (*Repository, error) {
@@ -91,6 +91,34 @@ func NewRepository(db storage.DBTX) (*Repository, error) {
 	}
 
 	return &Repository{db: db}, nil
+}
+
+func (r *Repository) ResolveChatIDByWAJID(ctx context.Context, accountID, waChatJID string) (string, error) {
+	const query = `
+SELECT id
+FROM chats
+WHERE account_id = $1 AND wa_chat_jid = $2`
+
+	var chatID string
+	if err := r.db.QueryRowContext(ctx, query, accountID, waChatJID).Scan(&chatID); err != nil {
+		return "", fmt.Errorf("resolve chat id by wa jid %q: %w", waChatJID, err)
+	}
+
+	return chatID, nil
+}
+
+func (r *Repository) ResolveMessageIDByWAID(ctx context.Context, accountID, waMessageID string) (string, error) {
+	const query = `
+SELECT id
+FROM messages
+WHERE account_id = $1 AND wa_message_id = $2`
+
+	var messageID string
+	if err := r.db.QueryRowContext(ctx, query, accountID, waMessageID).Scan(&messageID); err != nil {
+		return "", fmt.Errorf("resolve message id by wa id %q: %w", waMessageID, err)
+	}
+
+	return messageID, nil
 }
 
 func (r *Repository) ListChats(ctx context.Context, filters ChatListFilters) ([]ChatSummary, int, error) {
@@ -148,14 +176,14 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 	items := make([]ChatSummary, 0, filters.Limit)
 	for rows.Next() {
 		var (
-			item                  ChatSummary
-			title                 sql.NullString
-			participantCount      sql.NullInt64
-			lastMessageAt         sql.NullTime
-			latestMessagePreview  sql.NullString
-			latestMessageType     sql.NullString
-			latestSenderJID       sql.NullString
-			latestFromMe          sql.NullBool
+			item                 ChatSummary
+			title                sql.NullString
+			participantCount     sql.NullInt64
+			lastMessageAt        sql.NullTime
+			latestMessagePreview sql.NullString
+			latestMessageType    sql.NullString
+			latestSenderJID      sql.NullString
+			latestFromMe         sql.NullBool
 		)
 
 		if err := rows.Scan(
@@ -369,13 +397,13 @@ ORDER BY created_at ASC`, strings.Join(placeholders, ", "))
 
 	for rows.Next() {
 		var (
-			item         MediaAttachment
-			mimeType     sql.NullString
-			fileName     sql.NullString
-			byteSize     sql.NullInt64
-			sha256       sql.NullString
-			storageKey   sql.NullString
-			status       sql.NullString
+			item       MediaAttachment
+			mimeType   sql.NullString
+			fileName   sql.NullString
+			byteSize   sql.NullInt64
+			sha256     sql.NullString
+			storageKey sql.NullString
+			status     sql.NullString
 		)
 
 		if err := rows.Scan(

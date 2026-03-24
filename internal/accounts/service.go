@@ -184,6 +184,25 @@ func (s *Service) Logout(ctx context.Context, accountID string) (AccountView, er
 	}), nil
 }
 
+func (s *Service) DeleteAccount(ctx context.Context, accountID string) (AccountView, error) {
+	account, err := s.repository.GetByID(ctx, accountID)
+	if err != nil {
+		return AccountView{}, mapRepositoryError(accountID, err)
+	}
+
+	// Best-effort logout to avoid leaving a live session around. We still allow deletion
+	// even if logout fails due to network/protocol issues.
+	if s.sessionLifecycle != nil {
+		_ = s.sessionLifecycle.Logout(ctx, accountID)
+	}
+
+	if err := s.repository.Delete(ctx, accountID); err != nil {
+		return AccountView{}, mapRepositoryError(accountID, err)
+	}
+
+	return mapAccountToView(account, nil), nil
+}
+
 func mapRepositoryError(accountID string, err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: %s", ErrAccountNotFound, accountID)
