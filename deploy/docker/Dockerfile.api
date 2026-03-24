@@ -1,0 +1,35 @@
+ARG GO_IMAGE=golang:1.25-alpine
+ARG RUNTIME_IMAGE=alpine:3.20
+
+FROM ${GO_IMAGE} AS builder
+
+WORKDIR /src
+
+RUN apk add --no-cache ca-certificates git
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd ./cmd
+COPY internal ./internal
+COPY deploy ./deploy
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags="-s -w" -o /out/api-server ./cmd/api-server
+
+FROM ${RUNTIME_IMAGE}
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates tzdata \
+  && mkdir -p /app/data
+
+COPY --from=builder /out/api-server /app/api-server
+COPY --from=builder /src/deploy/migrations /app/deploy/migrations
+
+EXPOSE 8080
+
+ENV HTTP_HOST=0.0.0.0
+ENV HTTP_PORT=8080
+
+CMD ["/app/api-server"]

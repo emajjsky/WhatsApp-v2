@@ -1,34 +1,68 @@
 # WhatsApp 对话台
 
-这是一个围绕 `whatsmeow` 设计的 WhatsApp 平台工具仓库，目标是把账号接入、聊天归档、聊天查看、导出、Agent 规则和运行观测放进同一个操作台里。
+这是一个围绕 `whatsmeow` 搭起来的 WhatsApp 运维/客服工作台，目标很直接：
 
-当前仓库已经不是空壳，后端、前端、真实 `whatsmeow` 会话接线、导出、审计和系统健康都已经接起来了。
+- 接入多个 WhatsApp 账号
+- 实时归档聊天和媒体
+- 在网页里查看聊天、导出记录
+- 用 Agent 规则生成回复草稿
+- 支持人工一键发送，或在明确开启后自动发送
+
+当前这仓库已经不是演示壳子了，主流程已经能跑通。
 
 ## 当前已经落地
 
-- Go API 基础骨架、配置加载、结构化日志、PostgreSQL migration。
-- 账号接入 API：创建账号、查看状态、发起配对、退出登录。
-- 真实 `whatsmeow` 会话连接器：支持真实 QR 配对、配对码模式、会话恢复、设备绑定持久化和消息事件回调。
-- live ingest：会话事件会进入 `ingest`，自动写入聊天、消息、媒体元数据。
-- 聊天查询 API：聊天列表、消息历史分页。
-- 导出 API：创建导出任务、查看任务状态、下载导出产物。
-- Agent 规则 API：创建规则、更新规则、启停规则、查看运行记录。
-- Python `agent_runner`：可独立启动，支持 mock/static provider、策略拦截、草稿生成和 dispatch-ready 判定。
-- 审计 API：查询关键操作留痕。
-- 系统健康 API：聚合数据库、会话、导出、Agent Runner、审计状态。
-- React 控制台页面：
-  - 首页总览
-  - 账号接入
-  - 对话查看
-  - 导出中心
-  - Agent 规则
+- Go API、配置加载、结构化日志、PostgreSQL migration。
+- 真实 `whatsmeow` 会话连接器：
+  - 二维码配对
+  - 配对码模式
+  - 会话恢复
+  - 设备绑定持久化
+  - 实时事件回调
+- 多账号接入与管理：
+  - 创建账号
+  - 查看状态
+  - 发起配对
+  - 退出登录
+  - 删除账号
+- live ingest：
+  - 实时消息进入归档链路
+  - 聊天、消息、媒体元数据写库
+  - 媒体会尝试下载并落到 `data/media/`
+- 聊天查询：
+  - 聊天列表
+  - 消息历史分页
+  - Web 端聊天查看
+- 导出：
+  - 创建导出任务
+  - 查询任务状态
+  - 下载导出产物
+- Agent 主链路：
+  - 创建 / 更新 / 启停 / 删除规则
+  - 新消息触发规则匹配
+  - 调用 `agent_runner` 生成草稿
+  - 聊天页显示最新待复核草稿
+  - 人工一键发送
+  - 可选自动发送
+- `agent_runner`：
+  - `mock`
+  - `static`
+  - `openai_compatible`
+- 审计与健康：
+  - `GET /api/audit`
+  - `GET /api/system/health`
+- Docker 一键拉起：
+  - Postgres
+  - Go API
+  - `agent_runner`
+  - Web
 
-## 当前还没落完
+## 还没补完的地方
 
-- 这台机器当前直连 `web.whatsapp.com` 会超时，所以真实配对还需要网络放行，或者配置 `WHATSAPP_PROXY_URL`。
-- 当前消息归档链已经支持真实会话事件，但还没补媒体下载和更完整的消息类型归档。
-- Agent 规则还没有打通“消息触发 -> agent_runner -> 自动发送/人工复核”这条完整执行链。
-- 审计和系统健康目前已有后端接口，但还没做独立页面。
+- 这台机器如果直连 `web.whatsapp.com` 不通，真实配对仍然依赖 `WHATSAPP_PROXY_URL`。
+- 媒体归档已经能跑，但消息类型和媒体处理还不是“全协议全覆盖”。
+- 审计页、系统健康页还没有单独做成 Web 页面，目前主要靠 API 和首页摘要。
+- 导出任务当前还是 API 进程内异步执行，不是独立 worker 进程。
 
 ## 目录结构
 
@@ -40,7 +74,6 @@ cmd/
 deploy/
   docker/
   migrations/
-docs/
 internal/
   accounts/
   audit/
@@ -54,9 +87,9 @@ internal/
   platform/
   sessions/
   storage/
+scripts/
 web/
   src/
-refer/
 ```
 
 ## 已实现 API
@@ -74,6 +107,7 @@ refer/
 - `GET /api/accounts/{accountId}/status`
 - `POST /api/accounts/{accountId}/pair`
 - `POST /api/accounts/{accountId}/logout`
+- `DELETE /api/accounts/{accountId}`
 
 ### 聊天查询
 
@@ -85,7 +119,7 @@ refer/
   - 支持 `offset`
 - `GET /api/chats/{chatId}/messages`
   - 支持 `limit`
-  - 支持 `before`，格式为 RFC3339
+  - 支持 `before`（RFC3339）
 
 ### 导出
 
@@ -94,156 +128,167 @@ refer/
 - `GET /api/exports/{jobId}`
 - `GET /api/exports/{jobId}/artifact`
 
-### Agent 规则
+### Agent 规则与运行
 
 - `GET /api/agents/rules`
 - `GET /api/agents/rules/{ruleId}`
 - `POST /api/agents/rules`
 - `POST /api/agents/rules/{ruleId}/enable`
 - `POST /api/agents/rules/{ruleId}/disable`
+- `DELETE /api/agents/rules/{ruleId}`
 - `GET /api/agent-runs`
+  - 支持 `account_id`
+  - 支持 `rule_id`
+  - 支持 `chat_id`
+  - 支持 `status`
+  - 支持 `limit`
+  - 支持 `offset`
+- `POST /api/agent-runs/{runId}/send`
 
 ### 审计
 
 - `GET /api/audit`
 
-### Agent Runner
+### agent_runner
 
-- `GET /healthz` on `agent_runner`
+- `GET /healthz`
 - `GET /v1/providers`
 - `POST /v1/runs`
 
-## 本地启动
+## 环境变量
 
-### 1. 启动 PostgreSQL
+根目录放 `.env`，可参考 `.env.example`。
 
-```bash
-docker compose -f deploy/docker/docker-compose.yml up -d
+最少需要你自己填的通常是：
+
+```env
+OPENAI_COMPAT_BASE_URL=https://api.siliconflow.cn/v1
+OPENAI_COMPAT_API_KEY=你的key
+OPENAI_COMPAT_MODEL=deepseek-ai/DeepSeek-V3.2
 ```
 
-### 2. 启动后端 API
+几个关键开关：
 
-前提：
-
-- Go 1.25+，或者直接使用仓库里的 `F:/WhatsApp/whatsapp/.tools/go/bin/go.exe`
-- PostgreSQL 可访问
-
-示例环境变量：
-
-```bash
-APP_NAME=whatsapp-agent-platform
-APP_ENV=development
-HTTP_HOST=0.0.0.0
-HTTP_PORT=8080
-DB_DRIVER=postgres
-DB_DSN=postgres://postgres:postgres@127.0.0.1:5432/whatsapp_agent_platform?sslmode=disable
-DB_AUTO_MIGRATE=true
-DB_MIGRATIONS_DIR=deploy/migrations
-LOG_LEVEL=debug
-LOG_FORMAT=text
-AGENT_RUNNER_BASE_URL=http://127.0.0.1:8090
+```env
+AGENT_RUNNER_DEFAULT_PROVIDER=openai_compatible
+AGENT_AUTO_SEND_ENABLED=false
 WHATSAPP_PROXY_URL=
 ```
 
-启动命令：
+说明：
 
-```bash
-go run ./cmd/api-server
+- `AGENT_AUTO_SEND_ENABLED=false`
+  代表即使某条规则是 `auto_send`，系统也只会出草稿，不会真发。
+- 想真正自动发，必须同时满足：
+  - 全局 `AGENT_AUTO_SEND_ENABLED=true`
+  - 规则本身 `reply_mode=auto_send`
+  - 规则已经启用
+
+## 启动方式
+
+### 方式一：Docker 一键启动（推荐）
+
+```powershell
+cd "path\\to\\repo"
+.\scripts\docker-up.ps1 -Mirror daocloud
 ```
 
-### 3. 启动 Agent Runner
+等价命令：
 
-```bash
-python -m agent_runner.app
+```powershell
+cd "path\\to\\repo"
+$env:DOCKER_IMAGE_PREFIX='docker.m.daocloud.io/library/'
+docker compose -f deploy/docker/docker-compose.all.yml up -d --build
 ```
 
-可选环境变量：
+启动后：
 
-```bash
-AGENT_RUNNER_HOST=127.0.0.1
-AGENT_RUNNER_PORT=8090
-AGENT_RUNNER_DEFAULT_PROVIDER=mock
+- Web：`http://127.0.0.1:5173/`
+- Go API：`http://127.0.0.1:8080/healthz`
+- `agent_runner`：`http://127.0.0.1:8090/healthz`
+
+停止：
+
+```powershell
+cd "path\\to\\repo"
+.\scripts\docker-down.ps1
 ```
 
-### 4. 启动前端
+注意：
 
-```bash
-cd web
-npm install
-npm run dev
+- 如果容器里的 API 需要走宿主机代理，`WHATSAPP_PROXY_URL` 建议写成：
+  - `http://host.docker.internal:7899`
+  - 或你自己的本机代理端口
+- 如果你本机已经手动跑了 `web / api / agent_runner`，先停掉，不然会跟 Docker 端口冲突。
+
+### 方式二：本机多进程开发
+
+如果你不想用 Docker 跑全套，但又懒得每次自己开 4 个终端：
+
+```powershell
+cd "path\\to\\repo"
+.\scripts\dev.ps1
 ```
 
-前端开发服务器会把 `/api` 和 `/healthz` 代理到 `http://127.0.0.1:8080`。
+它会自动拉起：
 
-如果你的网络直连不到 WhatsApp，可以给后端加：
+- 数据库
+- `agent_runner`
+- Go API
+- Web 开发服务器
 
-```bash
-WHATSAPP_PROXY_URL=http://your-proxy:port
+你也可以通过参数跳过某一项，例如：
+
+```powershell
+.\scripts\dev.ps1 -NoDB
 ```
 
 ## 当前推荐验收点
 
-### 页面层
+### 账号与连接
 
-- 首页是否能看见系统健康和核心计数。
-- 账号页能否创建账号并看到状态卡片。
-- 发起配对后，页面能否自动轮询状态，并显示二维码或配对码。
-- 在网络可达的环境下，扫码后账号状态是否会自动从 `pairing` 变为 `connected`。
-- 在真实会话进来后，聊天页能否看到新消息。
-- 导出页能否创建任务并下载产物。
-- Agent 页能否完成：
-  - 新建规则
-  - 修改规则
-  - 启停规则
-  - 查看运行记录
+- 能创建账号卡片。
+- 能发起二维码配对或配对码配对。
+- 在网络可达时，扫码后状态能变成 `connected`。
+- 能删除不再需要的账号。
 
-### API 层
+### 聊天与归档
 
-- `GET /api/system/health` 返回数据库、会话、导出、Agent Runner、审计摘要。
-- `POST /api/accounts/{accountId}/pair` 会发起真实 `whatsmeow` 连接尝试；若网络受限，应能在 `last_error` 里看到明确失败原因。
-- `POST /api/exports` 后任务会推进到 `completed`。
-- `GET /api/audit` 能看到账号创建、发起配对、创建导出等操作留痕。
-- `POST http://127.0.0.1:8090/v1/runs` 能返回 `ready_for_review`、`dispatch_ready` 或 `blocked`。
+- 新消息能进入聊天页。
+- 消息历史能分页查看。
+- 媒体消息能看到下载结果或附件链接。
 
-### 已实际执行的本地验证
+### Agent
+
+- 能创建规则。
+- 能启停规则。
+- 能删除规则。
+- 新消息命中规则后，聊天页会出现待复核草稿。
+- 点“一键发送”后，消息会写回聊天记录。
+- 当 `AGENT_AUTO_SEND_ENABLED=true` 且规则为自动发送时，可直接自动发出。
+
+### 导出
+
+- 能创建导出任务。
+- 任务能进入 `completed`。
+- 可以下载产物。
+
+## 已验证
 
 - `go test ./...`
 - `python -m compileall agent_runner`
-- `cd web && npm run lint`
 - `cd web && npm run build`
-- 本地 smoke：
-  - 启动 PostgreSQL
-  - 启动 `agent_runner`
-- 启动 API
-- 创建账号
-- 发起真实配对尝试
-- 创建导出任务
-- 查询审计和系统健康
+- `docker compose -f deploy/docker/docker-compose.all.yml build`
+- 浏览器验证：
+  - 账号页正常渲染
+  - Agent 页正常渲染
+  - 删除按钮已出现
 
-## 当前环境说明
+## 当前建议
 
-这台开发机已经验证过以下能力：
+如果接下来继续往前推，优先级建议是：
 
-- Docker 可用
-- 本地 Go 工具链可用
-- Python 3.12 可用
-- 前端 lint / build 可用
-
-也就是说，这个仓库当前可以在本机完成真实编译、构建和基础 smoke，不再是只能靠静态阅读的状态。
-
-## 参考仓库
-
-`refer/` 目录下已经放了参考项目，当前设计和实现主要吸收了这些方向：
-
-- `refer/whatsmeow`
-  - 真实协议接入、会话存储、事件顺序
-- `refer/wppconnect`
-  - 管理后台接口拆法和账号状态查询风格
-- `refer/WhatsApp-Chat-Exporter`
-  - 导出格式拆分思路
-
-## 下一步
-
-- 把真实 WhatsApp live event 接到 ingest。
-- 把 Agent 规则和 `agent_runner` 真正串到自动触发和发送链路。
-- 补独立的审计页和系统健康页。
+1. 把审计页和系统健康页做成独立页面。
+2. 补更多消息类型和更稳的媒体处理。
+3. 视需要把导出任务迁到独立 worker。
+4. 继续打磨规则命中策略和发送风控。

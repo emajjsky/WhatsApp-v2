@@ -1,0 +1,78 @@
+services:
+  postgres:
+    image: ${DOCKER_IMAGE_PREFIX:-}postgres:16-alpine
+    container_name: whatsapp-agent-platform-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: whatsapp_agent_platform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - whatsapp_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d whatsapp_agent_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  agent-runner:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.agent-runner
+      args:
+        PYTHON_IMAGE: ${DOCKER_IMAGE_PREFIX:-}python:3.12-slim
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      AGENT_RUNNER_HOST: 0.0.0.0
+      AGENT_RUNNER_PORT: 8090
+    ports:
+      - "8090:8090"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.api
+      args:
+        GO_IMAGE: ${DOCKER_IMAGE_PREFIX:-}golang:1.25-alpine
+        RUNTIME_IMAGE: ${DOCKER_IMAGE_PREFIX:-}alpine:3.20
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-runner:
+        condition: service_started
+    env_file:
+      - ../../.env
+    environment:
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: 8080
+      DB_DRIVER: postgres
+      DB_DSN: postgres://postgres:postgres@postgres:5432/whatsapp_agent_platform?sslmode=disable
+      DB_AUTO_MIGRATE: "true"
+      DB_MIGRATIONS_DIR: deploy/migrations
+      AGENT_RUNNER_BASE_URL: http://agent-runner:8090
+    ports:
+      - "8080:8080"
+    volumes:
+      - whatsapp_data:/app/data
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.web
+      args:
+        NODE_IMAGE: ${DOCKER_IMAGE_PREFIX:-}node:22-alpine
+        NGINX_IMAGE: ${DOCKER_IMAGE_PREFIX:-}nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "5173:80"
+
+volumes:
+  whatsapp_postgres_data:
+  whatsapp_data:
