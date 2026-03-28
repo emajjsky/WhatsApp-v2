@@ -19,7 +19,10 @@ var ErrExportJobNotFound = errors.New("export job not found")
 
 type ScopeType string
 
-const ScopeTypeChat ScopeType = "chat"
+const (
+	ScopeTypeChat      ScopeType = "chat"
+	ScopeTypeChatBatch ScopeType = "chat_batch"
+)
 
 type Format string
 
@@ -42,6 +45,10 @@ type ExportJob struct {
 	ID           string
 	AccountID    string
 	ChatID       string
+	AccountIDs   []string
+	ChatIDs      []string
+	DateFrom     *time.Time
+	DateTo       *time.Time
 	ScopeType    ScopeType
 	Format       Format
 	IncludeMedia bool
@@ -53,25 +60,48 @@ type ExportJob struct {
 	CompletedAt  *time.Time
 }
 
-type ExportDocument struct {
-	JobID        string              `json:"job_id"`
-	GeneratedAt  time.Time           `json:"generated_at"`
+type ExportSelection struct {
+	AccountIDs []string   `json:"account_ids"`
+	ChatIDs    []string   `json:"chat_ids"`
+	DateFrom   *time.Time `json:"date_from,omitempty"`
+	DateTo     *time.Time `json:"date_to,omitempty"`
+}
+
+type ExportConversation struct {
 	ChatTitle    string              `json:"chat_title"`
 	Chat         chats.ChatHeader    `json:"chat"`
 	Messages     []chats.MessageView `json:"messages"`
-	IncludeMedia bool                `json:"include_media"`
+	MessageCount int                 `json:"message_count"`
+}
+
+type ExportDocument struct {
+	JobID         string               `json:"job_id"`
+	GeneratedAt   time.Time            `json:"generated_at"`
+	ScopeType     ScopeType            `json:"scope_type"`
+	Selection     ExportSelection      `json:"selection"`
+	Conversations []ExportConversation `json:"conversations"`
+	IncludeMedia  bool                 `json:"include_media"`
+	TotalChats    int                  `json:"total_chats"`
+	TotalMessages int                  `json:"total_messages"`
 }
 
 type CreateJobInput struct {
-	ChatID       string `json:"chat_id"`
-	Format       Format `json:"format"`
-	IncludeMedia bool   `json:"include_media"`
+	AccountIDs   []string   `json:"account_ids"`
+	ChatIDs      []string   `json:"chat_ids"`
+	DateFrom     *time.Time `json:"date_from,omitempty"`
+	DateTo       *time.Time `json:"date_to,omitempty"`
+	Format       Format     `json:"format"`
+	IncludeMedia bool       `json:"include_media"`
 }
 
 type JobView struct {
 	ID           string     `json:"id"`
 	AccountID    string     `json:"account_id"`
 	ChatID       string     `json:"chat_id"`
+	AccountIDs   []string   `json:"account_ids"`
+	ChatIDs      []string   `json:"chat_ids"`
+	DateFrom     *time.Time `json:"date_from,omitempty"`
+	DateTo       *time.Time `json:"date_to,omitempty"`
 	ScopeType    ScopeType  `json:"scope_type"`
 	Format       Format     `json:"format"`
 	IncludeMedia bool       `json:"include_media"`
@@ -118,9 +148,9 @@ func NewService(
 }
 
 func (s *Service) CreateJob(ctx context.Context, input CreateJobInput) (JobView, error) {
-	chatID := strings.TrimSpace(input.ChatID)
-	if chatID == "" {
-		return JobView{}, fmt.Errorf("chat_id is required")
+	chatIDs := normalizeIDList(input.ChatIDs)
+	if len(chatIDs) == 0 {
+		return JobView{}, fmt.Errorf("chat_ids is required")
 	}
 
 	format := normalizeFormat(input.Format)
@@ -128,16 +158,47 @@ func (s *Service) CreateJob(ctx context.Context, input CreateJobInput) (JobView,
 		return JobView{}, fmt.Errorf("unsupported export format %q", input.Format)
 	}
 
-	header, err := s.chatRepository.GetChatHeader(ctx, chatID)
+	if input.DateFrom != nil && input.DateTo != nil && !input.DateFrom.Before(*input.DateTo) {
+		return JobView{}, fmt.Errorf("date_to must be later than date_from")
+	}
+
+	headers, err := s.chatRepository.ListChatHeadersByIDs(ctx, chatIDs)
 	if err != nil {
-		return JobView{}, mapChatLookupError(chatID, err)
+		return JobView{}, mapChatLookupError(strings.Join(chatIDs, ","), err)
+	}
+
+	accountIDs := normalizeIDList(input.AccountIDs)
+	if len(accountIDs) == 0 {
+		accountIDs = uniqueAccountIDs(headers)
+	}
+	if len(accountIDs) == 0 {
+		return JobView{}, fmt.Errorf("account_ids is required")
+	}
+
+	validAccounts := make(map[string]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		validAccounts[accountID] = struct{}{}
+	}
+	for _, header := range headers {
+		if _, ok := validAccounts[header.AccountID]; !ok {
+			return JobView{}, fmt.Errorf("chat %s does not belong to selected accounts", header.ID)
+		}
+	}
+
+	scopeType := ScopeTypeChat
+	if len(chatIDs) > 1 || len(accountIDs) > 1 || input.DateFrom != nil || input.DateTo != nil {
+		scopeType = ScopeTypeChatBatch
 	}
 
 	job := ExportJob{
 		ID:           ids.NewUUID(),
-		AccountID:    header.AccountID,
-		ChatID:       header.ID,
-		ScopeType:    ScopeTypeChat,
+		AccountID:    accountIDs[0],
+		ChatID:       chatIDs[0],
+		AccountIDs:   accountIDs,
+		ChatIDs:      chatIDs,
+		DateFrom:     input.DateFrom,
+		DateTo:       input.DateTo,
+		ScopeType:    scopeType,
 		Format:       format,
 		IncludeMedia: input.IncludeMedia,
 		Status:       StatusQueued,
@@ -235,56 +296,73 @@ func (s *Service) processJob(jobID string) {
 }
 
 func (s *Service) buildDocument(ctx context.Context, job ExportJob) (ExportDocument, error) {
-	header, err := s.chatRepository.GetChatHeader(ctx, job.ChatID)
+	headers, err := s.chatRepository.ListChatHeadersByIDs(ctx, job.ChatIDs)
 	if err != nil {
 		return ExportDocument{}, err
 	}
 
-	pages := make([][]chats.MessageView, 0)
-	var before *time.Time
+	conversations := make([]ExportConversation, 0, len(headers))
+	totalMessages := 0
 
-	for {
-		chunk, hasMore, err := s.chatRepository.ListMessages(ctx, chats.MessageListFilters{
-			ChatID: job.ChatID,
-			Limit:  200,
-			Before: before,
+	for _, header := range headers {
+		pages := make([][]chats.MessageView, 0)
+		var before *time.Time
+
+		for {
+			chunk, hasMore, err := s.chatRepository.ListMessages(ctx, chats.MessageListFilters{
+				ChatID:   header.ID,
+				Limit:    200,
+				Before:   before,
+				DateFrom: job.DateFrom,
+				DateTo:   job.DateTo,
+			})
+			if err != nil {
+				return ExportDocument{}, err
+			}
+
+			pages = append(pages, chunk)
+			if !hasMore || len(chunk) == 0 {
+				break
+			}
+
+			cursor := chunk[0].SentAt
+			before = &cursor
+		}
+
+		messages := make([]chats.MessageView, 0)
+		for index := len(pages) - 1; index >= 0; index-- {
+			messages = append(messages, pages[index]...)
+		}
+
+		if !job.IncludeMedia {
+			for index := range messages {
+				messages[index].Media = []chats.MediaAttachment{}
+			}
+		}
+
+		conversations = append(conversations, ExportConversation{
+			ChatTitle:    resolveChatTitle(header),
+			Chat:         header,
+			Messages:     messages,
+			MessageCount: len(messages),
 		})
-		if err != nil {
-			return ExportDocument{}, err
-		}
-
-		pages = append(pages, chunk)
-		if !hasMore || len(chunk) == 0 {
-			break
-		}
-
-		cursor := chunk[0].SentAt
-		before = &cursor
-	}
-
-	messages := make([]chats.MessageView, 0)
-	for index := len(pages) - 1; index >= 0; index-- {
-		messages = append(messages, pages[index]...)
-	}
-
-	chatTitle := header.WAChatJID
-	if header.Title != nil && strings.TrimSpace(*header.Title) != "" {
-		chatTitle = *header.Title
-	}
-
-	if !job.IncludeMedia {
-		for index := range messages {
-			messages[index].Media = []chats.MediaAttachment{}
-		}
+		totalMessages += len(messages)
 	}
 
 	return ExportDocument{
-		JobID:        job.ID,
-		GeneratedAt:  time.Now().UTC(),
-		ChatTitle:    chatTitle,
-		Chat:         header,
-		Messages:     messages,
-		IncludeMedia: job.IncludeMedia,
+		JobID:       job.ID,
+		GeneratedAt: time.Now().UTC(),
+		ScopeType:   job.ScopeType,
+		Selection: ExportSelection{
+			AccountIDs: job.AccountIDs,
+			ChatIDs:    job.ChatIDs,
+			DateFrom:   job.DateFrom,
+			DateTo:     job.DateTo,
+		},
+		Conversations: conversations,
+		IncludeMedia:  job.IncludeMedia,
+		TotalChats:    len(conversations),
+		TotalMessages: totalMessages,
 	}, nil
 }
 
@@ -316,6 +394,10 @@ func mapJobToView(job ExportJob) JobView {
 		ID:           job.ID,
 		AccountID:    job.AccountID,
 		ChatID:       job.ChatID,
+		AccountIDs:   job.AccountIDs,
+		ChatIDs:      job.ChatIDs,
+		DateFrom:     job.DateFrom,
+		DateTo:       job.DateTo,
 		ScopeType:    job.ScopeType,
 		Format:       job.Format,
 		IncludeMedia: job.IncludeMedia,
@@ -387,4 +469,59 @@ func mapChatLookupError(chatID string, err error) error {
 	}
 
 	return err
+}
+
+func normalizeIDList(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+
+	return result
+}
+
+func uniqueAccountIDs(headers []chats.ChatHeader) []string {
+	seen := make(map[string]struct{}, len(headers))
+	accountIDs := make([]string, 0, len(headers))
+	for _, header := range headers {
+		if _, ok := seen[header.AccountID]; ok {
+			continue
+		}
+		seen[header.AccountID] = struct{}{}
+		accountIDs = append(accountIDs, header.AccountID)
+	}
+
+	return accountIDs
+}
+
+func resolveChatTitle(header chats.ChatHeader) string {
+	if header.Title != nil && strings.TrimSpace(*header.Title) != "" {
+		return *header.Title
+	}
+
+	return header.WAChatJID
+}
+
+func formatSelectionDateRange(selection ExportSelection) string {
+	switch {
+	case selection.DateFrom != nil && selection.DateTo != nil:
+		lastDay := selection.DateTo.Add(-time.Second)
+		return fmt.Sprintf("%s ~ %s", selection.DateFrom.Format("2006-01-02"), lastDay.Format("2006-01-02"))
+	case selection.DateFrom != nil:
+		return fmt.Sprintf("自 %s 起", selection.DateFrom.Format("2006-01-02"))
+	case selection.DateTo != nil:
+		lastDay := selection.DateTo.Add(-time.Second)
+		return fmt.Sprintf("截至 %s", lastDay.Format("2006-01-02"))
+	default:
+		return "全部时间"
+	}
 }

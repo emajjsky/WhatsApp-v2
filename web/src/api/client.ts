@@ -153,12 +153,17 @@ export interface MessageHistoryResponse {
 
 export type ExportFormat = 'json' | 'markdown' | 'html'
 export type ExportStatus = 'queued' | 'running' | 'completed' | 'failed'
+export type ExportScopeType = 'chat' | 'chat_batch'
 
 export interface ExportJobView {
   id: string
   account_id: string
   chat_id: string
-  scope_type: 'chat'
+  account_ids: string[]
+  chat_ids: string[]
+  date_from?: string
+  date_to?: string
+  scope_type: ExportScopeType
   format: ExportFormat
   include_media: boolean
   status: ExportStatus
@@ -420,7 +425,10 @@ export async function listExportJobs() {
 }
 
 export async function createExportJob(payload: {
-  chat_id: string
+  account_ids: string[]
+  chat_ids: string[]
+  date_from?: string
+  date_to?: string
   format: ExportFormat
   include_media: boolean
 }) {

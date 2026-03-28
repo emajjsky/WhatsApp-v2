@@ -595,6 +595,21 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
+.selection-toolbar {
+  display: grid;
+  gap: 16px;
+}
+
+.selection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  max-height: 540px;
+  overflow-y: auto;
+  padding-right: 8px;
+  align-content: start;
+}
+
 .compact-card {
   padding: 16px;
   border-radius: 18px;

@@ -67,7 +67,11 @@ func (h *Handler) handleExports(w http.ResponseWriter, r *http.Request) {
 			TargetID:   job.ID,
 			Outcome:    audit.OutcomeSuccess,
 			Detail: map[string]any{
-				"chat_id":       job.ChatID,
+				"account_ids":   job.AccountIDs,
+				"chat_ids":      job.ChatIDs,
+				"date_from":     job.DateFrom,
+				"date_to":       job.DateTo,
+				"scope_type":    job.ScopeType,
 				"format":        job.Format,
 				"include_media": job.IncludeMedia,
 			},

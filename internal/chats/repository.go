@@ -26,9 +26,11 @@ type ChatListFilters struct {
 }
 
 type MessageListFilters struct {
-	ChatID string
-	Limit  int
-	Before *time.Time
+	ChatID   string
+	Limit    int
+	Before   *time.Time
+	DateFrom *time.Time
+	DateTo   *time.Time
 }
 
 type ChatSummary struct {
@@ -262,12 +264,98 @@ WHERE id = $1`
 	return header, nil
 }
 
+func (r *Repository) ListChatHeadersByIDs(ctx context.Context, chatIDs []string) ([]ChatHeader, error) {
+	if len(chatIDs) == 0 {
+		return []ChatHeader{}, nil
+	}
+
+	args := make([]any, 0, len(chatIDs))
+	placeholders := make([]string, 0, len(chatIDs))
+	for index, chatID := range chatIDs {
+		args = append(args, chatID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", index+1))
+	}
+
+	query := fmt.Sprintf(`
+SELECT
+    id,
+    account_id,
+    wa_chat_jid,
+    chat_type,
+    title,
+    participant_count,
+    archived,
+    last_message_at
+FROM chats
+WHERE id IN (%s)`, strings.Join(placeholders, ", "))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list chat headers by ids: %w", err)
+	}
+	defer rows.Close()
+
+	headersByID := make(map[string]ChatHeader, len(chatIDs))
+	for rows.Next() {
+		var (
+			header           ChatHeader
+			title            sql.NullString
+			participantCount sql.NullInt64
+			lastMessageAt    sql.NullTime
+		)
+
+		if err := rows.Scan(
+			&header.ID,
+			&header.AccountID,
+			&header.WAChatJID,
+			&header.ChatType,
+			&title,
+			&participantCount,
+			&header.Archived,
+			&lastMessageAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan chat header row: %w", err)
+		}
+
+		header.Title = nullableString(title)
+		header.ParticipantCount = nullableInt(participantCount)
+		header.LastMessageAt = nullableTime(lastMessageAt)
+		headersByID[header.ID] = header
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chat headers: %w", err)
+	}
+
+	headers := make([]ChatHeader, 0, len(chatIDs))
+	for _, chatID := range chatIDs {
+		header, ok := headersByID[chatID]
+		if !ok {
+			return nil, sql.ErrNoRows
+		}
+
+		headers = append(headers, header)
+	}
+
+	return headers, nil
+}
+
 func (r *Repository) ListMessages(ctx context.Context, filters MessageListFilters) ([]MessageView, bool, error) {
 	args := []any{filters.ChatID}
 	conditions := []string{"m.chat_id = $1"}
 
 	if filters.Before != nil {
 		args = append(args, *filters.Before)
+		conditions = append(conditions, fmt.Sprintf("m.sent_at < $%d", len(args)))
+	}
+
+	if filters.DateFrom != nil {
+		args = append(args, *filters.DateFrom)
+		conditions = append(conditions, fmt.Sprintf("m.sent_at >= $%d", len(args)))
+	}
+
+	if filters.DateTo != nil {
+		args = append(args, *filters.DateTo)
 		conditions = append(conditions, fmt.Sprintf("m.sent_at < $%d", len(args)))
 	}
 

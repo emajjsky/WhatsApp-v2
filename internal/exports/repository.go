@@ -3,6 +3,7 @@ package exports
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -27,6 +28,10 @@ INSERT INTO export_jobs (
     id,
     account_id,
     chat_id,
+    account_ids_json,
+    chat_ids_json,
+    date_from,
+    date_to,
     scope_type,
     format,
     include_media,
@@ -35,7 +40,7 @@ INSERT INTO export_jobs (
     error_message,
     started_at,
     completed_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+ ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 
 	if _, err := r.db.ExecContext(
 		ctx,
@@ -43,6 +48,10 @@ INSERT INTO export_jobs (
 		job.ID,
 		job.AccountID,
 		job.ChatID,
+		marshalStringSliceJSON(job.AccountIDs),
+		marshalStringSliceJSON(job.ChatIDs),
+		job.DateFrom,
+		job.DateTo,
 		job.ScopeType,
 		job.Format,
 		job.IncludeMedia,
@@ -64,6 +73,10 @@ SELECT
     id,
     account_id,
     chat_id,
+    account_ids_json,
+    chat_ids_json,
+    date_from,
+    date_to,
     scope_type,
     format,
     include_media,
@@ -78,6 +91,10 @@ WHERE id = $1`
 
 	var (
 		job          ExportJob
+		accountIDs   []byte
+		chatIDs      []byte
+		dateFrom     sql.NullTime
+		dateTo       sql.NullTime
 		artifactPath sql.NullString
 		errorMessage sql.NullString
 		startedAt    sql.NullTime
@@ -88,6 +105,10 @@ WHERE id = $1`
 		&job.ID,
 		&job.AccountID,
 		&job.ChatID,
+		&accountIDs,
+		&chatIDs,
+		&dateFrom,
+		&dateTo,
 		&job.ScopeType,
 		&job.Format,
 		&job.IncludeMedia,
@@ -101,6 +122,10 @@ WHERE id = $1`
 		return ExportJob{}, fmt.Errorf("get export job %q: %w", id, err)
 	}
 
+	job.AccountIDs = decodeStringSliceJSON(accountIDs, job.AccountID)
+	job.ChatIDs = decodeStringSliceJSON(chatIDs, job.ChatID)
+	job.DateFrom = nullableTime(dateFrom)
+	job.DateTo = nullableTime(dateTo)
 	job.ArtifactPath = nullableString(artifactPath)
 	job.ErrorMessage = nullableString(errorMessage)
 	job.StartedAt = nullableTime(startedAt)
@@ -115,6 +140,10 @@ SELECT
     id,
     account_id,
     chat_id,
+    account_ids_json,
+    chat_ids_json,
+    date_from,
+    date_to,
     scope_type,
     format,
     include_media,
@@ -137,6 +166,10 @@ ORDER BY created_at DESC`
 	for rows.Next() {
 		var (
 			job          ExportJob
+			accountIDs   []byte
+			chatIDs      []byte
+			dateFrom     sql.NullTime
+			dateTo       sql.NullTime
 			artifactPath sql.NullString
 			errorMessage sql.NullString
 			startedAt    sql.NullTime
@@ -147,6 +180,10 @@ ORDER BY created_at DESC`
 			&job.ID,
 			&job.AccountID,
 			&job.ChatID,
+			&accountIDs,
+			&chatIDs,
+			&dateFrom,
+			&dateTo,
 			&job.ScopeType,
 			&job.Format,
 			&job.IncludeMedia,
@@ -160,6 +197,10 @@ ORDER BY created_at DESC`
 			return nil, fmt.Errorf("scan export job row: %w", err)
 		}
 
+		job.AccountIDs = decodeStringSliceJSON(accountIDs, job.AccountID)
+		job.ChatIDs = decodeStringSliceJSON(chatIDs, job.ChatID)
+		job.DateFrom = nullableTime(dateFrom)
+		job.DateTo = nullableTime(dateTo)
 		job.ArtifactPath = nullableString(artifactPath)
 		job.ErrorMessage = nullableString(errorMessage)
 		job.StartedAt = nullableTime(startedAt)
@@ -240,4 +281,32 @@ func nullableTime(value sql.NullTime) *time.Time {
 
 	result := value.Time
 	return &result
+}
+
+func marshalStringSliceJSON(values []string) []byte {
+	if len(values) == 0 {
+		return []byte("[]")
+	}
+
+	payload, err := json.Marshal(values)
+	if err != nil {
+		return []byte("[]")
+	}
+
+	return payload
+}
+
+func decodeStringSliceJSON(raw []byte, fallback string) []string {
+	if len(raw) > 0 {
+		var values []string
+		if err := json.Unmarshal(raw, &values); err == nil && len(values) > 0 {
+			return values
+		}
+	}
+
+	if fallback == "" {
+		return []string{}
+	}
+
+	return []string{fallback}
 }
