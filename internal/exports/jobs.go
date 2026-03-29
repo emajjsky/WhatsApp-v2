@@ -113,6 +113,12 @@ type JobView struct {
 	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 }
 
+type ArtifactFile struct {
+	JobID        string
+	FilePath     string
+	DownloadName string
+}
+
 type Service struct {
 	repository     *Repository
 	chatRepository *chats.Repository
@@ -247,6 +253,47 @@ func (s *Service) ArtifactFilePath(ctx context.Context, jobID string) (string, e
 	}
 
 	return *job.ArtifactPath, nil
+}
+
+func (s *Service) ArtifactDownloadName(ctx context.Context, jobID string) (string, error) {
+	job, err := s.repository.GetByID(ctx, strings.TrimSpace(jobID))
+	if err != nil {
+		return "", mapRepositoryError(jobID, err)
+	}
+	if job.ArtifactPath == nil || *job.ArtifactPath == "" {
+		return "", fmt.Errorf("artifact is not available")
+	}
+
+	return fmt.Sprintf("whatsapp-export-%s%s", job.ID, artifactExtension(job.Format)), nil
+}
+
+func (s *Service) ArtifactFiles(ctx context.Context, jobIDs []string) ([]ArtifactFile, error) {
+	normalizedIDs := normalizeIDList(jobIDs)
+	if len(normalizedIDs) == 0 {
+		return nil, fmt.Errorf("job_ids is required")
+	}
+
+	files := make([]ArtifactFile, 0, len(normalizedIDs))
+	for _, jobID := range normalizedIDs {
+		job, err := s.repository.GetByID(ctx, strings.TrimSpace(jobID))
+		if err != nil {
+			return nil, mapRepositoryError(jobID, err)
+		}
+		if job.Status != StatusCompleted {
+			return nil, fmt.Errorf("job %s is not completed", jobID)
+		}
+		if job.ArtifactPath == nil || *job.ArtifactPath == "" {
+			return nil, fmt.Errorf("artifact is not available for job %s", jobID)
+		}
+
+		files = append(files, ArtifactFile{
+			JobID:        job.ID,
+			FilePath:     *job.ArtifactPath,
+			DownloadName: fmt.Sprintf("whatsapp-export-%s%s", job.ID, artifactExtension(job.Format)),
+		})
+	}
+
+	return files, nil
 }
 
 func (s *Service) processJob(jobID string) {
@@ -418,6 +465,19 @@ func normalizeFormat(value Format) Format {
 		return FormatMarkdown
 	case string(FormatHTML):
 		return FormatHTML
+	default:
+		return ""
+	}
+}
+
+func artifactExtension(format Format) string {
+	switch format {
+	case FormatJSON:
+		return ".json"
+	case FormatMarkdown:
+		return ".md"
+	case FormatHTML:
+		return ".html"
 	default:
 		return ""
 	}

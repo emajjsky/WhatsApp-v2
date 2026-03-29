@@ -26,6 +26,8 @@ type Service struct {
 	now              func() time.Time
 }
 
+const sessionStatusTimeout = 350 * time.Millisecond
+
 type CreateAccountInput struct {
 	DisplayName   string  `json:"display_name"`
 	PhoneNumber   *string `json:"phone_number,omitempty"`
@@ -98,11 +100,9 @@ func (s *Service) ListAccounts(ctx context.Context) ([]AccountView, error) {
 
 	views := make([]AccountView, 0, len(items))
 	for _, item := range items {
-		var sessionView *SessionView
-		if s.sessionLifecycle != nil {
-			if session, err := s.sessionLifecycle.GetStatus(ctx, item.ID); err == nil {
-				sessionView = mapSessionToView(session)
-			}
+		sessionView, sessionErr := s.getSessionView(ctx, item.ID)
+		if sessionErr == nil && sessionView != nil {
+			item.Status = sessionView.Status
 		}
 
 		views = append(views, mapAccountToView(item, sessionView))
@@ -141,18 +141,14 @@ func (s *Service) GetAccountStatus(ctx context.Context, accountID string) (Accou
 		return AccountView{}, mapRepositoryError(accountID, err)
 	}
 
-	var sessionView *SessionView
-	if s.sessionLifecycle != nil {
-		sessionSnapshot, sessionErr := s.sessionLifecycle.GetStatus(ctx, accountID)
-		switch {
-		case sessionErr == nil:
-			sessionView = mapSessionToView(sessionSnapshot)
-			account.Status = sessionSnapshot.Status
-		case errors.Is(sessionErr, sessions.ErrSessionNotFound):
-			sessionView = nil
-		default:
-			return AccountView{}, sessionErr
-		}
+	sessionView, sessionErr := s.getSessionView(ctx, accountID)
+	switch {
+	case sessionErr == nil && sessionView != nil:
+		account.Status = sessionView.Status
+	case errors.Is(sessionErr, sessions.ErrSessionNotFound), errors.Is(sessionErr, context.DeadlineExceeded), errors.Is(sessionErr, context.Canceled), sessionErr == nil:
+		// Fall back to the persisted account status so a stuck live connector doesn't blank the page.
+	default:
+		return AccountView{}, sessionErr
 	}
 
 	return mapAccountToView(account, sessionView), nil
@@ -250,4 +246,47 @@ func normalizedOptionalString(value *string) *string {
 
 func generateAccountID() string {
 	return ids.NewUUID()
+}
+
+func (s *Service) getSessionView(ctx context.Context, accountID string) (*SessionView, error) {
+	if s.sessionLifecycle == nil {
+		return nil, nil
+	}
+
+	sessionSnapshot, err := s.getSessionSnapshotWithTimeout(ctx, accountID, sessionStatusTimeout)
+	switch {
+	case err == nil:
+		return mapSessionToView(sessionSnapshot), nil
+	case errors.Is(err, sessions.ErrSessionNotFound):
+		return nil, err
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return nil, err
+	default:
+		return nil, err
+	}
+}
+
+func (s *Service) getSessionSnapshotWithTimeout(ctx context.Context, accountID string, timeout time.Duration) (sessions.SessionSnapshot, error) {
+	type result struct {
+		snapshot sessions.SessionSnapshot
+		err      error
+	}
+
+	resultCh := make(chan result, 1)
+	go func() {
+		snapshot, err := s.sessionLifecycle.GetStatus(ctx, accountID)
+		resultCh <- result{snapshot: snapshot, err: err}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case res := <-resultCh:
+		return res.snapshot, res.err
+	case <-ctx.Done():
+		return sessions.SessionSnapshot{}, ctx.Err()
+	case <-timer.C:
+		return sessions.SessionSnapshot{}, context.DeadlineExceeded
+	}
 }

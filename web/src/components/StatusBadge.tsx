@@ -1,4 +1,4 @@
-import type { AccountStatus } from '../api/client'
+import type { AccountStatus, ExportStatus } from '../api/client'
 
 type BadgeTone = 'neutral' | 'success' | 'warning' | 'danger' | 'info'
 
@@ -12,34 +12,47 @@ const accountToneMap: Record<AccountStatus, BadgeTone> = {
   failed: 'danger',
 }
 
+const exportToneMap: Record<ExportStatus, BadgeTone> = {
+  queued: 'neutral',
+  running: 'info',
+  completed: 'success',
+  failed: 'danger',
+}
+
 function getTone(status: string): BadgeTone {
   switch (status) {
+    case 'direct':
+      return 'info'
+    case 'group':
+      return 'warning'
+    case 'broadcast':
+      return 'neutral'
+    case 'status':
+      return 'neutral'
+    case 'ok':
     case 'enabled':
-      return 'success'
-    case 'disabled':
-      return 'neutral'
     case 'suggest':
-      return 'info'
-    case 'auto_send':
-      return 'warning'
-    case 'queued':
-      return 'neutral'
-    case 'generating':
-      return 'info'
-    case 'blocked':
-      return 'danger'
-    case 'ready_for_review':
-      return 'warning'
     case 'sent':
       return 'success'
-    case 'ok':
-      return 'success'
     case 'warn':
+    case 'pairing_code':
+    case 'auto_send':
+    case 'ready_for_review':
       return 'warning'
     case 'down':
+    case 'blocked':
       return 'danger'
+    case 'generating':
+      return 'info'
+    case 'disabled':
+    case 'logged_out':
+      return 'neutral'
     default:
-      return accountToneMap[status as AccountStatus] ?? 'neutral'
+      return (
+        accountToneMap[status as AccountStatus] ??
+        exportToneMap[status as ExportStatus] ??
+        'neutral'
+      )
   }
 }
 
@@ -67,6 +80,12 @@ function getLabel(status: string) {
       return '广播'
     case 'status':
       return '状态'
+    case 'queued':
+      return '排队中'
+    case 'running':
+      return '导出中'
+    case 'completed':
+      return '已完成'
     case 'enabled':
       return '已启用'
     case 'disabled':
@@ -75,8 +94,6 @@ function getLabel(status: string) {
       return '建议草稿'
     case 'auto_send':
       return '自动发送'
-    case 'queued':
-      return '排队中'
     case 'generating':
       return '生成中'
     case 'blocked':
@@ -84,13 +101,13 @@ function getLabel(status: string) {
     case 'ready_for_review':
       return '待复核'
     case 'sent':
-      return '已发出'
+      return '已发送'
     case 'ok':
       return '正常'
     case 'warn':
       return '需关注'
     case 'down':
-      return '异常'
+      return '不可用'
     default:
       return status
   }

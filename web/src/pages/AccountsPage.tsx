@@ -38,7 +38,6 @@ export function AccountsPage() {
     try {
       const response = await listAccounts()
       setAccounts(response.accounts)
-
       setSelectedAccountId((current) => {
         if (preferredAccountId) {
           return preferredAccountId
@@ -51,7 +50,9 @@ export function AccountsPage() {
         setError(undefined)
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '加载账号失败')
+      if (!background) {
+        setError(loadError instanceof Error ? loadError.message : '加载账号失败')
+      }
     } finally {
       if (!background) {
         setLoading(false)
@@ -86,8 +87,8 @@ export function AccountsPage() {
           width: 280,
           margin: 1,
           color: {
-            dark: '#14333a',
-            light: '#fffdf9',
+            dark: '#16343a',
+            light: '#fcfbf6',
           },
         })
 
@@ -138,14 +139,15 @@ export function AccountsPage() {
         const account = accounts.find((item) => item.id === accountId)
         const name = account?.display_name ?? accountId
         const confirmed = window.confirm(
-          `确定要删除账号「${name}」吗？\n\n这会同时删除该账号的会话凭据、聊天记录、导出任务、Agent 规则与运行记录。`,
+          `确定删除账号“${name}”吗？\n\n这会清掉该账号的会话凭据、聊天记录和导出任务。`,
         )
+
         if (!confirmed) {
           return
         }
 
         await deleteAccount(accountId)
-        await loadAccounts(undefined)
+        await loadAccounts()
         return
       }
 
@@ -164,11 +166,17 @@ export function AccountsPage() {
   }
 
   return (
-    <div className="page-grid">
-      <section className="two-column-grid account-layout">
-        <article className="panel">
-          <p className="eyebrow">第一步</p>
-          <h3>创建账号卡片</h3>
+    <div className="page page-accounts">
+      <section className="page-top-grid accounts-top-grid">
+        <article className="panel panel-stretch">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">第一步</p>
+              <h3>创建账号卡片</h3>
+            </div>
+            <span className="subtle-text">先建卡，再配对</span>
+          </div>
+
           <form className="form-grid" onSubmit={handleCreateAccount}>
             <label className="field">
               <span>账号名称</span>
@@ -179,14 +187,16 @@ export function AccountsPage() {
                 required
               />
             </label>
+
             <label className="field">
               <span>手机号</span>
               <input
                 value={form.phoneNumber}
                 onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
-                placeholder="配对码模式建议填写国际格式，如 86138..."
+                placeholder="配对码模式建议填写国际格式，例如 86138..."
               />
             </label>
+
             <label className="field">
               <span>内部标签</span>
               <input
@@ -195,22 +205,35 @@ export function AccountsPage() {
                 placeholder="例如：深圳门店 / 夜班"
               />
             </label>
+
             <button className="primary-button" type="submit" disabled={submitting}>
               {submitting ? '正在创建...' : '创建账号'}
             </button>
           </form>
 
           <div className="helper-card">
-            <strong>使用说明</strong>
-            <p>二维码模式不强依赖手机号，配对码模式建议先填国际区号手机号。如果直连 WhatsApp 失败，优先检查网络，再考虑配置 `WHATSAPP_PROXY_URL`。</p>
+            <strong>接入提醒</strong>
+            <ul className="plain-list">
+              <li>二维码模式最省事，先试这个。</li>
+              <li>配对码模式建议填写国际格式手机号。</li>
+              <li>如果始终连不上，再排查代理或网络出口。</li>
+            </ul>
           </div>
         </article>
 
-        <article className="panel">
-          <p className="eyebrow">第二步</p>
-          <h3>账号状态与配对信息</h3>
+        <article className="panel panel-stretch">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">第二步</p>
+              <h3>账号状态与配对信息</h3>
+            </div>
+            <span className="subtle-text">
+              {selectedAccount ? selectedAccount.display_name : '未选择账号'}
+            </span>
+          </div>
+
           {selectedAccount ? (
-            <div className="detail-stack">
+            <div className="detail-stack account-detail-stack">
               <div className="detail-card">
                 <div className="detail-card-header">
                   <div>
@@ -219,6 +242,7 @@ export function AccountsPage() {
                   </div>
                   <StatusBadge status={selectedAccount.session?.status ?? selectedAccount.status} />
                 </div>
+
                 <dl className="detail-grid">
                   <div>
                     <dt>手机号</dt>
@@ -228,7 +252,16 @@ export function AccountsPage() {
                     <dt>最近状态时间</dt>
                     <dd>{formatDateTime(selectedAccount.session?.updated_at ?? selectedAccount.updated_at)}</dd>
                   </div>
+                  <div>
+                    <dt>最后在线</dt>
+                    <dd>{formatDateTime(selectedAccount.last_seen_at)}</dd>
+                  </div>
+                  <div>
+                    <dt>创建时间</dt>
+                    <dd>{formatDateTime(selectedAccount.created_at)}</dd>
+                  </div>
                 </dl>
+
                 <div className="button-row">
                   <button
                     className="primary-button"
@@ -236,7 +269,7 @@ export function AccountsPage() {
                     disabled={busyAccountId === selectedAccount.id}
                     onClick={() => void runAccountAction(selectedAccount.id, 'qr')}
                   >
-                    {busyAccountId === selectedAccount.id ? '处理中...' : '开始二维码配对'}
+                    {busyAccountId === selectedAccount.id ? '处理中...' : '二维码配对'}
                   </button>
                   <button
                     className="secondary-button"
@@ -247,7 +280,7 @@ export function AccountsPage() {
                     生成配对码
                   </button>
                   <button
-                    className="danger-button"
+                    className="secondary-button"
                     type="button"
                     disabled={busyAccountId === selectedAccount.id}
                     onClick={() => void runAccountAction(selectedAccount.id, 'logout')}
@@ -266,9 +299,7 @@ export function AccountsPage() {
               </div>
 
               {selectedAccount.session?.last_error ? (
-                <div className="warning-banner">
-                  {selectedAccount.session.last_error}
-                </div>
+                <div className="warning-banner">{selectedAccount.session.last_error}</div>
               ) : null}
 
               {selectedAccount.session?.pairing ? (
@@ -284,7 +315,7 @@ export function AccountsPage() {
                         <p className="pairing-value">二维码生成中...</p>
                       )}
                       <p className="pairing-raw-hint">
-                        如果扫码区空白，说明当前浏览器还没把二维码渲出来，下面保留原始内容便于排查。
+                        如果图片区空白，下面保留了原始内容，方便继续排查。
                       </p>
                     </div>
                   ) : null}
@@ -300,47 +331,50 @@ export function AccountsPage() {
               ) : (
                 <EmptyPanel
                   title="还没有配对内容"
-                  description="选择左边账号后，点击“开始二维码配对”或“生成配对码”，这里就会出现下一步提示。"
+                  description="点上面的二维码配对或生成配对码，这里就会实时显示下一步操作。"
                 />
               )}
             </div>
           ) : (
-            <EmptyPanel title="还没有选中账号" description="先创建一个账号卡片，右侧才会出现配对说明。" />
+            <EmptyPanel title="还没有选中账号" description="先创建一个账号卡片，右边才会出现状态和配对信息。" />
           )}
         </article>
       </section>
 
-      <section className="panel">
+      <section className="panel account-list-panel">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">账号列表</p>
-            <h3>当前可管理的账号</h3>
+            <h3>当前可管理账号</h3>
           </div>
           <span className="subtle-text">{loading ? '正在读取...' : `共 ${accounts.length} 个账号`}</span>
         </div>
 
         {accounts.length > 0 ? (
-          <div className="card-grid">
-            {accounts.map((account) => (
-              <button
-                key={account.id}
-                type="button"
-                className={`account-card${selectedAccount?.id === account.id ? ' selected' : ''}`}
-                onClick={() => setSelectedAccountId(account.id)}
-              >
-                <div className="account-card-header">
-                  <strong>{account.display_name}</strong>
-                  <StatusBadge status={account.session?.status ?? account.status} />
-                </div>
-                <p>{account.platform_label ?? '未填写内部标签'}</p>
-                <span>{account.phone_number ?? '未填写手机号'}</span>
-              </button>
-            ))}
+          <div className="account-list-scroll">
+            <div className="account-card-grid">
+              {accounts.map((account) => (
+                <button
+                  key={account.id}
+                  type="button"
+                  className={`account-card${selectedAccount?.id === account.id ? ' selected' : ''}`}
+                  onClick={() => setSelectedAccountId(account.id)}
+                >
+                  <div className="account-card-header">
+                    <strong>{account.display_name}</strong>
+                    <StatusBadge status={account.session?.status ?? account.status} />
+                  </div>
+                  <p>{account.platform_label ?? '未填写内部标签'}</p>
+                  <span>{account.phone_number ?? '未填写手机号'}</span>
+                  <small>{formatDateTime(account.session?.updated_at ?? account.updated_at)}</small>
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
           <EmptyPanel
             title="还没有账号"
-            description="先在上面的表单里创建一个账号卡片，再开始配对。这个页面现在已经会自动轮询状态。"
+            description="先在上面的表单里创建账号卡片，下面的列表会自动补齐并持续轮询状态。"
           />
         )}
       </section>

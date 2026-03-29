@@ -43,6 +43,9 @@ type whatsmeowSession struct {
 	client    *whatsmeow.Client
 	snapshot  SessionSnapshot
 	cancelQR  context.CancelFunc
+
+	catchUpUntil     time.Time
+	catchUpRequested map[string]time.Time
 }
 
 type historyChatMeta struct {
@@ -63,6 +66,13 @@ type WhatsmeowConnector struct {
 	sessions map[string]*whatsmeowSession
 	handler  func(Event)
 }
+
+const (
+	catchUpWindow            = 3 * time.Minute
+	catchUpMessageCount      = 50
+	catchUpChatRequestLimit  = 12
+	catchUpRequestTimeout    = 20 * time.Second
+)
 
 func NewWhatsmeowConnector(
 	db *sql.DB,
@@ -426,6 +436,7 @@ func (c *WhatsmeowConnector) ensureSession(ctx context.Context, accountID string
 			Status:    "pending",
 			UpdatedAt: c.now(),
 		},
+		catchUpRequested: make(map[string]time.Time),
 	}
 	if device.ID != nil {
 		session.snapshot.Status = "disconnected"
@@ -592,6 +603,7 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 			snapshot.UpdatedAt = now
 			return snapshot
 		})
+		c.activateCatchUpWindow(accountID, now)
 		c.persistDeviceBinding(context.Background(), accountID)
 		c.emitSnapshot(snapshot)
 	case *waEvents.Disconnected:
@@ -660,10 +672,22 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 			EmittedAt: c.now(),
 			Message:   envelope,
 		})
+
+		if event.SourceWebMsg == nil && event.UnavailableRequestID == "" {
+			c.maybeRequestCatchUpHistory(accountID, session.client, &event.Info)
+		}
 	case *waEvents.HistorySync:
 		if err := c.handleHistorySync(accountID, event); err != nil {
 			c.logger.Warn("failed to process history sync", "account_id", accountID, "error", err)
 		}
+	case *waEvents.UndecryptableMessage:
+		c.logger.Warn(
+			"received undecryptable whatsapp message; library will retry from primary device",
+			"account_id", accountID,
+			"chat_jid", event.Info.Chat.String(),
+			"message_id", event.Info.ID,
+			"is_unavailable", event.IsUnavailable,
+		)
 	}
 }
 
@@ -1083,6 +1107,90 @@ func (c *WhatsmeowConnector) persistDeviceBinding(ctx context.Context, accountID
 func (c *WhatsmeowConnector) hasPersistedDevice(accountID string) bool {
 	session, found := c.getSession(accountID)
 	return found && session.client.Store != nil && session.client.Store.ID != nil
+}
+
+func (c *WhatsmeowConnector) activateCatchUpWindow(accountID string, connectedAt time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	session, ok := c.sessions[accountID]
+	if !ok {
+		return
+	}
+
+	session.catchUpUntil = connectedAt.Add(catchUpWindow)
+	session.catchUpRequested = make(map[string]time.Time)
+}
+
+func (c *WhatsmeowConnector) maybeRequestCatchUpHistory(accountID string, client *whatsmeow.Client, info *waTypes.MessageInfo) {
+	if client == nil || info == nil || info.Chat.IsEmpty() || strings.TrimSpace(info.ID) == "" {
+		return
+	}
+
+	chatJID := info.Chat.ToNonAD()
+	if !c.reserveCatchUpRequest(accountID, chatJID.String()) {
+		return
+	}
+
+	go func(infoCopy waTypes.MessageInfo) {
+		ctx, cancel := context.WithTimeout(context.Background(), catchUpRequestTimeout)
+		defer cancel()
+
+		_, err := client.SendPeerMessage(ctx, client.BuildHistorySyncRequest(&infoCopy, catchUpMessageCount))
+		if err != nil {
+			c.releaseCatchUpRequest(accountID, chatJID.String())
+			c.logger.Warn(
+				"failed to request catch-up history",
+				"account_id", accountID,
+				"chat_jid", chatJID.String(),
+				"anchor_message_id", infoCopy.ID,
+				"error", err,
+			)
+			return
+		}
+
+		c.logger.Info(
+			"requested catch-up history after reconnect",
+			"account_id", accountID,
+			"chat_jid", chatJID.String(),
+			"anchor_message_id", infoCopy.ID,
+			"count", catchUpMessageCount,
+		)
+	}(*info)
+}
+
+func (c *WhatsmeowConnector) reserveCatchUpRequest(accountID, chatJID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	session, ok := c.sessions[accountID]
+	if !ok {
+		return false
+	}
+	if session.catchUpUntil.IsZero() || c.now().After(session.catchUpUntil) {
+		return false
+	}
+	if len(session.catchUpRequested) >= catchUpChatRequestLimit {
+		return false
+	}
+	if _, exists := session.catchUpRequested[chatJID]; exists {
+		return false
+	}
+
+	session.catchUpRequested[chatJID] = c.now()
+	return true
+}
+
+func (c *WhatsmeowConnector) releaseCatchUpRequest(accountID, chatJID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	session, ok := c.sessions[accountID]
+	if !ok {
+		return
+	}
+
+	delete(session.catchUpRequested, chatJID)
 }
 
 func (c *WhatsmeowConnector) getSession(accountID string) (*whatsmeowSession, bool) {

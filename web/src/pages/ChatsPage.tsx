@@ -20,7 +20,7 @@ import { EmptyPanel } from '../components/EmptyPanel'
 import { StatusBadge } from '../components/StatusBadge'
 
 const chatTypeOptions: Array<{ value: ChatType | ''; label: string }> = [
-  { value: '', label: '全部' },
+  { value: '', label: '全部类型' },
   { value: 'direct', label: '单聊' },
   { value: 'group', label: '群聊' },
   { value: 'broadcast', label: '广播' },
@@ -41,9 +41,9 @@ export function ChatsPage() {
   const [error, setError] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
   const pendingScrollModeRef = useRef<'bottom' | 'preserve' | 'none'>('bottom')
-  const previousTimelineMetricsRef = useRef<{ scrollHeight: number; scrollTop: number } | undefined>(
-    undefined,
-  )
+  const previousTimelineMetricsRef = useRef<
+    { scrollHeight: number; scrollTop: number } | undefined
+  >(undefined)
 
   const loadAccountsList = useCallback(async () => {
     try {
@@ -66,7 +66,7 @@ export function ChatsPage() {
           accountId: selectedAccountId || undefined,
           query: deferredSearch.trim() || undefined,
           chatType: selectedChatType,
-          limit: 60,
+          limit: 400,
         })
 
         setChats(response.chats)
@@ -88,47 +88,44 @@ export function ChatsPage() {
     [deferredSearch, selectedAccountId, selectedChatId, selectedChatType],
   )
 
-  const loadHistory = useCallback(
-    async (chatId: string, background = false) => {
-      if (background) {
-        pendingScrollModeRef.current = isNearBottom(timelineRef.current) ? 'bottom' : 'none'
-      } else {
-        pendingScrollModeRef.current = 'bottom'
-      }
+  const loadHistory = useCallback(async (chatId: string, background = false) => {
+    if (background) {
+      pendingScrollModeRef.current = isNearBottom(timelineRef.current) ? 'bottom' : 'none'
+    } else {
+      pendingScrollModeRef.current = 'bottom'
+    }
 
+    if (!background) {
+      setHistoryLoading(true)
+      setError(undefined)
+    }
+
+    try {
+      const response = await getChatMessages(chatId, { limit: 60 })
+      setHistory((current) => {
+        if (!current || current.chat.id !== response.chat.id || !background) {
+          return response
+        }
+
+        const latestIDs = new Set(response.messages.map((message) => message.id))
+        const olderMessages = current.messages.filter((message) => !latestIDs.has(message.id))
+
+        return {
+          ...response,
+          messages: [...olderMessages, ...response.messages],
+        }
+      })
+    } catch (loadError) {
       if (!background) {
-        setHistoryLoading(true)
-        setError(undefined)
+        setHistory(undefined)
+        setError(loadError instanceof Error ? loadError.message : '加载消息失败')
       }
-
-      try {
-        const response = await getChatMessages(chatId, { limit: 50 })
-        setHistory((current) => {
-          if (!current || current.chat.id !== response.chat.id || !background) {
-            return response
-          }
-
-          const latestIDs = new Set(response.messages.map((message) => message.id))
-          const olderMessages = current.messages.filter((message) => !latestIDs.has(message.id))
-
-          return {
-            ...response,
-            messages: [...olderMessages, ...response.messages],
-          }
-        })
-      } catch (loadError) {
-        if (!background) {
-          setHistory(undefined)
-          setError(loadError instanceof Error ? loadError.message : '加载消息失败')
-        }
-      } finally {
-        if (!background) {
-          setHistoryLoading(false)
-        }
+    } finally {
+      if (!background) {
+        setHistoryLoading(false)
       }
-    },
-    [],
-  )
+    }
+  }, [])
 
   useEffect(() => {
     void loadAccountsList()
@@ -222,7 +219,7 @@ export function ChatsPage() {
         }
       })
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '加载更多消息失败')
+      setError(loadError instanceof Error ? loadError.message : '加载更早消息失败')
     } finally {
       setHistoryLoading(false)
     }
@@ -231,20 +228,20 @@ export function ChatsPage() {
   const selectedChat = chats.find((item) => item.id === selectedChatId)
 
   return (
-    <div className="page-grid">
-      <section className="chat-workspace">
-        <aside className="chat-sidebar panel">
+    <div className="page page-chats">
+      <section className="chat-frame">
+        <aside className="panel chat-sidebar-panel">
           <div className="panel-heading">
             <div>
               <p className="eyebrow">筛选区</p>
-              <h3>找聊天</h3>
+              <h3>会话列表</h3>
             </div>
-            <span className="subtle-text">{listLoading ? '正在同步...' : `${chats.length} 条结果`}</span>
+            <span className="subtle-text">{listLoading ? '同步中...' : `${chats.length} 条结果`}</span>
           </div>
 
-          <div className="filter-stack">
-            <label className="field">
-              <span>按账号查看</span>
+          <div className="chat-filter-grid">
+            <label className="field compact-field">
+              <span>账号</span>
               <select value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}>
                 <option value="">全部账号</option>
                 {accounts.map((account) => (
@@ -255,61 +252,67 @@ export function ChatsPage() {
               </select>
             </label>
 
-            <label className="field">
-              <span>搜索关键词</span>
+            <label className="field compact-field">
+              <span>类型</span>
+              <select
+                value={selectedChatType}
+                onChange={(event) => setSelectedChatType(event.target.value as ChatType | '')}
+              >
+                {chatTypeOptions.map((option) => (
+                  <option key={option.value || 'all'} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="field compact-field chat-search-field">
+              <span>搜索</span>
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜聊天名、手机号、消息内容"
+                placeholder="搜联系人、群聊名、消息预览"
               />
             </label>
-
-            <div className="chip-row" role="tablist" aria-label="聊天类型">
-              {chatTypeOptions.map((option) => (
-                <button
-                  key={option.value || 'all'}
-                  type="button"
-                  className={`chip-button${selectedChatType === option.value ? ' active' : ''}`}
-                  onClick={() => setSelectedChatType(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
           </div>
 
           {chats.length > 0 ? (
-            <div className="chat-list">
-              {chats.map((chat) => (
-                <button
-                  key={chat.id}
-                  type="button"
-                  className={`chat-row${selectedChatId === chat.id ? ' selected' : ''}`}
-                  onClick={() => startTransition(() => setSelectedChatId(chat.id))}
-                >
-                  <div className="chat-row-header">
-                    <strong>{chat.title || chat.wa_chat_jid}</strong>
-                    <StatusBadge status={chat.chat_type} />
-                  </div>
-                  <p>{chat.latest_message_preview || fallbackMessageCopy(chat.latest_message_type)}</p>
-                  <span>{formatDateTime(chat.last_message_at)}</span>
-                </button>
-              ))}
+            <div className="chat-list-scroll">
+              <div className="chat-list">
+                {chats.map((chat) => (
+                  <button
+                    key={chat.id}
+                    type="button"
+                    className={`chat-row${selectedChatId === chat.id ? ' selected' : ''}`}
+                    onClick={() => startTransition(() => setSelectedChatId(chat.id))}
+                  >
+                    <div className="chat-row-header">
+                      <strong>{chat.title || chat.wa_chat_jid}</strong>
+                      <StatusBadge status={chat.chat_type} />
+                    </div>
+                    <p>{chat.latest_message_preview || fallbackMessageCopy(chat.latest_message_type)}</p>
+                    <div className="chat-row-meta">
+                      <span>{chat.wa_chat_jid}</span>
+                      <small>{formatDateTime(chat.last_message_at)}</small>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <EmptyPanel
-              title="没有找到聊天"
-              description="先确认账号已接入并开始归档，然后再按关键词或聊天类型筛选。"
+              title="没有找到会话"
+              description="先确认账号已成功接入，再按账号、类型或关键词筛选。"
             />
           )}
         </aside>
 
-        <section className="chat-stage panel">
+        <section className="panel chat-main-panel">
           {selectedChat && history ? (
             <>
               <div className="chat-stage-header">
                 <div>
-                  <p className="eyebrow">当前聊天</p>
+                  <p className="eyebrow">当前会话</p>
                   <h3>{history.chat.title || history.chat.wa_chat_jid}</h3>
                   <p className="subtle-text">
                     {history.chat.wa_chat_jid}
@@ -322,11 +325,16 @@ export function ChatsPage() {
                 </div>
               </div>
 
-              {history.has_more ? (
-                <button className="secondary-button align-start" type="button" onClick={() => void loadMoreMessages()}>
-                  {historyLoading ? '正在加载更早消息...' : '加载更早消息'}
-                </button>
-              ) : null}
+              <div className="chat-stage-toolbar">
+                {history.has_more ? (
+                  <button className="secondary-button" type="button" onClick={() => void loadMoreMessages()}>
+                    {historyLoading ? '正在加载更早消息...' : '加载更早消息'}
+                  </button>
+                ) : (
+                  <span className="subtle-text">更早消息已经到底了</span>
+                )}
+                <span className="subtle-text">新消息会在你靠近底部时自动贴底</span>
+              </div>
 
               <div ref={timelineRef} className="message-timeline">
                 {history.messages.map((message) => (
@@ -409,7 +417,7 @@ export function ChatsPage() {
           ) : (
             <EmptyPanel
               title="右侧还没有内容"
-              description="先在左边点开一条聊天。新员工只需要看右侧时间线，不需要理解任何底层协议概念。"
+              description="左边点一条会话，右边就会按固定高度展示时间线，滚动逻辑会保持最新消息在底部。"
             />
           )}
         </section>

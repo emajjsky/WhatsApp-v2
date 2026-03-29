@@ -442,6 +442,20 @@ export function getExportArtifactUrl(jobId: string) {
   return `${baseUrl}/api/exports/${jobId}/artifact`
 }
 
+export async function downloadExportArtifact(jobId: string) {
+  return downloadBlob(getExportArtifactUrl(jobId), {
+    fallbackFilename: `whatsapp-export-${jobId}`,
+  })
+}
+
+export async function downloadExportArchive(jobIds: string[]) {
+  return downloadBlob('/api/exports/archive', {
+    method: 'POST',
+    jsonBody: { job_ids: jobIds },
+    fallbackFilename: 'whatsapp-exports.zip',
+  })
+}
+
 export async function listAgentRules(params?: { accountId?: string; enabled?: boolean }) {
   const searchParams = new URLSearchParams()
   if (params?.accountId) {
@@ -553,4 +567,32 @@ export async function listAuditEntries(params?: {
 
   const queryString = searchParams.toString()
   return request<AuditListResponse>(`/api/audit${queryString ? `?${queryString}` : ''}`)
+}
+
+async function downloadBlob(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST'
+    jsonBody?: unknown
+    fallbackFilename: string
+  },
+) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: options.method ?? 'GET',
+    headers: options.jsonBody !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: options.jsonBody !== undefined ? JSON.stringify(options.jsonBody) : undefined,
+  })
+
+  if (!response.ok) {
+    throw new ApiError(response.status, response.statusText || '下载导出文件失败')
+  }
+
+  const disposition = response.headers.get('content-disposition') ?? ''
+  const match = disposition.match(/filename="([^"]+)"/i)
+  const filename = match?.[1] ?? options.fallbackFilename
+
+  return {
+    blob: await response.blob(),
+    filename,
+  }
 }
