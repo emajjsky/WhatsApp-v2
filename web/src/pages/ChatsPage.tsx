@@ -11,9 +11,11 @@ import {
   getMediaAssetUrl,
   listAccounts,
   listChats,
+  subscribeLiveUpdates,
   type AccountView,
   type ChatSummary,
   type ChatType,
+  type LiveUpdate,
   type MessageHistoryResponse,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
@@ -186,6 +188,22 @@ export function ChatsPage() {
       window.clearInterval(timer)
     }
   }, [loadChatsList, loadHistory, selectedChatId])
+
+  useEffect(() => {
+    function handleLiveUpdate(update: LiveUpdate) {
+      if (selectedAccountId && update.account_id !== selectedAccountId) {
+        return
+      }
+
+      void loadChatsList(true)
+
+      if (update.type === 'message_stored' && selectedChatId && update.chat_id === selectedChatId) {
+        void loadHistory(selectedChatId, true)
+      }
+    }
+
+    return subscribeLiveUpdates(handleLiveUpdate)
+  }, [loadChatsList, loadHistory, selectedAccountId, selectedChatId])
 
   async function loadMoreMessages() {
     if (!selectedChatId || !history?.next_before) {

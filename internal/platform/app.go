@@ -42,6 +42,7 @@ func New(cfg config.Config) (*App, error) {
 	var (
 		database        *storage.Postgres
 		sessionManager  *sessions.Manager
+		eventBridge     *sessions.EventBridge
 		deps            RouteDependencies
 		agentAutomation *agents.Automation
 	)
@@ -108,7 +109,8 @@ func New(cfg config.Config) (*App, error) {
 			return nil, err
 		}
 
-		sessionManager.SetEventBridge(sessions.NewEventBridge(ingestService, accountRepo, logger))
+		eventBridge = sessions.NewEventBridge(ingestService, accountRepo, logger)
+		sessionManager.SetEventBridge(eventBridge)
 
 		accountService, err := accounts.NewService(accountRepo, sessionManager)
 		if err != nil {
@@ -207,6 +209,12 @@ func New(cfg config.Config) (*App, error) {
 		exportHandler.SetAuditRecorder(auditService)
 		agentHandler.SetAuditRecorder(auditService)
 
+		liveHandler, err := sessions.NewLiveHandler(eventBridge)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+
 		existingAccounts, err := accountRepo.List(context.Background())
 		if err != nil {
 			_ = database.Close()
@@ -223,6 +231,7 @@ func New(cfg config.Config) (*App, error) {
 		deps.ChatHandler = chatHandler
 		deps.ExportHandler = exportHandler
 		deps.AgentHandler = agentHandler
+		deps.LiveHandler = liveHandler
 	} else {
 		logger.Warn("database is not configured; account, chat, export, and agent APIs are disabled")
 	}

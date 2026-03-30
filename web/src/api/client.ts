@@ -174,6 +174,18 @@ export interface ExportJobView {
   completed_at?: string
 }
 
+export type LiveUpdateType = 'session_changed' | 'message_stored'
+
+export interface LiveUpdate {
+  type: LiveUpdateType
+  account_id: string
+  status?: string
+  chat_id?: string
+  message_id?: string
+  occurred_at: string
+  summary: string
+}
+
 export type AgentReplyMode = 'suggest' | 'auto_send'
 export type AgentMatchMode = 'any' | 'all'
 export type AgentRunStatus =
@@ -414,6 +426,35 @@ export async function getChatMessages(chatId: string, params?: { limit?: number;
   return request<MessageHistoryResponse>(
     `/api/chats/${chatId}/messages${queryString ? `?${queryString}` : ''}`,
   )
+}
+
+export function subscribeLiveUpdates(
+  onUpdate: (update: LiveUpdate) => void,
+  onError?: (event: Event) => void,
+) {
+  const eventSource = new EventSource(`${baseUrl}/api/live`)
+
+  eventSource.onmessage = (event) => {
+    if (!event.data) {
+      return
+    }
+
+    try {
+      onUpdate(JSON.parse(event.data) as LiveUpdate)
+    } catch (error) {
+      console.warn('failed to parse live update payload', error)
+    }
+  }
+
+  if (onError) {
+    eventSource.onerror = (event) => {
+      onError(event)
+    }
+  }
+
+  return () => {
+    eventSource.close()
+  }
 }
 
 export function getMediaAssetUrl(mediaId: string) {

@@ -20,6 +20,7 @@ type RouteDependencies struct {
 	ChatHandler    *chats.Handler
 	ExportHandler  *exports.Handler
 	AgentHandler   *agents.Handler
+	LiveHandler    interface{ RegisterRoutes(mux *http.ServeMux) }
 	HealthService  *health.Service
 }
 
@@ -40,6 +41,9 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config, _ *slog.Logger, deps 
 	}
 	if deps.AgentHandler != nil {
 		deps.AgentHandler.RegisterRoutes(mux)
+	}
+	if deps.LiveHandler != nil {
+		deps.LiveHandler.RegisterRoutes(mux)
 	}
 	if deps.HealthService != nil {
 		mux.HandleFunc("/api/system/health", func(w http.ResponseWriter, r *http.Request) {

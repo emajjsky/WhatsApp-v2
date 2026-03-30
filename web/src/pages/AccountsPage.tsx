@@ -6,6 +6,7 @@ import {
   listAccounts,
   logoutAccount,
   startPairing,
+  subscribeLiveUpdates,
   type AccountView,
   type PairingMethod,
 } from '../api/client'
@@ -70,6 +71,12 @@ export function AccountsPage() {
     }, 4000)
 
     return () => window.clearInterval(timer)
+  }, [loadAccounts])
+
+  useEffect(() => {
+    return subscribeLiveUpdates(() => {
+      void loadAccounts(undefined, true)
+    })
   }, [loadAccounts])
 
   useEffect(() => {
