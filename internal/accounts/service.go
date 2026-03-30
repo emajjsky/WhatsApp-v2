@@ -26,7 +26,10 @@ type Service struct {
 	now              func() time.Time
 }
 
-const sessionStatusTimeout = 350 * time.Millisecond
+const (
+	sessionStatusTimeout    = 350 * time.Millisecond
+	logoutOperationTimeout  = 8 * time.Second
+)
 
 type CreateAccountInput struct {
 	DisplayName   string  `json:"display_name"`
@@ -163,7 +166,7 @@ func (s *Service) Logout(ctx context.Context, accountID string) (AccountView, er
 		return AccountView{}, fmt.Errorf("session lifecycle is not configured")
 	}
 
-	if err := s.sessionLifecycle.Logout(ctx, accountID); err != nil && !errors.Is(err, sessions.ErrSessionNotFound) {
+	if err := s.logoutSession(ctx, accountID); err != nil && !errors.Is(err, sessions.ErrSessionNotFound) {
 		return AccountView{}, err
 	}
 
@@ -189,7 +192,7 @@ func (s *Service) DeleteAccount(ctx context.Context, accountID string) (AccountV
 	// Best-effort logout to avoid leaving a live session around. We still allow deletion
 	// even if logout fails due to network/protocol issues.
 	if s.sessionLifecycle != nil {
-		_ = s.sessionLifecycle.Logout(ctx, accountID)
+		_ = s.logoutSession(ctx, accountID)
 	}
 
 	if err := s.repository.Delete(ctx, accountID); err != nil {
@@ -289,4 +292,15 @@ func (s *Service) getSessionSnapshotWithTimeout(ctx context.Context, accountID s
 	case <-timer.C:
 		return sessions.SessionSnapshot{}, context.DeadlineExceeded
 	}
+}
+
+func (s *Service) logoutSession(ctx context.Context, accountID string) error {
+	if s.sessionLifecycle == nil {
+		return fmt.Errorf("session lifecycle is not configured")
+	}
+
+	logoutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logoutOperationTimeout)
+	defer cancel()
+
+	return s.sessionLifecycle.Logout(logoutCtx, accountID)
 }

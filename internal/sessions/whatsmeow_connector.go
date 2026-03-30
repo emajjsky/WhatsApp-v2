@@ -72,6 +72,7 @@ const (
 	catchUpMessageCount      = 50
 	catchUpChatRequestLimit  = 12
 	catchUpRequestTimeout    = 20 * time.Second
+	logoutRequestTimeout     = 8 * time.Second
 )
 
 func NewWhatsmeowConnector(
@@ -243,21 +244,44 @@ func (c *WhatsmeowConnector) Logout(ctx context.Context, accountID string) error
 		session.cancelQR = nil
 	}
 
+	if session.client == nil {
+		c.removeSession(accountID)
+		return nil
+	}
+
 	if session.client.IsConnected() && session.client.IsLoggedIn() {
-		if err := session.client.Logout(ctx); err != nil {
-			return fmt.Errorf("logout whatsapp session: %w", err)
+		logoutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logoutRequestTimeout)
+		err := session.client.Logout(logoutCtx)
+		cancel()
+		if err != nil {
+			c.logger.Warn(
+				"failed to logout whatsapp session remotely; continuing local cleanup",
+				"account_id", accountID,
+				"error", err,
+			)
 		}
-	} else {
-		session.client.Disconnect()
-		if session.client.Store != nil && session.client.Store.ID != nil {
-			if err := session.client.Store.Delete(ctx); err != nil {
-				return fmt.Errorf("delete whatsapp device store: %w", err)
-			}
+	}
+
+	session.client.Disconnect()
+
+	if session.client.Store != nil && session.client.Store.ID != nil {
+		storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logoutRequestTimeout)
+		err := session.client.Store.Delete(storeCtx)
+		cancel()
+		if err != nil {
+			c.logger.Warn(
+				"failed to delete whatsapp device store during logout",
+				"account_id", accountID,
+				"error", err,
+			)
 		}
 	}
 
 	if c.bindingStore != nil {
-		if err := c.bindingStore.Delete(ctx, accountID); err != nil {
+		bindingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logoutRequestTimeout)
+		err := c.bindingStore.Delete(bindingCtx, accountID)
+		cancel()
+		if err != nil {
 			c.logger.Warn("failed to delete session binding", "account_id", accountID, "error", err)
 		}
 	}
