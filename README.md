@@ -1,46 +1,30 @@
 # WhatsApp 平台工具
 
-这是一个基于 `whatsmeow` 的 WhatsApp 工作台仓库，当前先聚焦三件事：
+这是一个基于 `whatsmeow` 的 WhatsApp 本地管理工具，当前交付范围只保留三块客户功能：
 
-- 接入多个 WhatsApp 账号
-- 查看聊天与媒体
-- 导出聊天记录到本地
+- 账号接入
+- 对话查看
+- 导出中心
 
-当前客户界面只保留：
-
-- `账号接入`
-- `对话查看`
-- `导出中心`
-
-`Agent` 相关后端仍保留在仓库里，但前端入口已隐藏，不作为当前客户交付范围。
+`Agent` 相关后端代码仍在仓库内，但前端入口已经隐藏，不属于当前客户交付范围。
 
 ## 当前已完成
 
 - Go API、配置加载、结构化日志、PostgreSQL migration
-- 真实 `whatsmeow` 会话连接器
-- 账号创建、配对、状态查询、退出登录、删除账号
+- 真实 `whatsmeow` 会话连接
+- 账号创建、二维码配对、配对码配对、状态查询、退出登录、删除账号
 - 实时消息入库
-- 聊天列表与消息历史查询
-- 导出任务创建、状态轮询、产物下载
-- 审计接口与系统健康接口
-- Docker 一键启动脚本
+- 会话列表与消息历史查询
+- 导出任务创建、状态查询、产物下载到本地
+- Docker 一键启动
+- 前端账号页、对话页、导出页当前版本已可直接使用
+- 实时更新已恢复为 SSE 推送，页面不再只靠轮询
 
-最近补过的关键点：
+## 当前仍需注意
 
-- 账号列表接口增加超时回退，避免会话状态卡住把页面拖白
-- 首页总览入口已移除，默认直接进入账号页
-- 账号列表改成固定尺寸卡片，多账号时内部滚动
-- 对话页重新排版，更适合大量会话浏览
-- 导出页改成按账号分组勾选会话
-- 导出任务按会话分别创建，每个会话单独出一个文件
-- 导出文件下载改成真正保存到本地
-- 重连后会尽量补拉断线期间漏掉的一段历史
-
-## 当前仍要注意
-
-- 断线期间消息现在是“尽量补齐”，不是“绝对全量补齐”
-- 如果部署机器无法直连 `web.whatsapp.com`，仍然需要 `WHATSAPP_PROXY_URL`
-- 导出任务目前还是 API 进程内异步执行，不是独立 worker
+- 断线期间消息目前是“尽量补齐”，不是“绝对全量补齐”
+- 如果部署机器无法直连 `web.whatsapp.com`，仍需要设置 `WHATSAPP_PROXY_URL`
+- 导出任务当前仍在 API 进程内异步执行，还没有拆成独立 worker
 
 ## 目录结构
 
@@ -54,18 +38,6 @@ deploy/
   migrations/
 docs/
 internal/
-  accounts/
-  audit/
-  agents/
-  chats/
-  config/
-  exports/
-  health/
-  httpx/
-  ingest/
-  platform/
-  sessions/
-  storage/
 scripts/
 web/
   src/
@@ -78,6 +50,7 @@ web/
 - `GET /`
 - `GET /healthz`
 - `GET /api/system/health`
+- `GET /api/live`
 
 账号：
 
@@ -106,7 +79,11 @@ web/
 
 ## 环境变量
 
-根目录放 `.env`，可以从 `.env.example` 复制。
+项目根目录需要 `.env`，首次部署请从 `.env.example` 复制：
+
+```bash
+cp .env.example .env
+```
 
 常用项：
 
@@ -126,29 +103,68 @@ WHATSAPP_PROXY_URL=
 
 ## 启动方式
 
-### 方式一：Docker 一键启动
+### Windows
 
-国内机器推荐直接双击：
+前置要求：
+
+- 已安装并启动 Docker Desktop
+- 项目根目录已有 `.env`
+
+国内网络推荐：
 
 - `scripts/docker-up.bat`
 
-它默认走 `daocloud` 镜像加速。
-
-停止：
-
-- `scripts/docker-down.bat`
-
-海外机器或能稳定直连 Docker Hub 的环境，可以用：
+海外网络或可稳定直连 Docker Hub 的环境：
 
 - `scripts/docker-up-overseas.bat`
 
-启动完成后：
+停止服务：
+
+- `scripts/docker-down.bat`
+
+说明：
+
+- 当前 `.bat` 只是 Windows 入口，底层仍依赖 `scripts/docker-up.ps1` 和 `scripts/docker-down.ps1`
+- 这两个 `.ps1` 现在还不能删除，删了 Windows 一键启动就会失效
+- `bat` 已补充失败提示，不会再一闪而过看不到错误
+
+### macOS / Linux
+
+前置要求：
+
+- macOS：已安装并启动 Docker Desktop
+- Linux：已安装 Docker Engine + Docker Compose，或者使用 Docker Desktop
+- 项目根目录已有 `.env`
+
+国内网络推荐：
+
+```bash
+cp .env.example .env
+sh scripts/docker-up.sh
+```
+
+海外网络：
+
+```bash
+cp .env.example .env
+sh scripts/docker-up-overseas.sh
+```
+
+停止服务：
+
+```bash
+sh scripts/docker-down.sh
+```
+
+## 启动完成后
 
 - Web: `http://127.0.0.1:5173/`
 - API: `http://127.0.0.1:8080/healthz`
 - Agent Runner: `http://127.0.0.1:8090/healthz`
 
-### 方式二：本机多进程开发
+## 本地开发
+
+如需本机多进程调试，可在 Windows PowerShell 中执行：
 
 ```powershell
 cd "path\to\repo"
@@ -168,8 +184,9 @@ cd "path\to\repo"
 
 - 按账号筛选
 - 按聊天类型筛选
-- 按关键词搜索
+- 按关键字搜索
 - 查看消息与媒体附件
+- 新消息到达时实时刷新
 
 ### 导出中心
 
@@ -177,7 +194,8 @@ cd "path\to\repo"
 - 支持日期范围
 - 默认 `Markdown`
 - 每个会话分别创建导出任务
-- 每个会话分别下载文件到本地
+- 每个会话分别下载到本地
+- 支持批量下载
 
 ## 已验证
 
@@ -185,11 +203,10 @@ cd "path\to\repo"
 - `cd web && npm run build`
 - `docker compose -f deploy/docker/docker-compose.all.yml up -d --build`
 - 导出文件下载到本地验证通过
+- `/api/live` SSE 实时推送验证通过
 
 ## 下一步建议
 
-建议继续按这个顺序推进：
-
 1. 继续增强断线期间消息补齐能力
 2. 把导出任务拆到独立 worker
-3. 视客户需求再决定是否恢复 Agent 客户入口
+3. 等客户确认后，再决定是否恢复 Agent 客户入口
