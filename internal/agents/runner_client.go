@@ -1,10 +1,12 @@
 package agents
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -68,6 +70,12 @@ type RunnerRunResponse struct {
 	Trace            map[string]any `json:"trace"`
 }
 
+type RunnerRunStreamEvent struct {
+	Type     string
+	Text     string
+	Response RunnerRunResponse
+}
+
 func NewRunnerClient(baseURL string) *RunnerClient {
 	return &RunnerClient{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
@@ -113,4 +121,101 @@ func (c *RunnerClient) Run(ctx context.Context, payload RunnerRunRequest) (Runne
 	}
 
 	return decoded, nil
+}
+
+func (c *RunnerClient) RunStream(
+	ctx context.Context,
+	payload RunnerRunRequest,
+	onEvent func(RunnerRunStreamEvent) error,
+) (RunnerRunResponse, error) {
+	if c == nil || strings.TrimSpace(c.baseURL) == "" {
+		return RunnerRunResponse{}, fmt.Errorf("agent runner is not configured")
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return RunnerRunResponse{}, fmt.Errorf("encode runner request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/runs/stream", bytes.NewReader(body))
+	if err != nil {
+		return RunnerRunResponse{}, fmt.Errorf("build runner stream request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	streamClient := *c.httpClient
+	streamClient.Timeout = 0
+
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return RunnerRunResponse{}, fmt.Errorf("call agent runner stream: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		message := strings.TrimSpace(string(detail))
+		if message == "" {
+			message = resp.Status
+		}
+		return RunnerRunResponse{}, fmt.Errorf("agent runner stream returned status %d: %s", resp.StatusCode, message)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var envelope struct {
+			Type  string `json:"type"`
+			Text  string `json:"text"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			return RunnerRunResponse{}, fmt.Errorf("decode runner stream event: %w", err)
+		}
+
+		switch envelope.Type {
+		case "start":
+			if onEvent != nil {
+				if err := onEvent(RunnerRunStreamEvent{Type: "start"}); err != nil {
+					return RunnerRunResponse{}, err
+				}
+			}
+		case "delta":
+			if onEvent != nil {
+				if err := onEvent(RunnerRunStreamEvent{Type: "delta", Text: envelope.Text}); err != nil {
+					return RunnerRunResponse{}, err
+				}
+			}
+		case "complete":
+			var decoded RunnerRunResponse
+			if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+				return RunnerRunResponse{}, fmt.Errorf("decode runner stream completion: %w", err)
+			}
+			if onEvent != nil {
+				if err := onEvent(RunnerRunStreamEvent{Type: "complete", Response: decoded}); err != nil {
+					return RunnerRunResponse{}, err
+				}
+			}
+			return decoded, nil
+		case "error":
+			if strings.TrimSpace(envelope.Error) == "" {
+				return RunnerRunResponse{}, fmt.Errorf("agent runner stream failed")
+			}
+			return RunnerRunResponse{}, fmt.Errorf("%s", envelope.Error)
+		default:
+			return RunnerRunResponse{}, fmt.Errorf("unknown runner stream event %q", envelope.Type)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return RunnerRunResponse{}, fmt.Errorf("read runner stream: %w", err)
+	}
+
+	return RunnerRunResponse{}, fmt.Errorf("agent runner stream ended before completion")
 }

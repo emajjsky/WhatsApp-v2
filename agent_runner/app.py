@@ -13,11 +13,11 @@ from uuid import uuid4
 try:
     from .dotenv import load_dotenv
     from .policy import evaluate_reply
-    from .providers.base import ProviderError, ProviderRequest, available_providers, build_provider
+    from .providers.base import ProviderError, ProviderRequest, ProviderResponse, available_providers, build_provider
 except ImportError:
     from dotenv import load_dotenv
     from policy import evaluate_reply
-    from providers.base import ProviderError, ProviderRequest, available_providers, build_provider
+    from providers.base import ProviderError, ProviderRequest, ProviderResponse, available_providers, build_provider
 
 
 def utc_now() -> datetime:
@@ -65,6 +65,9 @@ class AgentRunnerHandler(BaseHTTPRequestHandler):
         if route == "/v1/runs":
             self.handle_run_request()
             return
+        if route == "/v1/runs/stream":
+            self.handle_stream_request()
+            return
 
         self.respond(HTTPStatus.NOT_FOUND, {"error": "route not found"})
 
@@ -87,6 +90,33 @@ class AgentRunnerHandler(BaseHTTPRequestHandler):
 
         self.respond(HTTPStatus.OK, response)
 
+    def handle_stream_request(self) -> None:
+        try:
+            payload = self.read_json()
+            stream = self.server.prepare_run_stream(payload)
+        except ValueError as exc:
+            self.respond(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        except ProviderError as exc:
+            self.respond(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        except Exception as exc:
+            self.respond(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"internal runner error: {exc}"})
+            return
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+        try:
+            for event in stream:
+                self.write_ndjson(event)
+        except ProviderError as exc:
+            self.write_ndjson({"type": "error", "error": str(exc)})
+        except Exception as exc:
+            self.write_ndjson({"type": "error", "error": f"internal runner error: {exc}"})
+
     def read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length > 0 else b"{}"
@@ -108,6 +138,11 @@ class AgentRunnerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def write_ndjson(self, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n"
+        self.wfile.write(body)
+        self.wfile.flush()
+
 
 class AgentRunnerServer(ThreadingHTTPServer):
     def __init__(self, config: RunnerConfig) -> None:
@@ -115,11 +150,20 @@ class AgentRunnerServer(ThreadingHTTPServer):
         self.config = config
 
     def handle_run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        run_context = self.build_run_context(payload)
+        provider_response = run_context["provider"].generate(run_context["provider_request"])
+
+        return self.build_run_response(
+            run_context=run_context,
+            provider_response=provider_response,
+            draft=provider_response.draft,
+        )
+
+    def build_run_context(self, payload: dict[str, Any]) -> dict[str, Any]:
         request_id = str(payload.get("request_id") or uuid4())
         account_id = required_string(payload, "account_id")
         chat_id = required_string(payload, "chat_id")
         trigger_message_id = required_string(payload, "trigger_message_id")
-
         rule = expect_object(payload.get("rule"), "rule")
         message = expect_object(payload.get("message"), "message")
         context = expect_object(payload.get("context", {}), "context")
@@ -127,14 +171,12 @@ class AgentRunnerServer(ThreadingHTTPServer):
             payload.get("provider", {"type": self.config.default_provider}),
             "provider",
         )
-
         customer_message = required_string(message, "text")
         recent_messages = normalize_recent_messages(context.get("recent_messages"))
-
         provider = build_provider(provider_config)
         provider_request = ProviderRequest(
             rule_name=required_string(rule, "name"),
-            prompt_template=required_string(rule, "prompt_template"),
+            prompt_template=optional_string(rule.get("prompt_template")) or "",
             knowledge_summary=extract_knowledge_summary(rule),
             knowledge_references=extract_knowledge_references(rule),
             chat_title=optional_string(payload.get("chat_title")) or optional_string(context.get("chat_title")),
@@ -147,17 +189,39 @@ class AgentRunnerServer(ThreadingHTTPServer):
             },
         )
 
-        provider_response = provider.generate(provider_request)
-        recent_auto_replies = normalize_int(payload.get("recent_auto_replies"), default=0)
-        decision = evaluate_reply(rule, customer_message, provider_response.draft, recent_auto_replies)
-
-        response: dict[str, Any] = {
-            "run_id": request_id,
+        return {
+            "request_id": request_id,
             "account_id": account_id,
             "chat_id": chat_id,
             "trigger_message_id": trigger_message_id,
+            "rule": rule,
+            "customer_message": customer_message,
+            "recent_messages": recent_messages,
+            "provider": provider,
+            "provider_request": provider_request,
+            "recent_auto_replies": normalize_int(payload.get("recent_auto_replies"), default=0),
+        }
+
+    def build_run_response(
+        self,
+        run_context: dict[str, Any],
+        provider_response: ProviderResponse,
+        draft: str,
+    ) -> dict[str, Any]:
+        decision = evaluate_reply(
+            run_context["rule"],
+            run_context["customer_message"],
+            draft,
+            run_context["recent_auto_replies"],
+        )
+
+        response: dict[str, Any] = {
+            "run_id": run_context["request_id"],
+            "account_id": run_context["account_id"],
+            "chat_id": run_context["chat_id"],
+            "trigger_message_id": run_context["trigger_message_id"],
             "status": decision.status,
-            "draft": provider_response.draft,
+            "draft": draft,
             "block_reasons": decision.block_reasons,
             "provider": {
                 "type": provider_response.provider,
@@ -167,20 +231,52 @@ class AgentRunnerServer(ThreadingHTTPServer):
             "policy": asdict(decision),
             "trace": {
                 "generated_at": utc_now().isoformat(),
-                "recent_message_count": len(recent_messages),
-                "prompt_preview": provider_request.prompt_template[:160],
+                "recent_message_count": len(run_context["recent_messages"]),
+                "prompt_preview": run_context["provider_request"].prompt_template[:160],
             },
         }
 
         if decision.should_dispatch:
             response["dispatch"] = {
                 "channel": "session-gateway",
-                "account_id": account_id,
-                "chat_id": chat_id,
-                "message_text": provider_response.draft,
+                "account_id": run_context["account_id"],
+                "chat_id": run_context["chat_id"],
+                "message_text": draft,
             }
 
         return response
+
+    def prepare_run_stream(self, payload: dict[str, Any]):
+        run_context = self.build_run_context(payload)
+
+        def iterator():
+            yield {
+                "type": "start",
+                "run_id": run_context["request_id"],
+                "account_id": run_context["account_id"],
+                "chat_id": run_context["chat_id"],
+                "trigger_message_id": run_context["trigger_message_id"],
+            }
+
+            draft_parts: list[str] = []
+            for chunk in run_context["provider"].stream_generate(run_context["provider_request"]):
+                if not chunk:
+                    continue
+                draft_parts.append(chunk)
+                yield {"type": "delta", "text": chunk}
+
+            draft = "".join(draft_parts).strip()
+            provider_response = ProviderResponse(
+                provider=run_context["provider"].name,
+                model=run_context["provider"].model,
+                draft=draft,
+                usage={"output_characters": len(draft)},
+            )
+            response = self.build_run_response(run_context, provider_response, draft)
+            response["type"] = "complete"
+            yield response
+
+        return iterator()
 
 
 def required_string(payload: dict[str, Any], key: str) -> str:

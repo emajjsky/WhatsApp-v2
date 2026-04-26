@@ -56,6 +56,7 @@ type historyChatMeta struct {
 
 type WhatsmeowConnector struct {
 	mu           sync.RWMutex
+	db           *sql.DB
 	container    *sqlstore.Container
 	bindingStore *CredentialStoreAdapter
 	phoneLookup  AccountPhoneLookup
@@ -68,11 +69,13 @@ type WhatsmeowConnector struct {
 }
 
 const (
-	catchUpWindow            = 3 * time.Minute
-	catchUpMessageCount      = 50
-	catchUpChatRequestLimit  = 12
-	catchUpRequestTimeout    = 20 * time.Second
-	logoutRequestTimeout     = 8 * time.Second
+	catchUpWindow           = 3 * time.Minute
+	catchUpMessageCount     = 50
+	catchUpChatRequestLimit = 12
+	catchUpRequestTimeout   = 20 * time.Second
+	metadataRefreshTimeout  = 45 * time.Second
+	groupInfoRequestTimeout = 8 * time.Second
+	logoutRequestTimeout    = 8 * time.Second
 )
 
 func NewWhatsmeowConnector(
@@ -95,6 +98,7 @@ func NewWhatsmeowConnector(
 	}
 
 	return &WhatsmeowConnector{
+		db:           db,
 		container:    container,
 		bindingStore: bindingStore,
 		phoneLookup:  phoneLookup,
@@ -131,6 +135,7 @@ func (c *WhatsmeowConnector) StartPairing(ctx context.Context, accountID string,
 			return snapshot
 		})
 		c.emitSnapshot(snapshot)
+		c.refreshKnownMetadataAsync(accountID)
 		return snapshot, nil
 	}
 
@@ -630,6 +635,7 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 		c.activateCatchUpWindow(accountID, now)
 		c.persistDeviceBinding(context.Background(), accountID)
 		c.emitSnapshot(snapshot)
+		c.refreshKnownMetadataAsync(accountID)
 	case *waEvents.Disconnected:
 		snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
 			if c.hasPersistedDevice(accountID) {
@@ -713,6 +719,134 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 			"is_unavailable", event.IsUnavailable,
 		)
 	}
+}
+
+func (c *WhatsmeowConnector) refreshKnownMetadataAsync(accountID string) {
+	if c.db == nil {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), metadataRefreshTimeout)
+		defer cancel()
+
+		if err := c.refreshKnownGroupTitles(ctx, accountID); err != nil {
+			c.logger.Warn("failed to refresh whatsapp group titles", "account_id", accountID, "error", err)
+		}
+	}()
+}
+
+func (c *WhatsmeowConnector) refreshKnownGroupTitles(ctx context.Context, accountID string) error {
+	session, found := c.getSession(accountID)
+	if !found || session.client == nil || !session.client.IsConnected() || !session.client.IsLoggedIn() {
+		return nil
+	}
+
+	const query = `
+SELECT wa_chat_jid
+FROM chats
+WHERE account_id = $1
+  AND chat_type = $2
+ORDER BY COALESCE(last_message_at, updated_at) DESC
+LIMIT 100`
+
+	rows, err := c.db.QueryContext(ctx, query, accountID, ingest.ChatTypeGroup)
+	if err != nil {
+		return fmt.Errorf("list known group chats: %w", err)
+	}
+	defer rows.Close()
+
+	groupJIDs := make([]waTypes.JID, 0)
+	for rows.Next() {
+		var chatJIDText string
+		if err := rows.Scan(&chatJIDText); err != nil {
+			return fmt.Errorf("scan group chat jid: %w", err)
+		}
+
+		chatJID, err := waTypes.ParseJID(strings.TrimSpace(chatJIDText))
+		if err != nil {
+			c.logger.Warn("failed to parse stored group jid", "account_id", accountID, "jid", chatJIDText, "error", err)
+			continue
+		}
+		groupJIDs = append(groupJIDs, chatJID.ToNonAD())
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate group chats: %w", err)
+	}
+
+	for _, groupJID := range groupJIDs {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		title, participantCount, err := c.fetchGroupDisplayTitle(ctx, session.client, groupJID)
+		if err != nil {
+			c.logger.Warn("failed to fetch whatsapp group info", "account_id", accountID, "chat_jid", groupJID.String(), "error", err)
+			continue
+		}
+		if strings.TrimSpace(title) == "" {
+			continue
+		}
+
+		var participantCountArg any
+		if participantCount > 0 {
+			participantCountArg = participantCount
+		}
+
+		if _, err := c.db.ExecContext(ctx, `
+UPDATE chats
+SET
+    title = $3,
+    participant_count = COALESCE($4::integer, participant_count),
+    updated_at = NOW()
+WHERE account_id = $1
+  AND wa_chat_jid = $2`,
+			accountID,
+			groupJID.String(),
+			title,
+			participantCountArg,
+		); err != nil {
+			return fmt.Errorf("update group title for %s: %w", groupJID.String(), err)
+		}
+	}
+
+	return nil
+}
+
+func (c *WhatsmeowConnector) fetchGroupDisplayTitle(ctx context.Context, client *whatsmeow.Client, groupJID waTypes.JID) (string, int, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, groupInfoRequestTimeout)
+	groupInfo, err := client.GetGroupInfo(requestCtx, groupJID)
+	cancel()
+	if err != nil {
+		return "", 0, err
+	}
+
+	title := strings.TrimSpace(groupInfo.Name)
+	if parentJID := groupInfo.LinkedParentJID.ToNonAD(); !parentJID.IsEmpty() {
+		parentCtx, parentCancel := context.WithTimeout(ctx, groupInfoRequestTimeout)
+		parentInfo, parentErr := client.GetGroupInfo(parentCtx, parentJID)
+		parentCancel()
+		if parentErr == nil {
+			parentTitle := strings.TrimSpace(parentInfo.Name)
+			switch {
+			case parentTitle != "" && title != "" && parentTitle != title:
+				title = parentTitle + " / " + title
+			case parentTitle != "" && title == "":
+				title = parentTitle
+			}
+		} else {
+			c.logger.Warn("failed to fetch whatsapp parent group info", "chat_jid", groupJID.String(), "parent_jid", parentJID.String(), "error", parentErr)
+		}
+	}
+
+	participantCount := groupInfo.ParticipantCount
+	if participantCount <= 0 {
+		participantCount = len(groupInfo.Participants)
+	}
+
+	return title, participantCount, nil
 }
 
 func (c *WhatsmeowConnector) handleHistorySync(accountID string, event *waEvents.HistorySync) error {
@@ -982,7 +1116,7 @@ func mapChatType(jid waTypes.JID) ingest.ChatType {
 	}
 }
 
-func deriveChatTitle(info waTypes.MessageInfo, text *string) *string {
+func deriveChatTitle(info waTypes.MessageInfo, _ *string) *string {
 	switch mapChatType(info.Chat.ToNonAD()) {
 	case ingest.ChatTypeDirect:
 		if strings.TrimSpace(info.PushName) != "" {
@@ -991,15 +1125,8 @@ func deriveChatTitle(info waTypes.MessageInfo, text *string) *string {
 		if !info.Sender.IsEmpty() {
 			return stringPointer(info.Sender.ToNonAD().User)
 		}
-	case ingest.ChatTypeGroup:
-		if !info.Chat.IsEmpty() {
-			return stringPointer(info.Chat.User)
-		}
 	}
 
-	if text != nil && strings.TrimSpace(*text) != "" {
-		return stringPointer(info.Chat.User)
-	}
 	return nil
 }
 

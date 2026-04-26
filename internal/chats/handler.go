@@ -100,6 +100,21 @@ func (h *Handler) handleChatByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		httpx.WriteJSON(w, http.StatusOK, result)
+	case r.Method == http.MethodPost && action == "messages":
+		var input SendMessageInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID = chatID
+
+		result, err := h.service.SendMessage(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, result)
 	default:
 		http.NotFound(w, r)
 	}

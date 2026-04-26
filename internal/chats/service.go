@@ -9,12 +9,20 @@ import (
 	"time"
 
 	"whatsapp-agent-platform/internal/ingest"
+	"whatsapp-agent-platform/internal/sessions"
 )
 
 var ErrChatNotFound = errors.New("chat not found")
 
+const sendMessageTimeout = 12 * time.Second
+
+type messageSender interface {
+	SendText(ctx context.Context, accountID, chatJID, text string) (sessions.SendResult, error)
+}
+
 type Service struct {
 	repository *Repository
+	sender     messageSender
 }
 
 type ListChatsInput struct {
@@ -39,19 +47,32 @@ type GetMessagesInput struct {
 }
 
 type MessageHistoryResult struct {
-	Chat       ChatHeader     `json:"chat"`
-	Messages   []MessageView  `json:"messages"`
-	Limit      int            `json:"limit"`
-	HasMore    bool           `json:"has_more"`
-	NextBefore *time.Time     `json:"next_before,omitempty"`
+	Chat       ChatHeader    `json:"chat"`
+	Messages   []MessageView `json:"messages"`
+	Limit      int           `json:"limit"`
+	HasMore    bool          `json:"has_more"`
+	NextBefore *time.Time    `json:"next_before,omitempty"`
 }
 
-func NewService(repository *Repository) (*Service, error) {
+type SendMessageInput struct {
+	ChatID      string
+	MessageText string `json:"message_text"`
+}
+
+type SendMessageResult struct {
+	ChatID      string    `json:"chat_id"`
+	WAChatJID   string    `json:"wa_chat_jid"`
+	WAMessageID string    `json:"wa_message_id"`
+	MessageText string    `json:"message_text"`
+	SentAt      time.Time `json:"sent_at"`
+}
+
+func NewService(repository *Repository, sender messageSender) (*Service, error) {
 	if repository == nil {
 		return nil, fmt.Errorf("chat service requires a repository")
 	}
 
-	return &Service{repository: repository}, nil
+	return &Service{repository: repository, sender: sender}, nil
 }
 
 func (s *Service) ListChats(ctx context.Context, input ListChatsInput) (ListChatsResult, error) {
@@ -132,6 +153,42 @@ func (s *Service) GetMessages(ctx context.Context, input GetMessagesInput) (Mess
 		Limit:      limit,
 		HasMore:    hasMore,
 		NextBefore: nextBefore,
+	}, nil
+}
+
+func (s *Service) SendMessage(ctx context.Context, input SendMessageInput) (SendMessageResult, error) {
+	chatID := strings.TrimSpace(input.ChatID)
+	if chatID == "" {
+		return SendMessageResult{}, fmt.Errorf("chat_id is required")
+	}
+
+	messageText := strings.TrimSpace(input.MessageText)
+	if messageText == "" {
+		return SendMessageResult{}, fmt.Errorf("message_text is required")
+	}
+	if s.sender == nil {
+		return SendMessageResult{}, fmt.Errorf("chat service sender is not configured")
+	}
+
+	header, err := s.repository.GetChatHeader(ctx, chatID)
+	if err != nil {
+		return SendMessageResult{}, mapRepositoryError(chatID, err)
+	}
+
+	sendCtx, cancel := context.WithTimeout(ctx, sendMessageTimeout)
+	defer cancel()
+
+	sendResult, err := s.sender.SendText(sendCtx, header.AccountID, header.WAChatJID, messageText)
+	if err != nil {
+		return SendMessageResult{}, err
+	}
+
+	return SendMessageResult{
+		ChatID:      header.ID,
+		WAChatJID:   header.WAChatJID,
+		WAMessageID: sendResult.WAMessageID,
+		MessageText: messageText,
+		SentAt:      sendResult.SentAt,
 	}, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -41,6 +42,10 @@ func (r *Repository) CreateRule(ctx context.Context, rule AgentRule) error {
 	if err != nil {
 		return err
 	}
+	providerConfig, err := mustMarshalJSON(defaultJSONMap(rule.ProviderConfig))
+	if err != nil {
+		return err
+	}
 
 	const query = `
 INSERT INTO agent_rules (
@@ -55,8 +60,9 @@ INSERT INTO agent_rules (
     max_auto_replies_per_thread,
     blacklist_filter,
     prompt_template,
+    provider_config,
     knowledge_binding
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 
 	if _, err := r.db.ExecContext(
 		ctx,
@@ -72,6 +78,7 @@ INSERT INTO agent_rules (
 		rule.MaxAutoRepliesPerThread,
 		blacklistFilter,
 		rule.PromptTemplate,
+		providerConfig,
 		knowledgeBinding,
 	); err != nil {
 		return fmt.Errorf("create agent rule %q: %w", rule.ID, err)
@@ -97,6 +104,10 @@ func (r *Repository) UpdateRule(ctx context.Context, rule AgentRule) error {
 	if err != nil {
 		return err
 	}
+	providerConfig, err := mustMarshalJSON(defaultJSONMap(rule.ProviderConfig))
+	if err != nil {
+		return err
+	}
 
 	const query = `
 UPDATE agent_rules
@@ -111,7 +122,8 @@ SET
     max_auto_replies_per_thread = $9,
     blacklist_filter = $10,
     prompt_template = $11,
-    knowledge_binding = $12,
+    provider_config = $12,
+    knowledge_binding = $13,
     updated_at = NOW()
 WHERE id = $1`
 
@@ -129,6 +141,7 @@ WHERE id = $1`
 		rule.MaxAutoRepliesPerThread,
 		blacklistFilter,
 		rule.PromptTemplate,
+		providerConfig,
 		knowledgeBinding,
 	)
 	if err != nil {
@@ -152,6 +165,7 @@ SELECT
     max_auto_replies_per_thread,
     blacklist_filter,
     prompt_template,
+    provider_config,
     knowledge_binding,
     created_at,
     updated_at
@@ -163,6 +177,7 @@ WHERE id = $1`
 		scopeFilter      []byte
 		triggerFilter    []byte
 		blacklistFilter  []byte
+		providerConfig   []byte
 		knowledgeBinding []byte
 	)
 
@@ -178,6 +193,7 @@ WHERE id = $1`
 		&rule.MaxAutoRepliesPerThread,
 		&blacklistFilter,
 		&rule.PromptTemplate,
+		&providerConfig,
 		&knowledgeBinding,
 		&rule.CreatedAt,
 		&rule.UpdatedAt,
@@ -185,7 +201,7 @@ WHERE id = $1`
 		return AgentRule{}, fmt.Errorf("get agent rule %q: %w", id, err)
 	}
 
-	if err := decodeRuleFilters(&rule, scopeFilter, triggerFilter, blacklistFilter, knowledgeBinding); err != nil {
+	if err := decodeRuleFilters(&rule, scopeFilter, triggerFilter, blacklistFilter, providerConfig, knowledgeBinding); err != nil {
 		return AgentRule{}, err
 	}
 
@@ -208,6 +224,7 @@ SELECT
     max_auto_replies_per_thread,
     blacklist_filter,
     prompt_template,
+    provider_config,
     knowledge_binding,
     created_at,
     updated_at
@@ -228,6 +245,7 @@ ORDER BY enabled DESC, updated_at DESC, id DESC`, whereClause)
 			scopeFilter      []byte
 			triggerFilter    []byte
 			blacklistFilter  []byte
+			providerConfig   []byte
 			knowledgeBinding []byte
 		)
 
@@ -243,6 +261,7 @@ ORDER BY enabled DESC, updated_at DESC, id DESC`, whereClause)
 			&rule.MaxAutoRepliesPerThread,
 			&blacklistFilter,
 			&rule.PromptTemplate,
+			&providerConfig,
 			&knowledgeBinding,
 			&rule.CreatedAt,
 			&rule.UpdatedAt,
@@ -250,7 +269,7 @@ ORDER BY enabled DESC, updated_at DESC, id DESC`, whereClause)
 			return nil, fmt.Errorf("scan agent rule row: %w", err)
 		}
 
-		if err := decodeRuleFilters(&rule, scopeFilter, triggerFilter, blacklistFilter, knowledgeBinding); err != nil {
+		if err := decodeRuleFilters(&rule, scopeFilter, triggerFilter, blacklistFilter, providerConfig, knowledgeBinding); err != nil {
 			return nil, err
 		}
 
@@ -289,6 +308,72 @@ func (r *Repository) DeleteRule(ctx context.Context, id string) error {
 	}
 
 	return ensureAffected(result, id)
+}
+
+func (r *Repository) UpsertSettings(ctx context.Context, settings AgentSettings) error {
+	const query = `
+INSERT INTO agent_settings (
+    account_id,
+    provider,
+    model,
+    base_url,
+    api_key,
+    prompt_template
+) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (account_id) DO UPDATE
+SET
+    provider = EXCLUDED.provider,
+    model = EXCLUDED.model,
+    base_url = EXCLUDED.base_url,
+    api_key = EXCLUDED.api_key,
+    prompt_template = EXCLUDED.prompt_template,
+    updated_at = NOW()`
+
+	if _, err := r.db.ExecContext(
+		ctx,
+		query,
+		settings.AccountID,
+		settings.Provider,
+		settings.Model,
+		settings.BaseURL,
+		settings.APIKey,
+		settings.PromptTemplate,
+	); err != nil {
+		return fmt.Errorf("upsert agent settings for account %q: %w", settings.AccountID, err)
+	}
+
+	return nil
+}
+
+func (r *Repository) GetSettings(ctx context.Context, accountID string) (AgentSettings, error) {
+	const query = `
+SELECT
+    account_id,
+    provider,
+    model,
+    base_url,
+    api_key,
+    prompt_template,
+    created_at,
+    updated_at
+FROM agent_settings
+WHERE account_id = $1`
+
+	var settings AgentSettings
+	if err := r.db.QueryRowContext(ctx, query, accountID).Scan(
+		&settings.AccountID,
+		&settings.Provider,
+		&settings.Model,
+		&settings.BaseURL,
+		&settings.APIKey,
+		&settings.PromptTemplate,
+		&settings.CreatedAt,
+		&settings.UpdatedAt,
+	); err != nil {
+		return AgentSettings{}, fmt.Errorf("get agent settings for account %q: %w", accountID, err)
+	}
+
+	return settings, nil
 }
 
 func (r *Repository) CreateRun(ctx context.Context, run AgentRun) error {
@@ -613,6 +698,7 @@ func decodeRuleFilters(
 	scopeFilter []byte,
 	triggerFilter []byte,
 	blacklistFilter []byte,
+	providerConfig []byte,
 	knowledgeBinding []byte,
 ) error {
 	if err := unmarshalOrDefault(scopeFilter, &rule.ScopeFilter); err != nil {
@@ -623,6 +709,12 @@ func decodeRuleFilters(
 	}
 	if err := unmarshalOrDefault(blacklistFilter, &rule.BlacklistFilter); err != nil {
 		return fmt.Errorf("decode rule %q blacklist filter: %w", rule.ID, err)
+	}
+	if err := unmarshalOrDefault(providerConfig, &rule.ProviderConfig); err != nil {
+		return fmt.Errorf("decode rule %q provider config: %w", rule.ID, err)
+	}
+	if rule.ProviderConfig == nil {
+		rule.ProviderConfig = make(map[string]any)
 	}
 	if len(knowledgeBinding) == 0 {
 		rule.KnowledgeBinding = nil
@@ -647,8 +739,20 @@ func mustMarshalJSON(value any) ([]byte, error) {
 	return body, nil
 }
 
-func marshalNullableJSON(value any) ([]byte, error) {
+func defaultJSONMap(value map[string]any) map[string]any {
 	if value == nil {
+		return map[string]any{}
+	}
+
+	return value
+}
+
+func marshalNullableJSON(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() == reflect.Ptr && reflected.IsNil() {
 		return nil, nil
 	}
 

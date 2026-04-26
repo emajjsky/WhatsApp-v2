@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useMemo, useState } from 'react'
 import type {
   AccountView,
   AgentMatchMode,
@@ -15,15 +15,20 @@ const chatTypeOptions: Array<{ value: ChatType; label: string }> = [
   { value: 'status', label: '状态' },
 ]
 
-interface MatchModeOption {
-  value: AgentMatchMode
-  label: string
-}
-
-const matchModeOptions: MatchModeOption[] = [
-  { value: 'any', label: '命中任一关键词即可' },
-  { value: 'all', label: '必须同时命中所有关键词' },
+const matchModeOptions: Array<{ value: AgentMatchMode; label: string }> = [
+  { value: 'any', label: '命中任一关键词' },
+  { value: 'all', label: '必须命中全部关键词' },
 ]
+
+const editorSections = [
+  { id: 'basic', label: '基础' },
+  { id: 'scope', label: '范围' },
+  { id: 'trigger', label: '触发' },
+  { id: 'prompt', label: '提示词' },
+  { id: 'safety', label: '安全' },
+] as const
+
+type EditorSection = (typeof editorSections)[number]['id']
 
 export interface RuleEditorValue {
   id?: string
@@ -67,17 +72,41 @@ export function RuleEditor({
   onCancel,
   canCancel,
 }: RuleEditorProps) {
+  const [activeSection, setActiveSection] = useState<EditorSection>('basic')
   const [chatPicker, setChatPicker] = useState('')
 
-  const accountChats = chats.filter((chat) => chat.account_id === value.accountId)
-  const remainingChats = accountChats.filter((chat) => !value.scopeChatIds.includes(chat.id))
-
+  const accountChats = useMemo(
+    () => chats.filter((chat) => chat.account_id === value.accountId),
+    [chats, value.accountId],
+  )
+  const remainingChats = useMemo(
+    () => accountChats.filter((chat) => !value.scopeChatIds.includes(chat.id)),
+    [accountChats, value.scopeChatIds],
+  )
   const selectedChatId = remainingChats.some((chat) => chat.id === chatPicker)
     ? chatPicker
     : remainingChats[0]?.id ?? ''
 
   function update(next: Partial<RuleEditorValue>) {
     onChange({ ...value, ...next })
+  }
+
+  function updateReplyMode(replyMode: AgentReplyMode) {
+    if (replyMode === 'manual') {
+      update({ replyMode, enabled: false })
+      return
+    }
+    if (replyMode === 'auto_send') {
+      update({
+        replyMode,
+        enabled: false,
+        cooldownSeconds: value.cooldownSeconds || 300,
+        maxAutoRepliesPerThread: value.maxAutoRepliesPerThread || 1,
+      })
+      return
+    }
+
+    update({ replyMode })
   }
 
   function toggleChatType(chatType: ChatType) {
@@ -95,18 +124,24 @@ export function RuleEditor({
     }
 
     update({ scopeChatIds: [...value.scopeChatIds, selectedChatId] })
+    setChatPicker('')
   }
 
   function removeScopedChat(chatId: string) {
     update({ scopeChatIds: value.scopeChatIds.filter((item) => item !== chatId) })
   }
 
+  function getScopedChatLabel(chatId: string) {
+    const chat = chats.find((item) => item.id === chatId)
+    return chat?.title || chat?.wa_chat_jid || chatId
+  }
+
   return (
-    <section className="panel">
+    <section className="panel agent-editor-panel">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">规则编辑</p>
-          <h3>{value.id ? '修改当前规则' : '新建一条规则草案'}</h3>
+          <h3>{value.id ? '修改当前规则' : '新建规则草稿'}</h3>
         </div>
         <div className="chip-row">
           <StatusBadge status={value.enabled ? 'enabled' : 'disabled'} />
@@ -114,268 +149,322 @@ export function RuleEditor({
         </div>
       </div>
 
-      <form className="form-grid" onSubmit={onSubmit}>
-        <div className="two-column-grid">
-          <label className="field">
-            <span>绑定账号</span>
-            <select
-              value={value.accountId}
-              onChange={(event) =>
-                update({
-                  accountId: event.target.value,
-                  scopeChatIds: value.scopeChatIds.filter((chatId) =>
-                    chats.some(
-                      (chat) => chat.id === chatId && chat.account_id === event.target.value,
-                    ),
-                  ),
-                })
-              }
-            >
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.display_name}
-                </option>
-              ))}
-            </select>
-          </label>
+      <form className="form-grid agent-editor-form agent-editor-form-modern" onSubmit={onSubmit}>
+        <div className="choice-grid agent-mode-grid">
+          <button
+            type="button"
+            className={`mode-card${value.replyMode === 'manual' ? ' active' : ''}`}
+            onClick={() => updateReplyMode('manual')}
+          >
+            <div className="mode-card-header">
+              <strong>手动记录</strong>
+              <StatusBadge status="manual" />
+            </div>
+            <p>只保存适用范围、提示词和风控边界，不调用模型。</p>
+          </button>
 
-          <label className="field">
-            <span>规则名称</span>
-            <input
-              value={value.name}
-              onChange={(event) => update({ name: event.target.value })}
-              placeholder="例如：售前咨询建议回复"
-            />
-          </label>
-        </div>
-
-        <div className="choice-grid">
           <button
             type="button"
             className={`mode-card${value.replyMode === 'suggest' ? ' active' : ''}`}
-            onClick={() => update({ replyMode: 'suggest', enabled: value.id ? value.enabled : false })}
+            onClick={() => updateReplyMode('suggest')}
           >
             <div className="mode-card-header">
-              <strong>先出建议草稿</strong>
+              <strong>生成草稿</strong>
               <StatusBadge status="suggest" />
             </div>
-            <p>系统只给建议，不会自己发出去。适合新手员工先练手，也适合高风险场景。</p>
+            <p>命中规则后生成待审核草稿，由你决定写回或发送。</p>
           </button>
 
           <button
             type="button"
             className={`mode-card${value.replyMode === 'auto_send' ? ' active danger' : ''}`}
-            onClick={() => update({ replyMode: 'auto_send', enabled: false })}
+            onClick={() => updateReplyMode('auto_send')}
           >
             <div className="mode-card-header">
               <strong>允许自动发送</strong>
               <StatusBadge status="auto_send" />
             </div>
-            <p>保存后仍保持停用，需要你回到左侧手动启用。这是故意做的二次确认，不会偷着开。</p>
+            <p>保存后仍保持停用，需要在左侧列表里手动启用。</p>
           </button>
         </div>
 
-        <div className="two-column-grid">
-          <section className="helper-card">
-            <strong>适用范围</strong>
-            <p>先选聊天类型，再决定是否缩小到某几个固定聊天。</p>
-            <div className="chip-row">
-              {chatTypeOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`chip-button${value.scopeChatTypes.includes(option.value) ? ' active' : ''}`}
-                  onClick={() => toggleChatType(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+        <div className="agent-editor-section-tabs" role="tablist" aria-label="规则配置分段">
+          {editorSections.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={`section-tab${activeSection === section.id ? ' active' : ''}`}
+              onClick={() => setActiveSection(section.id)}
+              aria-pressed={activeSection === section.id}
+            >
+              {section.label}
+            </button>
+          ))}
+        </div>
 
-            <div className="inline-select-row">
-              <select value={selectedChatId} onChange={(event) => setChatPicker(event.target.value)}>
-                <option value="">选择一个固定聊天</option>
-                {remainingChats.map((chat) => (
-                  <option key={chat.id} value={chat.id}>
-                    {chat.title || chat.wa_chat_jid}
-                  </option>
+        <div className="agent-editor-section-body">
+          {activeSection === 'basic' ? (
+            <section className="helper-card agent-section-card">
+              <div className="two-column-grid">
+                <label className="field">
+                  <span>绑定账号</span>
+                  <select
+                    value={value.accountId}
+                    onChange={(event) =>
+                      update({
+                        accountId: event.target.value,
+                        scopeChatIds: value.scopeChatIds.filter((chatId) =>
+                          chats.some(
+                            (chat) => chat.id === chatId && chat.account_id === event.target.value,
+                          ),
+                        ),
+                      })
+                    }
+                  >
+                    {accounts.length === 0 ? <option value="">没有可用账号</option> : null}
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="field">
+                  <span>规则名称</span>
+                  <input
+                    value={value.name}
+                    onChange={(event) => update({ name: event.target.value })}
+                    placeholder="例如：售前咨询回复"
+                  />
+                </label>
+              </div>
+
+              {value.replyMode !== 'auto_send' ? (
+                <label className="checkbox-row agent-enable-row">
+                  <input
+                    type="checkbox"
+                    checked={value.enabled}
+                    onChange={(event) => update({ enabled: event.target.checked })}
+                    disabled={value.replyMode === 'manual'}
+                  />
+                  <span>{value.replyMode === 'manual' ? '手动记录不需要启用' : '保存后启用这条规则'}</span>
+                </label>
+              ) : (
+                <div className="warning-banner">
+                  自动发送规则保存后会保持停用，需要你在左侧规则列表里再次启用。
+                </div>
+              )}
+            </section>
+          ) : null}
+
+          {activeSection === 'scope' ? (
+            <section className="helper-card agent-section-card">
+              <strong>适用范围</strong>
+              <div className="chip-row">
+                {chatTypeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`chip-button${value.scopeChatTypes.includes(option.value) ? ' active' : ''}`}
+                    onClick={() => toggleChatType(option.value)}
+                  >
+                    {option.label}
+                  </button>
                 ))}
-              </select>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={addScopedChat}
-                disabled={!selectedChatId}
-              >
-                加入范围
-              </button>
-            </div>
+              </div>
 
-            {value.scopeChatIds.length > 0 ? (
-              <div className="token-list">
-                {value.scopeChatIds.map((chatId) => {
-                  const chat = chats.find((item) => item.id === chatId)
-                  return (
+              <div className="inline-select-row">
+                <select value={selectedChatId} onChange={(event) => setChatPicker(event.target.value)}>
+                  <option value="">选择固定会话</option>
+                  {remainingChats.map((chat) => (
+                    <option key={chat.id} value={chat.id}>
+                      {chat.title || chat.wa_chat_jid}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={addScopedChat}
+                  disabled={!selectedChatId}
+                >
+                  加入范围
+                </button>
+              </div>
+
+              {value.scopeChatIds.length > 0 ? (
+                <div className="token-list">
+                  {value.scopeChatIds.map((chatId) => (
                     <button
                       key={chatId}
                       type="button"
                       className="token-button"
                       onClick={() => removeScopedChat(chatId)}
                     >
-                      {chat?.title || chat?.wa_chat_jid || chatId}
+                      {getScopedChatLabel(chatId)}
                     </button>
-                  )
-                })}
-              </div>
-            ) : (
-              <p className="subtle-text">未指定固定聊天时，会按上面勾选的聊天类型生效。</p>
-            )}
-          </section>
-
-          <section className="helper-card">
-            <strong>触发条件</strong>
-            <div className="form-grid">
-              <label className="field">
-                <span>关键词，每行一个</span>
-                <textarea
-                  rows={5}
-                  value={value.triggerKeywordsText}
-                  onChange={(event) => update({ triggerKeywordsText: event.target.value })}
-                  placeholder="价格&#10;发货&#10;库存"
-                />
-              </label>
-
-              <label className="field">
-                <span>关键词命中方式</span>
-                <select
-                  value={value.matchMode}
-                  onChange={(event) => update({ matchMode: event.target.value as AgentMatchMode })}
-                >
-                  {matchModeOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
                   ))}
-                </select>
-              </label>
+                </div>
+              ) : (
+                <p className="subtle-text">未指定固定会话时，会按聊天类型生效。</p>
+              )}
+            </section>
+          ) : null}
 
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={value.ignoreFromMe}
-                  onChange={(event) => update({ ignoreFromMe: event.target.checked })}
-                />
-                <span>忽略我方自己发出的消息，避免规则自触发</span>
-              </label>
+          {activeSection === 'trigger' ? (
+            <section className="helper-card agent-section-card">
+              <div className="two-column-grid agent-editor-split">
+                <label className="field">
+                  <span>关键词，每行一个</span>
+                  <textarea
+                    rows={8}
+                    value={value.triggerKeywordsText}
+                    onChange={(event) => update({ triggerKeywordsText: event.target.value })}
+                    placeholder={'价格\n发货\n库存'}
+                  />
+                </label>
 
+                <div className="form-grid">
+                  <label className="field">
+                    <span>命中方式</span>
+                    <select
+                      value={value.matchMode}
+                      onChange={(event) => update({ matchMode: event.target.value as AgentMatchMode })}
+                    >
+                      {matchModeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="field">
+                    <span>最少消息字数</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={value.minMessageChars}
+                      onChange={(event) => update({ minMessageChars: Number(event.target.value || 0) })}
+                    />
+                  </label>
+
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={value.ignoreFromMe}
+                      onChange={(event) => update({ ignoreFromMe: event.target.checked })}
+                    />
+                    <span>忽略我方自己发出的消息</span>
+                  </label>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {activeSection === 'prompt' ? (
+            <section className="helper-card agent-section-card">
               <label className="field">
-                <span>最少消息字数</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={value.minMessageChars}
-                  onChange={(event) =>
-                    update({ minMessageChars: Number(event.target.value || 0) })
-                  }
+                <span>规则级提示词覆盖</span>
+                <textarea
+                  rows={7}
+                  value={value.promptTemplate}
+                  onChange={(event) => update({ promptTemplate: event.target.value })}
+                  placeholder="留空时使用账号级 AI 配置里的全局提示词。"
                 />
               </label>
-            </div>
-          </section>
+
+              <div className="two-column-grid agent-editor-split">
+                <label className="field">
+                  <span>知识摘要</span>
+                  <textarea
+                    rows={5}
+                    value={value.knowledgeSummary}
+                    onChange={(event) => update({ knowledgeSummary: event.target.value })}
+                    placeholder="例如：退换货说明、营业时间、物流话术。"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>参考资料，每行一个</span>
+                  <textarea
+                    rows={5}
+                    value={value.knowledgeReferencesText}
+                    onChange={(event) => update({ knowledgeReferencesText: event.target.value })}
+                    placeholder={'退货政策文档\n运费说明\n售后 SOP'}
+                  />
+                </label>
+              </div>
+            </section>
+          ) : null}
+
+          {activeSection === 'safety' ? (
+            <section className="helper-card agent-section-card">
+              <div className="two-column-grid agent-editor-split">
+                <div className="form-grid">
+                  <label className="field">
+                    <span>冷却时间（秒）</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={value.cooldownSeconds}
+                      onChange={(event) => update({ cooldownSeconds: Number(event.target.value || 0) })}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>单个聊天最多自动回复次数</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={value.maxAutoRepliesPerThread}
+                      onChange={(event) =>
+                        update({ maxAutoRepliesPerThread: Number(event.target.value || 0) })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="form-grid">
+                  <label className="field">
+                    <span>禁止词，每行一个</span>
+                    <textarea
+                      rows={5}
+                      value={value.blockedKeywordsText}
+                      onChange={(event) => update({ blockedKeywordsText: event.target.value })}
+                      placeholder={'退款\n赔偿\n验证码'}
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>敏感主题，每行一个</span>
+                    <textarea
+                      rows={5}
+                      value={value.sensitiveTopicsText}
+                      onChange={(event) => update({ sensitiveTopicsText: event.target.value })}
+                      placeholder={'支付\n法务\n账号安全'}
+                    />
+                  </label>
+                </div>
+              </div>
+            </section>
+          ) : null}
         </div>
 
-        <label className="field">
-          <span>回复提示词</span>
-          <textarea
-            rows={8}
-            value={value.promptTemplate}
-            onChange={(event) => update({ promptTemplate: event.target.value })}
-            placeholder="告诉 Agent 该怎么回复、哪些话题必须转人工、语气应该怎样。"
-          />
-        </label>
-
-        <div className="two-column-grid">
-          <section className="helper-card">
-            <strong>安全边界</strong>
-            <div className="form-grid">
-              <label className="field">
-                <span>冷却时间（秒）</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={value.cooldownSeconds}
-                  onChange={(event) =>
-                    update({ cooldownSeconds: Number(event.target.value || 0) })
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span>单个聊天最多自动回复次数</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={value.maxAutoRepliesPerThread}
-                  onChange={(event) =>
-                    update({ maxAutoRepliesPerThread: Number(event.target.value || 0) })
-                  }
-                />
-              </label>
-
-              <label className="field">
-                <span>禁止词，每行一个</span>
-                <textarea
-                  rows={5}
-                  value={value.blockedKeywordsText}
-                  onChange={(event) => update({ blockedKeywordsText: event.target.value })}
-                  placeholder="退款&#10;赔偿&#10;验证码"
-                />
-              </label>
-
-              <label className="field">
-                <span>敏感主题，每行一个</span>
-                <textarea
-                  rows={5}
-                  value={value.sensitiveTopicsText}
-                  onChange={(event) => update({ sensitiveTopicsText: event.target.value })}
-                  placeholder="支付&#10;法务&#10;账号安全"
-                />
-              </label>
-            </div>
-          </section>
-
-          <section className="helper-card">
-            <strong>知识补充</strong>
-            <div className="form-grid">
-              <label className="field">
-                <span>知识摘要</span>
-                <textarea
-                  rows={4}
-                  value={value.knowledgeSummary}
-                  onChange={(event) => update({ knowledgeSummary: event.target.value })}
-                  placeholder="例如：退换货说明、营业时间、常见物流话术。"
-                />
-              </label>
-
-              <label className="field">
-                <span>参考资料，每行一个</span>
-                <textarea
-                  rows={6}
-                  value={value.knowledgeReferencesText}
-                  onChange={(event) => update({ knowledgeReferencesText: event.target.value })}
-                  placeholder="退货政策文档&#10;运费说明&#10;售后SOP"
-                />
-              </label>
-            </div>
-          </section>
-        </div>
-
-        {value.replyMode === 'auto_send' ? (
+        {value.replyMode === 'manual' ? (
           <div className="warning-banner">
-            自动发送规则保存后会保持停用。你需要回到左侧再点一次“启用规则”，这是给新手员工留的安全闸门。
+            当前是手动记录模式：系统不会生成草稿，也不会自动发送。
           </div>
         ) : null}
 
-        <div className="button-row">
+        {value.replyMode === 'auto_send' ? (
+          <div className="warning-banner">
+            自动发送需要额外启用；建议先用“生成草稿”跑通，再切到自动发送。
+          </div>
+        ) : null}
+
+        <div className="button-row agent-editor-actions">
           <button className="primary-button" type="submit" disabled={submitting || accounts.length === 0}>
             {submitting ? '正在保存...' : value.id ? '保存规则' : '创建规则'}
           </button>

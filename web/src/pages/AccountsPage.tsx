@@ -240,8 +240,8 @@ export function AccountsPage() {
           </div>
 
           {selectedAccount ? (
-            <div className="detail-stack account-detail-stack">
-              <div className="detail-card">
+            <div className="account-detail-workbench">
+              <div className="detail-card account-summary-card">
                 <div className="detail-card-header">
                   <div>
                     <h4>{selectedAccount.display_name}</h4>
@@ -310,7 +310,7 @@ export function AccountsPage() {
               ) : null}
 
               {selectedAccount.session?.pairing ? (
-                <div className="pairing-card">
+                <div className="pairing-card account-pairing-card">
                   <p className="eyebrow">当前配对内容</p>
                   <h4>{selectedAccount.session.pairing.method === 'qr' ? '扫码配对' : '配对码'}</h4>
 

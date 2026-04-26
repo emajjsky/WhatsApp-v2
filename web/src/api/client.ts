@@ -133,6 +133,7 @@ export interface MessageView {
   chat_id: string
   wa_message_id: string
   sender_jid: string
+  sender_name?: string
   from_me: boolean
   message_type: MessageType
   text_content?: string
@@ -149,6 +150,18 @@ export interface MessageHistoryResponse {
   limit: number
   has_more: boolean
   next_before?: string
+}
+
+export interface SendChatMessagePayload {
+  message_text: string
+}
+
+export interface SendChatMessageResponse {
+  chat_id: string
+  wa_chat_jid: string
+  wa_message_id: string
+  message_text: string
+  sent_at: string
 }
 
 export type ExportFormat = 'json' | 'markdown' | 'html'
@@ -186,7 +199,7 @@ export interface LiveUpdate {
   summary: string
 }
 
-export type AgentReplyMode = 'suggest' | 'auto_send'
+export type AgentReplyMode = 'manual' | 'suggest' | 'auto_send'
 export type AgentMatchMode = 'any' | 'all'
 export type AgentRunStatus =
   | 'queued'
@@ -218,6 +231,8 @@ export interface AgentKnowledgeBinding {
   references: string[]
 }
 
+export type AgentProviderConfig = Record<string, unknown>
+
 export interface AgentRuleView {
   id: string
   account_id: string
@@ -230,7 +245,19 @@ export interface AgentRuleView {
   max_auto_replies_per_thread: number
   blacklist_filter: AgentBlacklistFilter
   prompt_template: string
+  provider_config: AgentProviderConfig
   knowledge_binding?: AgentKnowledgeBinding
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentSettingsView {
+  account_id: string
+  provider: string
+  model: string
+  base_url: string
+  api_key: string
+  prompt_template: string
   created_at: string
   updated_at: string
 }
@@ -290,7 +317,30 @@ export interface UpsertAgentRulePayload {
   max_auto_replies_per_thread: number
   blacklist_filter: AgentBlacklistFilter
   prompt_template: string
+  provider_config?: AgentProviderConfig
   knowledge_binding?: AgentKnowledgeBinding
+}
+
+export interface UpsertAgentSettingsPayload {
+  account_id: string
+  provider: string
+  model: string
+  base_url: string
+  api_key: string
+  prompt_template: string
+}
+
+export interface GenerateAgentRunPayload {
+  chat_id: string
+  rule_id?: string
+  message_text?: string
+}
+
+export interface AgentRunStreamHandlers {
+  onStart?: (run: AgentRunView) => void
+  onDelta?: (text: string) => void
+  onComplete?: (run: AgentRunView) => void
+  onError?: (message: string, run?: AgentRunView) => void
 }
 
 export interface CreateAccountPayload {
@@ -428,6 +478,26 @@ export async function getChatMessages(chatId: string, params?: { limit?: number;
   )
 }
 
+export async function sendChatMessage(chatId: string, payload: SendChatMessagePayload) {
+  const controller = new AbortController()
+  const timeout = globalThis.setTimeout(() => controller.abort(), 12000)
+
+  try {
+    return await request<SendChatMessageResponse>(`/api/chats/${chatId}/messages`, {
+      method: 'POST',
+      jsonBody: payload,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('发送超时，请稍后重试')
+    }
+    throw error
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
+}
+
 export function subscribeLiveUpdates(
   onUpdate: (update: LiveUpdate) => void,
   onError?: (event: Event) => void,
@@ -512,6 +582,18 @@ export async function listAgentRules(params?: { accountId?: string; enabled?: bo
   )
 }
 
+export async function getAgentSettings(accountId: string) {
+  const searchParams = new URLSearchParams({ account_id: accountId })
+  return request<{ settings: AgentSettingsView }>(`/api/agents/settings?${searchParams.toString()}`)
+}
+
+export async function upsertAgentSettings(payload: UpsertAgentSettingsPayload) {
+  return request<{ settings: AgentSettingsView }>('/api/agents/settings', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
 export async function upsertAgentRule(payload: UpsertAgentRulePayload) {
   return request<{ rule: AgentRuleView }>('/api/agents/rules', {
     method: 'POST',
@@ -565,6 +647,112 @@ export async function listAgentRuns(params?: {
 
   const queryString = searchParams.toString()
   return request<AgentRunListResponse>(`/api/agent-runs${queryString ? `?${queryString}` : ''}`)
+}
+
+export async function generateAgentRun(payload: GenerateAgentRunPayload) {
+  return request<{ run: AgentRunView }>('/api/agent-runs/generate', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function streamGenerateAgentRun(
+  payload: GenerateAgentRunPayload,
+  handlers: AgentRunStreamHandlers,
+) {
+  const response = await fetch(`${baseUrl}/api/agent-runs/generate/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    let message = '请求失败'
+    try {
+      const errorPayload = (await response.json()) as { error?: string }
+      if (errorPayload.error) {
+        message = errorPayload.error
+      }
+    } catch {
+      message = response.statusText || message
+    }
+    throw new ApiError(response.status, message)
+  }
+
+  if (!response.body) {
+    throw new ApiError(response.status, '浏览器不支持流式读取')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let streamError: Error | undefined
+
+  const dispatchEvent = (rawEvent: string) => {
+    const lines = rawEvent.split(/\r?\n/)
+    let eventName = 'message'
+    const dataLines: string[] = []
+
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        eventName = line.slice('event:'.length).trim()
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice('data:'.length).trimStart())
+      }
+    }
+
+    if (dataLines.length === 0) {
+      return
+    }
+
+    const eventPayload = JSON.parse(dataLines.join('\n')) as {
+      run?: AgentRunView
+      text?: string
+      message?: string
+    }
+
+    if (eventName === 'start' && eventPayload.run) {
+      handlers.onStart?.(eventPayload.run)
+      return
+    }
+    if (eventName === 'delta') {
+      handlers.onDelta?.(eventPayload.text ?? '')
+      return
+    }
+    if (eventName === 'complete' && eventPayload.run) {
+      handlers.onComplete?.(eventPayload.run)
+      return
+    }
+    if (eventName === 'error') {
+      const message = eventPayload.message || 'Agent 生成失败'
+      handlers.onError?.(message, eventPayload.run)
+      streamError = new Error(message)
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+
+    const events = buffer.split(/\r?\n\r?\n/)
+    buffer = events.pop() ?? ''
+    for (const event of events) {
+      dispatchEvent(event)
+    }
+
+    if (done) {
+      break
+    }
+  }
+
+  if (buffer.trim()) {
+    dispatchEvent(buffer)
+  }
+  if (streamError) {
+    throw streamError
+  }
 }
 
 export async function sendAgentRun(runId: string, payload?: { message_text?: string }) {

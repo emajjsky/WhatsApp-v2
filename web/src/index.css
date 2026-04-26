@@ -1,29 +1,29 @@
 :root {
   color-scheme: light;
-  --bg: #efede4;
-  --bg-strong: #dedbcf;
-  --surface: rgba(255, 252, 246, 0.82);
-  --surface-strong: rgba(255, 252, 246, 0.96);
-  --surface-muted: rgba(244, 240, 230, 0.84);
-  --line: rgba(74, 78, 70, 0.14);
-  --line-strong: rgba(74, 78, 70, 0.24);
-  --text: #202621;
-  --text-soft: #5f675d;
-  --accent: #1c7362;
-  --accent-strong: #0f5146;
-  --accent-soft: rgba(28, 115, 98, 0.12);
-  --success: #2f6a46;
-  --success-soft: rgba(47, 106, 70, 0.14);
-  --warning: #976128;
-  --warning-soft: rgba(151, 97, 40, 0.16);
-  --danger: #a04639;
-  --danger-soft: rgba(160, 70, 57, 0.14);
-  --neutral-soft: rgba(78, 86, 80, 0.12);
-  --shadow: 0 18px 46px rgba(63, 67, 60, 0.12);
-  --radius-xl: 30px;
-  --radius-lg: 22px;
-  --radius-md: 18px;
-  --radius-sm: 14px;
+  --bg: #f0f2f5;
+  --bg-strong: #e9edef;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --surface-muted: #f7f8fa;
+  --line: rgba(17, 27, 33, 0.08);
+  --line-strong: rgba(17, 27, 33, 0.16);
+  --text: #111b21;
+  --text-soft: #667781;
+  --accent: #25d366;
+  --accent-strong: #128c7e;
+  --accent-soft: rgba(37, 211, 102, 0.14);
+  --success: #1f7a4d;
+  --success-soft: rgba(31, 122, 77, 0.14);
+  --warning: #9a6600;
+  --warning-soft: rgba(154, 102, 0, 0.14);
+  --danger: #b3261e;
+  --danger-soft: rgba(179, 38, 30, 0.12);
+  --neutral-soft: rgba(17, 27, 33, 0.06);
+  --shadow: 0 8px 24px rgba(17, 27, 33, 0.06);
+  --radius-xl: 22px;
+  --radius-lg: 18px;
+  --radius-md: 14px;
+  --radius-sm: 12px;
   --display:
     'Aptos Display', 'Bahnschrift', 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
   --sans: 'Aptos', 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
@@ -40,10 +40,7 @@ html {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.72), transparent 36%),
-    radial-gradient(circle at top right, rgba(28, 115, 98, 0.11), transparent 24%),
-    linear-gradient(180deg, var(--bg) 0%, var(--bg-strong) 100%);
+  background: var(--bg);
 }
 
 body {
@@ -51,8 +48,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.28), transparent 42%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.04) 100%);
+    linear-gradient(180deg, #dff6dd 0 120px, var(--bg) 120px 100%);
 }
 
 body,
@@ -92,10 +88,19 @@ a {
 
 .app-shell {
   min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
   gap: 18px;
   padding: 18px;
+  overflow: hidden;
+}
+
+.app-shell-chat-mode {
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  background: #efeae2;
 }
 
 .sidebar {
@@ -108,6 +113,17 @@ a {
   align-self: start;
 }
 
+.sidebar-chat-mode {
+  min-height: 100vh;
+  height: 100vh;
+  position: static;
+  top: auto;
+  padding: 14px 10px;
+  border-right: 1px solid rgba(17, 27, 33, 0.08);
+  background: #f7f9fa;
+  gap: 12px;
+}
+
 .brand-card,
 .nav-list,
 .sidebar-note,
@@ -115,7 +131,6 @@ a {
 .empty-panel {
   border: 1px solid var(--line);
   background: var(--surface);
-  backdrop-filter: blur(18px);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow);
 }
@@ -129,9 +144,22 @@ a {
 }
 
 .brand-card {
-  background:
-    radial-gradient(circle at top right, rgba(28, 115, 98, 0.16), transparent 44%),
-    linear-gradient(180deg, rgba(255, 252, 246, 0.94), rgba(250, 247, 239, 0.86));
+  background: linear-gradient(180deg, #ffffff, #fbfcfc);
+}
+
+.brand-card-chat-mode {
+  padding: 12px 10px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 250, 249, 0.92));
+}
+
+.brand-card-chat-mode h1 {
+  font-size: 22px;
+  margin-bottom: 0;
+}
+
+.brand-card-chat-mode .eyebrow {
+  margin-bottom: 4px;
 }
 
 .brand-card h1,
@@ -208,9 +236,51 @@ a {
 }
 
 .nav-link.active {
-  background: rgba(238, 247, 244, 0.95);
-  border-color: rgba(28, 115, 98, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(28, 115, 98, 0.06);
+  background: #e7fce4;
+  border-color: rgba(37, 211, 102, 0.28);
+  box-shadow: none;
+}
+
+.nav-list-chat-mode {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.nav-list-chat-mode .nav-link {
+  justify-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border-radius: 18px;
+  background: transparent;
+}
+
+.nav-list-chat-mode .nav-link.active {
+  background: #e7fce4;
+  border-color: rgba(37, 211, 102, 0.22);
+  box-shadow: none;
+}
+
+.nav-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 115, 98, 0.1);
+  color: var(--accent-strong);
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.nav-list-chat-mode .nav-title {
+  font-size: 11px;
+}
+
+.nav-list-chat-mode .nav-hint {
+  display: none;
 }
 
 .nav-title {
@@ -241,13 +311,23 @@ a {
 
 .workspace {
   min-width: 0;
-  min-height: calc(100vh - 36px);
+  min-height: 0;
+  height: calc(100vh - 36px);
   display: flex;
+  overflow: hidden;
+}
+
+.app-shell-chat-mode .workspace {
+  height: 100vh;
+  background:
+    linear-gradient(180deg, #f0f2f5 0, #f0f2f5 128px, #efeae2 128px, #efeae2 100%);
 }
 
 .page {
   flex: 1;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .page-accounts {
@@ -262,6 +342,11 @@ a {
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 16px;
   height: 100%;
+  overflow: hidden;
+}
+
+.whatsapp-chat-page {
+  padding: 14px;
 }
 
 .page-exports {
@@ -269,6 +354,18 @@ a {
   grid-template-rows: minmax(0, 1fr) auto auto;
   gap: 16px;
   height: 100%;
+}
+
+.page-agents {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 16px;
+  height: 100%;
+  overflow-y: auto;
+  align-content: start;
+  padding-right: 6px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .page-top-grid,
@@ -332,6 +429,33 @@ a {
   min-height: 0;
   overflow-y: auto;
   padding-right: 6px;
+}
+
+.account-detail-workbench {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(420px, 1.15fr) minmax(320px, 0.85fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.account-summary-card,
+.account-pairing-card,
+.account-detail-workbench .empty-panel {
+  min-height: 100%;
+}
+
+.account-pairing-card,
+.account-detail-workbench .empty-panel {
+  align-self: stretch;
+}
+
+.page-accounts .account-detail-workbench > .empty-panel {
+  display: none;
+}
+
+.page-accounts .account-pairing-card .pairing-value {
+  display: none;
 }
 
 .field {
@@ -414,13 +538,13 @@ a {
 }
 
 .primary-button {
-  background: linear-gradient(180deg, #248a77, var(--accent));
-  color: #f4fffb;
-  box-shadow: 0 12px 26px rgba(28, 115, 98, 0.18);
+  background: linear-gradient(180deg, #31e06c, var(--accent));
+  color: #073b1e;
+  box-shadow: none;
 }
 
 .secondary-button {
-  background: rgba(255, 255, 255, 0.8);
+  background: #ffffff;
   color: var(--text);
   border-color: var(--line);
 }
@@ -457,7 +581,7 @@ a {
   padding: 18px;
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--surface-muted);
 }
 
 .helper-card strong,
@@ -483,6 +607,35 @@ a {
   margin: 0;
   color: var(--text);
   line-height: 1.5;
+}
+
+.page-accounts .detail-card-header {
+  align-items: center;
+}
+
+.page-accounts .detail-card-header .status-badge {
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  letter-spacing: 0;
+  box-shadow: inset 0 0 0 1px rgba(31, 122, 77, 0.08);
+}
+
+.page-accounts .detail-card-header .tone-success {
+  background: rgba(37, 211, 102, 0.14);
+  color: #128c7e;
+}
+
+.page-accounts .detail-card-header .tone-success::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+  margin-right: 8px;
+  box-shadow: 0 0 0 4px rgba(37, 211, 102, 0.12);
 }
 
 .warning-banner,
@@ -545,20 +698,31 @@ a {
 
 .account-list-panel {
   min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.page-accounts .account-list-panel .panel-heading h3 {
+  display: none;
 }
 
 .account-list-scroll {
   min-height: 0;
   flex: 1;
-  overflow-y: auto;
-  padding-right: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 14px;
+  scrollbar-gutter: stable;
 }
 
 .account-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 220px));
-  gap: 14px;
-  align-content: start;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(280px, 320px);
+  gap: 16px;
+  align-items: stretch;
+  width: max-content;
+  min-width: 100%;
 }
 
 .account-card,
@@ -572,12 +736,18 @@ a {
 }
 
 .account-card {
-  min-height: 152px;
-  max-height: 152px;
-  padding: 16px;
+  min-height: 184px;
+  max-height: none;
+  padding: 20px;
   display: grid;
-  grid-template-rows: auto auto auto auto;
-  gap: 8px;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 12px;
+  align-content: start;
+}
+
+.account-card-grid::after {
+  content: '';
+  width: 2px;
 }
 
 .account-card.selected,
@@ -597,16 +767,46 @@ a {
   color: var(--text-soft);
 }
 
+.page-accounts .account-card strong {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.page-accounts .account-card p {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.page-accounts .account-card span,
+.page-accounts .account-card small {
+  font-size: 13px;
+}
+
+.page-accounts .account-card .status-badge {
+  min-height: 28px;
+  padding: 0 10px;
+}
+
 .chat-frame {
   display: grid;
-  grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr) minmax(280px, 340px);
   gap: 16px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.whatsapp-chat-frame {
+  gap: 12px;
 }
 
 .chat-sidebar-panel,
-.chat-main-panel {
+.chat-main-panel,
+.chat-assistant-panel {
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .chat-sidebar-panel {
@@ -629,6 +829,151 @@ a {
   min-height: 0;
   overflow-y: auto;
   padding-right: 6px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.whatsapp-chat-sidebar {
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(17, 27, 33, 0.08);
+  box-shadow: 0 8px 28px rgba(15, 20, 18, 0.06);
+  padding: 14px;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.whatsapp-chat-sidebar-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.whatsapp-chat-sidebar-header h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.whatsapp-chat-sidebar-header p {
+  margin: 8px 0 0;
+  color: var(--text-soft);
+}
+
+.whatsapp-chat-search-field span {
+  display: none;
+}
+
+.whatsapp-chat-search-field input {
+  background: #f0f2f5;
+  border-color: transparent;
+  border-radius: 999px;
+  padding: 13px 18px;
+}
+
+.whatsapp-chat-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.whatsapp-chat-filter-bar .field span {
+  font-size: 11px;
+}
+
+.whatsapp-chat-filter-bar .field select {
+  background: #fff;
+  border-radius: 999px;
+  padding: 11px 14px;
+}
+
+.whatsapp-chat-list-scroll {
+  padding-right: 2px;
+}
+
+.whatsapp-chat-list {
+  gap: 6px;
+}
+
+.whatsapp-chat-row {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 14px 12px;
+  border-radius: 18px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.whatsapp-chat-row:hover {
+  background: #f5f6f6;
+  transform: none;
+}
+
+.whatsapp-chat-row.selected {
+  background: #e9edef;
+  border-color: transparent;
+}
+
+.whatsapp-chat-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #d9fdd3, #e7fce4);
+  color: #125c3b;
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+.whatsapp-chat-avatar.large {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+
+.whatsapp-chat-row-content {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.whatsapp-chat-row-header {
+  align-items: center;
+}
+
+.whatsapp-chat-row-header strong {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.whatsapp-chat-row-header small {
+  color: var(--text-soft);
+}
+
+.whatsapp-chat-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.whatsapp-chat-row-meta p {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-soft);
 }
 
 .chat-list {
@@ -650,10 +995,881 @@ a {
   align-items: center;
 }
 
+.two-column-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inline-select-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip-button,
+.token-button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 9px 12px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text);
+  font-weight: 600;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.chip-button:hover,
+.token-button:hover {
+  transform: translateY(-1px);
+}
+
+.chip-button.active {
+  border-color: rgba(28, 115, 98, 0.24);
+  background: rgba(236, 247, 242, 0.92);
+  color: var(--accent-strong);
+}
+
+.token-button {
+  background: rgba(28, 115, 98, 0.08);
+  color: var(--accent-strong);
+}
+
+.mode-card {
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.68);
+  text-align: left;
+  display: grid;
+  gap: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.mode-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+}
+
+.mode-card.active {
+  border-color: rgba(28, 115, 98, 0.28);
+  background: linear-gradient(180deg, rgba(236, 247, 242, 0.96), rgba(255, 255, 255, 0.82));
+  box-shadow:
+    inset 0 0 0 1px rgba(28, 115, 98, 0.08),
+    0 18px 38px rgba(28, 115, 98, 0.08);
+}
+
+.mode-card.active.danger {
+  border-color: rgba(151, 97, 40, 0.28);
+  background: linear-gradient(180deg, rgba(255, 246, 236, 0.98), rgba(255, 255, 255, 0.84));
+}
+
+.mode-card p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.66;
+}
+
+.mode-card-header,
+.rule-card-header,
+.agent-run-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.agent-loading-panel {
+  min-height: 240px;
+  justify-content: center;
+}
+
+.agent-settings-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.agent-overview-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.agent-overview-card {
+  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(247, 243, 235, 0.9));
+  display: grid;
+  gap: 8px;
+}
+
+.agent-overview-card span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+
+.agent-overview-card strong {
+  font-family: var(--display);
+  font-size: 30px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.agent-overview-card p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.58;
+}
+
+.agent-settings-form textarea {
+  min-height: 140px;
+  resize: vertical;
+}
+
+.agent-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr) minmax(320px, 360px);
+  gap: 16px;
+  min-height: 0;
+  align-items: start;
+}
+
+.agent-rules-panel,
+.agent-editor-panel,
+.agent-monitor-panel {
+  min-height: 0;
+  height: auto;
+}
+
+.agent-rules-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.rule-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.rule-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  overflow: hidden;
+}
+
+.rule-card.selected {
+  border-color: rgba(28, 115, 98, 0.28);
+  background: rgba(237, 247, 242, 0.92);
+}
+
+.rule-card-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.rule-card-button p,
+.run-card p {
+  margin: 0;
+}
+
+.rule-card .button-row {
+  padding: 0 16px 16px;
+}
+
+.agent-editor-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-editor-form {
+  flex: 1;
+  min-height: 0;
+  overflow: visible;
+  padding-right: 0;
+}
+
+.agent-editor-split {
+  align-items: start;
+}
+
+.agent-editor-form-modern {
+  gap: 16px;
+}
+
+.agent-editor-section-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.section-tab {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-soft);
+  font-weight: 700;
+}
+
+.section-tab.active {
+  border-color: rgba(28, 115, 98, 0.24);
+  background: rgba(236, 247, 242, 0.94);
+  color: var(--accent-strong);
+}
+
+.agent-editor-section-body,
+.agent-section-card {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-enable-row {
+  min-height: 42px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+}
+
+.agent-knowledge-card textarea:last-child {
+  min-height: 168px;
+}
+
+.agent-editor-actions {
+  padding-bottom: 2px;
+}
+
+.agent-monitor-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background:
+    radial-gradient(circle at top right, rgba(28, 115, 98, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(255, 252, 246, 0.96), rgba(247, 243, 234, 0.9));
+}
+
+.agent-monitor-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.agent-run-shell {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.agent-run-shell strong,
+.rule-card strong {
+  font-family: var(--display);
+  letter-spacing: -0.02em;
+}
+
+.agent-run-header strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 18px;
+}
+
+.run-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 12px;
+  padding-right: 4px;
+  align-content: start;
+}
+
+@media (min-width: 1101px) {
+  .page-agents .agent-rules-panel,
+  .page-agents .agent-monitor-panel {
+    position: sticky;
+    top: 0;
+    max-height: calc(100vh - 72px);
+  }
+
+  .page-agents .rule-list,
+  .page-agents .agent-monitor-body {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+.run-card {
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.8);
+  display: grid;
+  gap: 10px;
+}
+
+.danger-panel {
+  border-color: rgba(151, 97, 40, 0.2);
+  background:
+    radial-gradient(circle at top right, rgba(151, 97, 40, 0.12), transparent 44%),
+    rgba(255, 248, 239, 0.92);
+}
+
+.agent-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 4px 4px 0;
+}
+
+.agent-page-header h2 {
+  margin: 2px 0 0;
+  font-family: var(--display);
+  font-size: 32px;
+  line-height: 1.15;
+}
+
+.agent-config-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  align-items: start;
+}
+
+.agent-list-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.agent-list-heading {
+  align-items: center;
+}
+
+.agent-list-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.agent-list-item {
+  width: 100%;
+  min-height: 106px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--text);
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.agent-list-item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(18, 140, 126, 0.24);
+  background: #fbfefd;
+}
+
+.agent-list-item.selected {
+  border-color: rgba(18, 140, 126, 0.42);
+  background: #ecf7f2;
+}
+
+.agent-list-title {
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.agent-list-account,
+.agent-list-meta {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.agent-list-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-list-empty {
+  min-height: 220px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 12px;
+  padding: 18px;
+  background: var(--surface-muted);
+}
+
+.agent-list-empty strong {
+  font-size: 18px;
+}
+
+.agent-list-empty span {
+  color: var(--text-soft);
+  line-height: 1.6;
+}
+
+.agent-config-panel {
+  min-width: 0;
+}
+
+.agent-config-form {
+  display: grid;
+  gap: 16px;
+}
+
+.agent-provider-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agent-provider-tab {
+  min-height: 78px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  display: grid;
+  gap: 6px;
+  text-align: left;
+}
+
+.agent-provider-tab strong {
+  font-size: 15px;
+}
+
+.agent-provider-tab span {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.agent-provider-tab.active {
+  border-color: rgba(18, 140, 126, 0.42);
+  background: #ecf7f2;
+}
+
+.agent-provider-fields {
+  display: grid;
+  gap: 14px;
+  padding-top: 2px;
+}
+
+.agent-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.agent-thinking-row {
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.agent-prompt-field textarea {
+  min-height: 190px;
+  resize: vertical;
+}
+
+.agent-config-actions {
+  align-items: center;
+  padding-top: 4px;
+}
+
 .chat-main-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 252, 246, 0.96), rgba(247, 243, 234, 0.9));
+}
+
+.whatsapp-chat-main {
+  padding: 0;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(239, 234, 226, 0.96), rgba(239, 234, 226, 0.98));
+  border-color: rgba(17, 27, 33, 0.08);
+  box-shadow: 0 10px 32px rgba(15, 20, 18, 0.07);
+  gap: 0;
+  overflow: hidden;
+}
+
+.whatsapp-chat-stage-header {
+  padding: 14px 18px;
+  background: #f0f2f5;
+  border-bottom: 1px solid rgba(17, 27, 33, 0.08);
+  align-items: center;
+}
+
+.whatsapp-chat-contact {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.whatsapp-chat-contact h3 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+}
+
+.whatsapp-chat-contact p {
+  margin: 2px 0 0;
+  font-size: 13px;
+}
+
+.whatsapp-chat-stage-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.whatsapp-history-toolbar {
+  min-height: 12px;
+  padding: 6px 18px 0;
+  background: transparent;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chat-compose-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 252, 246, 0.9), rgba(255, 252, 246, 0.98));
+}
+
+.chat-compose-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.chat-compose-header p {
+  margin: 6px 0 0;
+}
+
+.field-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+
+.chat-compose-box {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(246, 243, 235, 0.88));
+}
+
+.chat-compose-box textarea {
+  min-height: 104px;
+  max-height: 160px;
+  resize: none;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.whatsapp-chat-compose {
+  gap: 8px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid rgba(17, 27, 33, 0.08);
+  background: rgba(240, 242, 245, 0.96);
+}
+
+.whatsapp-chat-compose-shell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 8px 20px rgba(15, 20, 18, 0.06);
+}
+
+.whatsapp-compose-utility {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #54656f;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.whatsapp-chat-compose-box {
+  gap: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.whatsapp-chat-compose-box textarea {
+  min-height: 44px;
+  max-height: 108px;
+  border-radius: 18px;
+  border: none;
+  background: transparent;
+  padding: 10px 8px;
+  box-shadow: none;
+}
+
+.whatsapp-send-button {
+  min-width: 84px;
+  min-height: 40px;
+  padding-inline: 16px;
+  border-radius: 999px;
+  box-shadow: none;
+  background: #25d366;
+  color: #073b1e;
+}
+
+.whatsapp-send-button:disabled {
+  background: #d1d7db;
+  color: #6b7276;
+}
+
+.whatsapp-compose-meta {
+  display: flex;
+  justify-content: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 4px;
+}
+
+.chat-compose-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chat-assistant-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background:
+    radial-gradient(circle at top right, rgba(28, 115, 98, 0.14), transparent 34%),
+    linear-gradient(180deg, rgba(255, 252, 246, 0.96), rgba(247, 243, 234, 0.88));
+}
+
+.chat-assistant-panel .panel-heading {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-assistant-panel .panel-heading .subtle-text {
+  flex-shrink: 1;
+}
+
+.whatsapp-chat-assistant {
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fbfcfc, #f7f9f8);
+  border-color: rgba(17, 27, 33, 0.08);
+  box-shadow: 0 10px 28px rgba(15, 20, 18, 0.05);
+  padding: 12px;
+}
+
+.whatsapp-assistant-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(17, 27, 33, 0.06);
+}
+
+.whatsapp-assistant-header h3 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.whatsapp-assistant-body {
+  padding-right: 2px;
+}
+
+.assistant-panel-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.assistant-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: none;
+}
+
+.assistant-chat-context {
+  background: linear-gradient(180deg, rgba(236, 247, 242, 0.92), rgba(255, 255, 255, 0.72));
+}
+
+.assistant-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.assistant-card p {
+  margin: 0;
+}
+
+.assistant-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolbar-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: lowercase;
+}
+
+.toolbar-chip.active {
+  border-color: rgba(28, 115, 98, 0.26);
+  background: rgba(236, 247, 242, 0.94);
+  color: var(--accent-strong);
+}
+
+.assistant-action-button {
+  width: 100%;
+  justify-content: center;
+  min-height: 42px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.assistant-draft-box {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.assistant-rule-field select {
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.assistant-legacy-actions {
+  display: none;
+}
+
+.assistant-summary-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
 }
 
 .chat-stage-header {
@@ -683,7 +1899,26 @@ a {
   display: grid;
   gap: 12px;
   align-content: start;
-  padding-right: 8px;
+  padding: 14px;
+  padding-right: 10px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at top right, rgba(28, 115, 98, 0.06), transparent 26%),
+    linear-gradient(180deg, rgba(248, 245, 237, 0.94), rgba(250, 247, 240, 0.88));
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.whatsapp-message-timeline {
+  gap: 10px;
+  padding: 16px 18px;
+  border: none;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 25% 18%, rgba(255, 255, 255, 0.24), transparent 18%),
+    radial-gradient(circle at 78% 34%, rgba(255, 255, 255, 0.14), transparent 16%),
+    linear-gradient(180deg, rgba(239, 234, 226, 0.94), rgba(239, 234, 226, 0.98));
 }
 
 .message-card {
@@ -711,6 +1946,35 @@ a {
   margin: 0;
   line-height: 1.7;
   color: var(--text);
+}
+
+.whatsapp-message-card {
+  max-width: min(68%, 640px);
+  border-radius: 12px;
+  border-color: rgba(17, 27, 33, 0.06);
+  background: #fff;
+  box-shadow: 0 1px 0 rgba(17, 27, 33, 0.05);
+  padding: 12px 14px;
+}
+
+.whatsapp-message-card.own {
+  border-radius: 12px;
+  background: #d9fdd3;
+}
+
+.whatsapp-message-foot {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  color: #667781;
+  font-size: 11px;
+}
+
+.whatsapp-message-check {
+  color: #53bdeb;
+  letter-spacing: -0.08em;
 }
 
 .media-block-list {
@@ -1064,9 +2328,114 @@ a {
   margin-top: 8px;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sidebar-note {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.brand-copy {
+  margin: 0;
+  max-width: 18ch;
+}
+
+.page-accounts .helper-card,
+.page-exports .export-helper-card,
+.page-chats .assistant-insight-card {
+  display: none;
+}
+
+.page-accounts .pairing-raw-hint,
+.page-agents .agent-settings-panel .panel-heading .subtle-text,
+.page-agents .agent-rules-panel .panel-heading .subtle-text,
+.page-agents .agent-monitor-panel .panel-heading .subtle-text,
+.page-agents .agent-overview-card p,
+.page-exports .selected-preview-row,
+.page-chats .whatsapp-compose-meta .field-hint:last-child {
+  display: none;
+}
+
+.page-accounts .panel-heading,
+.page-exports .panel-heading,
+.page-agents .panel-heading {
+  margin-bottom: 14px;
+}
+
+.page-accounts .panel h3,
+.page-exports .panel h3,
+.page-agents .panel h3 {
+  font-size: clamp(20px, 1.8vw, 26px);
+}
+
+.page-accounts .eyebrow,
+.page-exports .eyebrow,
+.page-agents .eyebrow {
+  color: var(--text-soft);
+  letter-spacing: 0.12em;
+}
+
+.page-chats .whatsapp-chat-sidebar,
+.page-chats .whatsapp-chat-main,
+.page-chats .whatsapp-chat-assistant,
+.page-accounts .panel,
+.page-exports .panel,
+.page-agents .panel {
+  box-shadow: var(--shadow);
+  border-color: var(--line);
+}
+
 @media (max-width: 1280px) {
   .chat-frame {
     grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .whatsapp-chat-assistant {
+    min-height: 0;
+  }
+
+  .agent-overview-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-workbench {
+    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  }
+
+  .agent-provider-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chat-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chat-search-field {
+    grid-column: 1 / -1;
+  }
+
+  .chat-assistant-panel {
+    grid-column: 1 / -1;
+  }
+
+  .assistant-panel-body {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .agent-monitor-panel {
+    grid-column: 1 / -1;
   }
 
   .dropdown-panel-wide {
@@ -1076,7 +2445,17 @@ a {
 
 @media (max-width: 1100px) {
   .app-shell {
+    height: auto;
+    overflow: visible;
+  }
+
+  .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .app-shell-chat-mode {
+    grid-template-columns: 1fr;
+    background: #efeae2;
   }
 
   .sidebar {
@@ -1084,22 +2463,141 @@ a {
     min-height: auto;
   }
 
-  .workspace {
+  .sidebar-chat-mode {
     min-height: auto;
+    height: auto;
+    padding: 12px 14px 0;
+    background: transparent;
+    border-right: none;
+  }
+
+  .brand-card-chat-mode {
+    display: none;
+  }
+
+  .nav-list-chat-mode {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .workspace {
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .app-shell-chat-mode .workspace {
+    height: auto;
+    background: #efeae2;
   }
 
   .page-accounts,
   .page-chats,
-  .page-exports {
+  .page-exports,
+  .page-agents {
     height: auto;
     min-height: auto;
+    overflow: visible;
   }
 
   .accounts-top-grid,
   .export-top-grid,
   .chat-frame,
   .export-form-grid,
-  .chat-filter-grid {
+  .chat-filter-grid,
+  .account-detail-workbench,
+  .agent-config-layout,
+  .agent-workbench,
+  .agent-overview-strip,
+  .choice-grid,
+  .two-column-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-main-panel {
+    grid-template-rows: auto auto minmax(420px, 1fr) auto;
+  }
+
+  .whatsapp-chat-page {
+    padding: 12px 14px 14px;
+  }
+
+  .whatsapp-chat-compose-shell {
+    grid-template-columns: 1fr auto;
+  }
+
+  .whatsapp-compose-utility {
+    display: none;
+  }
+
+  .chat-sidebar-panel,
+  .chat-main-panel,
+  .chat-assistant-panel,
+  .agent-rules-panel,
+  .agent-editor-panel,
+  .agent-monitor-panel {
+    overflow: visible;
+    height: auto;
+  }
+
+  .assistant-panel-body {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-stage-header,
+  .chat-compose-header,
+  .chat-row-meta {
+    display: grid;
+    gap: 8px;
+    justify-content: stretch;
+  }
+
+  .chat-stage-meta {
+    justify-items: start;
+  }
+
+  .whatsapp-chat-stage-header,
+  .whatsapp-chat-row-meta,
+  .whatsapp-compose-meta {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .agent-editor-form,
+  .rule-list,
+  .agent-monitor-body,
+  .run-list {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .chat-list-scroll,
+  .message-timeline,
+  .assistant-panel-body {
+    scrollbar-gutter: auto;
+  }
+
+  .whatsapp-chat-filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-run-shell {
+    min-height: auto;
+  }
+
+  .agent-list-panel {
+    grid-template-rows: auto auto;
+  }
+
+  .agent-list-scroll {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .agent-advanced-grid,
+  .agent-provider-tabs {
     grid-template-columns: 1fr;
   }
 
@@ -1145,7 +2643,70 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .chat-frame {
+    gap: 12px;
+  }
+
+  .chat-main-panel {
+    grid-template-rows: auto auto minmax(320px, 1fr) auto;
+  }
+
+  .chat-stage-toolbar,
+  .chat-compose-actions,
+  .chat-compose-header,
+  .chat-row-meta,
+  .agent-run-header,
+  .mode-card-header,
+  .rule-card-header {
+    display: grid;
+    justify-content: stretch;
+    align-items: start;
+  }
+
+  .inline-select-row {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-overview-card strong {
+    font-size: 26px;
+  }
+
+  .chat-compose-box {
+    padding: 12px;
+  }
+
+  .chat-compose-box textarea {
+    min-height: 96px;
+    max-height: 132px;
+  }
+
+  .whatsapp-chat-row {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .whatsapp-chat-avatar {
+    width: 44px;
+    height: 44px;
+    font-size: 17px;
+  }
+
+  .whatsapp-message-timeline {
+    padding: 14px;
+  }
+
+  .assistant-card {
+    padding: 14px;
+  }
+
   .message-card {
+    max-width: 100%;
+    padding: 12px 14px;
+  }
+
+  .media-preview-image,
+  .media-preview-video,
+  .media-preview-audio {
+    width: 100%;
     max-width: 100%;
   }
 

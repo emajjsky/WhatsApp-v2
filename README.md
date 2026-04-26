@@ -1,12 +1,11 @@
 # WhatsApp 平台工具
 
-这是一个基于 `whatsmeow` 的 WhatsApp 本地管理工具，当前交付范围只保留三块客户功能：
+这是一个基于 `whatsmeow` 的 WhatsApp 本地管理工具，当前交付范围包含四块客户功能：
 
 - 账号接入
 - 对话查看
+- 智能回复 Agent
 - 导出中心
-
-`Agent` 相关后端代码仍在仓库内，但前端入口已经隐藏，不属于当前客户交付范围。
 
 ## 当前已完成
 
@@ -16,8 +15,10 @@
 - 实时消息入库
 - 会话列表与消息历史查询
 - 导出任务创建、状态查询、产物下载到本地
+- 智能回复 Agent 配置页，可接入大模型 API、Coze、n8n 或通用 Webhook
+- 对话右侧辅助区支持手动生成回复建议、写回输入框、发送草稿
 - Docker 一键启动
-- 前端账号页、对话页、导出页当前版本已可直接使用
+- 前端账号页、对话页、智能回复页、导出页当前版本已可直接使用
 - 实时更新已恢复为 SSE 推送，页面不再只靠轮询
 
 ## 当前仍需注意
@@ -72,6 +73,14 @@ web/
 - `POST /api/exports`
 - `GET /api/exports/{jobId}`
 - `GET /api/exports/{jobId}/artifact`
+
+智能回复：
+
+- `GET /api/agents/rules`
+- `POST /api/agents/rules`
+- `DELETE /api/agents/rules/{ruleId}`
+- `POST /api/agent-runs/generate`
+- `POST /api/agent-runs/{runId}/send`
 
 审计：
 
@@ -187,6 +196,14 @@ cd "path\to\repo"
 - 按关键字搜索
 - 查看消息与媒体附件
 - 新消息到达时实时刷新
+- 右侧对话辅助手动生成回复建议
+
+### 智能回复 Agent
+
+- 创建并编辑 Agent
+- 支持大模型 API、Coze、n8n、Webhook 四种接入方式
+- 每个 Agent 独立保存 API、模型或 Webhook 配置
+- 自动回复开关不放在此页，当前先按手动生成建议执行
 
 ### 导出中心
 
@@ -204,9 +221,10 @@ cd "path\to\repo"
 - `docker compose -f deploy/docker/docker-compose.all.yml up -d --build`
 - 导出文件下载到本地验证通过
 - `/api/live` SSE 实时推送验证通过
+- 智能回复 Agent 页面构建与浏览器检查通过
 
 ## 下一步建议
 
 1. 继续增强断线期间消息补齐能力
 2. 把导出任务拆到独立 worker
-3. 等客户确认后，再决定是否恢复 Agent 客户入口
+3. 根据客户试用反馈，再补充自动回复策略与更细粒度的人工复核流程

@@ -4,6 +4,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -29,6 +30,19 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "on", "enabled"}:
+        return True
+    if normalized in {"false", "0", "no", "off", "disabled"}:
+        return False
+    return None
 
 
 def _normalize_base_url(value: str) -> str:
@@ -91,6 +105,8 @@ class OpenAICompatibleConfig:
     temperature: float
     max_tokens: int
     timeout_seconds: float
+    enable_thinking: bool | None
+    extra_body: dict[str, Any]
 
 
 def _load_config(config: Mapping[str, Any] | None) -> OpenAICompatibleConfig:
@@ -118,6 +134,11 @@ def _load_config(config: Mapping[str, Any] | None) -> OpenAICompatibleConfig:
     if timeout_seconds is None:
         timeout_seconds = 25.0
 
+    enable_thinking = _optional_bool(cfg.get("enable_thinking"))
+    extra_body = cfg.get("extra_body")
+    if not isinstance(extra_body, dict):
+        extra_body = {}
+
     base_url = _normalize_base_url(base_url)
 
     if not base_url:
@@ -132,7 +153,95 @@ def _load_config(config: Mapping[str, Any] | None) -> OpenAICompatibleConfig:
         temperature=temperature,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
+        enable_thinking=enable_thinking,
+        extra_body=dict(extra_body),
     )
+
+
+def _extract_content_text(content: Any) -> str | None:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                value = item.get("text") or item.get("content")
+                if isinstance(value, str):
+                    parts.append(value)
+        return "\n".join(parts)
+    return None
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    result = text.strip()
+    while "<think>" in result and "</think>" in result:
+        start = result.find("<think>")
+        end = result.find("</think>", start)
+        if start < 0 or end < 0:
+            break
+        result = (result[:start] + result[end + len("</think>") :]).strip()
+    return result
+
+
+def _longest_marker_prefix_suffix(text: str, markers: list[str]) -> int:
+    max_size = 0
+    for marker in markers:
+        upper_bound = min(len(text), len(marker) - 1)
+        for size in range(1, upper_bound + 1):
+            if text.endswith(marker[:size]):
+                max_size = max(max_size, size)
+    return max_size
+
+
+class _ThinkingBlockStreamFilter:
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._inside_thinking = False
+
+    def feed(self, text: str) -> str:
+        self._buffer += text
+        output: list[str] = []
+
+        while self._buffer:
+            if self._inside_thinking:
+                end = self._buffer.find("</think>")
+                if end < 0:
+                    keep = _longest_marker_prefix_suffix(self._buffer, ["</think>"])
+                    self._buffer = self._buffer[-keep:] if keep else ""
+                    break
+                self._buffer = self._buffer[end + len("</think>") :]
+                self._inside_thinking = False
+                continue
+
+            start = self._buffer.find("<think>")
+            if start >= 0:
+                if start > 0:
+                    output.append(self._buffer[:start])
+                self._buffer = self._buffer[start + len("<think>") :]
+                self._inside_thinking = True
+                continue
+
+            keep = _longest_marker_prefix_suffix(self._buffer, ["<think>"])
+            if keep:
+                output.append(self._buffer[:-keep])
+                self._buffer = self._buffer[-keep:]
+            else:
+                output.append(self._buffer)
+                self._buffer = ""
+            break
+
+        return "".join(output)
+
+    def flush(self) -> str:
+        if self._inside_thinking:
+            self._buffer = ""
+            return ""
+        remainder = self._buffer
+        self._buffer = ""
+        return remainder
 
 
 def _parse_chat_completion_response(payload: dict[str, Any]) -> tuple[str, dict[str, int]]:
@@ -141,26 +250,18 @@ def _parse_chat_completion_response(payload: dict[str, Any]) -> tuple[str, dict[
         raise ProviderError("openai_compatible response is missing choices")
 
     message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-    content = message.get("content")
-
-    text: str | None = None
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        # Some providers return content parts; join best-effort.
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-                continue
-            if isinstance(item, dict):
-                value = item.get("text")
-                if isinstance(value, str):
-                    parts.append(value)
-        text = "\n".join(parts)
+    text = _extract_content_text(message.get("content"))
 
     if not text or not text.strip():
+        if message.get("reasoning_content"):
+            raise ProviderError(
+                "openai_compatible response only contained reasoning content; try setting enable_thinking=false"
+            )
         raise ProviderError("openai_compatible response contained empty content")
+
+    text = _strip_thinking_blocks(text)
+    if not text:
+        raise ProviderError("openai_compatible response contained empty content after removing thinking blocks")
 
     usage = payload.get("usage") or {}
     usage_out: dict[str, int] = {}
@@ -173,6 +274,28 @@ def _parse_chat_completion_response(payload: dict[str, Any]) -> tuple[str, dict[
     return text.strip(), usage_out
 
 
+def _build_chat_body(config: OpenAICompatibleConfig, request: ProviderRequest, stream: bool) -> dict[str, Any]:
+    system_prompt = request.prompt_template.strip()
+    if not system_prompt:
+        raise ProviderError("openai_compatible provider requires a non-empty prompt_template")
+
+    body: dict[str, Any] = {
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": _build_user_message(request)},
+        ],
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+    }
+    if stream:
+        body["stream"] = True
+    if config.enable_thinking is not None:
+        body["enable_thinking"] = config.enable_thinking
+    body.update(config.extra_body)
+    return body
+
+
 class OpenAICompatibleProvider(BaseProvider):
     name = "openai_compatible"
 
@@ -181,21 +304,7 @@ class OpenAICompatibleProvider(BaseProvider):
         self.model = self._config.model
 
     def generate(self, request: ProviderRequest) -> ProviderResponse:
-        system_prompt = request.prompt_template.strip()
-        if not system_prompt:
-            raise ProviderError("openai_compatible provider requires a non-empty prompt_template")
-
-        user_message = _build_user_message(request)
-
-        body = {
-            "model": self._config.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": self._config.temperature,
-            "max_tokens": self._config.max_tokens,
-        }
+        body = _build_chat_body(self._config, request, stream=False)
 
         endpoint = self._config.base_url + "/chat/completions"
         raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -243,3 +352,76 @@ class OpenAICompatibleProvider(BaseProvider):
             draft=draft,
             usage=usage,
         )
+
+    def stream_generate(self, request: ProviderRequest) -> Iterator[str]:
+        body = _build_chat_body(self._config, request, stream=True)
+        endpoint = self._config.base_url + "/chat/completions"
+        raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        thinking_filter = _ThinkingBlockStreamFilter()
+        saw_reasoning_content = False
+        emitted_text = False
+
+        req = urllib.request.Request(
+            endpoint,
+            data=raw,
+            method="POST",
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "Authorization": f"Bearer {self._config.api_key}",
+            },
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self._config.timeout_seconds) as resp:
+                status = getattr(resp, "status", 200)
+                if status < 200 or status >= 300:
+                    raise ProviderError(f"openai_compatible returned status {status}")
+
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[len("data:") :].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        payload = json.loads(data)
+                    except Exception:
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+
+                    choices = payload.get("choices", [])
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    delta = choices[0].get("delta", {}) if isinstance(choices[0], dict) else {}
+                    if not isinstance(delta, dict):
+                        continue
+                    if delta.get("reasoning_content"):
+                        saw_reasoning_content = True
+                    text = _extract_content_text(delta.get("content"))
+                    if text:
+                        cleaned = thinking_filter.feed(text)
+                        if cleaned:
+                            emitted_text = True
+                            yield cleaned
+                remainder = thinking_filter.flush()
+                if remainder:
+                    emitted_text = True
+                    yield remainder
+                if saw_reasoning_content and not emitted_text:
+                    raise ProviderError(
+                        "openai_compatible stream only contained reasoning content; try setting enable_thinking=false"
+                    )
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                detail = ""
+            raise ProviderError(f"openai_compatible http {exc.code}: {detail}".strip()) from exc
+        except urllib.error.URLError as exc:
+            raise ProviderError(f"openai_compatible network error: {exc.reason}") from exc
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError(f"openai_compatible stream failed: {exc}") from exc

@@ -9,25 +9,53 @@ import {
 import {
   getChatMessages,
   getMediaAssetUrl,
+  listAgentRules,
   listAccounts,
   listChats,
+  sendAgentRun,
+  sendChatMessage,
+  streamGenerateAgentRun,
   subscribeLiveUpdates,
   type AccountView,
+  type AgentRuleView,
+  type AgentRunView,
+  type ChatHeader,
   type ChatSummary,
   type ChatType,
   type LiveUpdate,
   type MessageHistoryResponse,
+  type MessageView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
 import { StatusBadge } from '../components/StatusBadge'
 
 const chatTypeOptions: Array<{ value: ChatType | ''; label: string }> = [
-  { value: '', label: '全部类型' },
+  { value: '', label: '全部' },
   { value: 'direct', label: '单聊' },
   { value: 'group', label: '群聊' },
   { value: 'broadcast', label: '广播' },
   { value: 'status', label: '状态' },
 ]
+
+type ChatDisplaySource = {
+  wa_chat_jid: string
+  chat_type: ChatType
+  title?: string
+  participant_count?: number
+}
+
+function getAssistantRunNotice(run: AgentRunView) {
+  if (run.status === 'ready_for_review') {
+    return '草稿已生成，可以写回输入框或直接发送。'
+  }
+  if (run.status === 'blocked') {
+    return '草稿被安全策略拦截，请先检查 Agent 边界。'
+  }
+  if (run.status === 'failed') {
+    return run.block_reason || 'Agent 生成失败。'
+  }
+  return `Agent 状态：${run.status}`
+}
 
 export function ChatsPage() {
   const [accounts, setAccounts] = useState<AccountView[]>([])
@@ -40,12 +68,33 @@ export function ChatsPage() {
   const [history, setHistory] = useState<MessageHistoryResponse>()
   const [listLoading, setListLoading] = useState(true)
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [draftMessage, setDraftMessage] = useState('')
   const [error, setError] = useState<string>()
+  const [assistantRules, setAssistantRules] = useState<AgentRuleView[]>([])
+  const [assistantRuleId, setAssistantRuleId] = useState('')
+  const [assistantRun, setAssistantRun] = useState<AgentRunView>()
+  const [assistantDraft, setAssistantDraft] = useState('')
+  const [assistantBusy, setAssistantBusy] = useState(false)
+  const [assistantSending, setAssistantSending] = useState(false)
+  const [assistantNotice, setAssistantNotice] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
+  const assistantDraftRef = useRef<HTMLTextAreaElement>(null)
+  const keepTimelinePinnedRef = useRef(true)
   const pendingScrollModeRef = useRef<'bottom' | 'preserve' | 'none'>('bottom')
   const previousTimelineMetricsRef = useRef<
     { scrollHeight: number; scrollTop: number } | undefined
   >(undefined)
+
+  const scrollTimelineToBottom = useCallback(() => {
+    const timeline = timelineRef.current
+    if (!timeline) {
+      return
+    }
+
+    timeline.scrollTop = timeline.scrollHeight
+    keepTimelinePinnedRef.current = true
+  }, [])
 
   const loadAccountsList = useCallback(async () => {
     try {
@@ -72,14 +121,11 @@ export function ChatsPage() {
         })
 
         setChats(response.chats)
-
-        const currentStillVisible = response.chats.some((item) => item.id === selectedChatId)
-        const nextChatId = currentStillVisible ? selectedChatId : response.chats[0]?.id
-        startTransition(() => setSelectedChatId(nextChatId))
+        setSelectedChatId((current) => choosePreferredChatId(response.chats, current))
       } catch (loadError) {
         if (!background) {
           setChats([])
-          setError(loadError instanceof Error ? loadError.message : '加载聊天失败')
+          setError(loadError instanceof Error ? loadError.message : '加载会话失败')
         }
       } finally {
         if (!background) {
@@ -87,14 +133,15 @@ export function ChatsPage() {
         }
       }
     },
-    [deferredSearch, selectedAccountId, selectedChatId, selectedChatType],
+    [deferredSearch, selectedAccountId, selectedChatType],
   )
 
   const loadHistory = useCallback(async (chatId: string, background = false) => {
     if (background) {
-      pendingScrollModeRef.current = isNearBottom(timelineRef.current) ? 'bottom' : 'none'
+      pendingScrollModeRef.current = keepTimelinePinnedRef.current ? 'bottom' : 'none'
     } else {
       pendingScrollModeRef.current = 'bottom'
+      keepTimelinePinnedRef.current = true
     }
 
     if (!background) {
@@ -110,7 +157,23 @@ export function ChatsPage() {
         }
 
         const latestIDs = new Set(response.messages.map((message) => message.id))
-        const olderMessages = current.messages.filter((message) => !latestIDs.has(message.id))
+        const latestWAIDs = new Set(
+          response.messages
+            .map((message) => message.wa_message_id?.trim())
+            .filter((value): value is string => Boolean(value)),
+        )
+        const olderMessages = current.messages.filter((message) => {
+          if (latestIDs.has(message.id)) {
+            return false
+          }
+
+          const waMessageID = message.wa_message_id?.trim()
+          if (waMessageID && latestWAIDs.has(waMessageID)) {
+            return false
+          }
+
+          return true
+        })
 
         return {
           ...response,
@@ -128,6 +191,8 @@ export function ChatsPage() {
       }
     }
   }, [])
+
+  const historyAccountId = history?.chat.account_id ?? ''
 
   useEffect(() => {
     void loadAccountsList()
@@ -147,6 +212,51 @@ export function ChatsPage() {
   }, [loadHistory, selectedChatId])
 
   useEffect(() => {
+    setAssistantRun(undefined)
+    setAssistantDraft('')
+    setAssistantNotice(undefined)
+  }, [selectedChatId])
+
+  useEffect(() => {
+    if (!assistantBusy || !assistantDraftRef.current) {
+      return
+    }
+    assistantDraftRef.current.scrollTop = assistantDraftRef.current.scrollHeight
+  }, [assistantBusy, assistantDraft])
+
+  useEffect(() => {
+    if (!historyAccountId) {
+      setAssistantRules([])
+      setAssistantRuleId('')
+      return
+    }
+
+    let cancelled = false
+
+    async function loadAssistantRules() {
+      try {
+        const response = await listAgentRules({ accountId: historyAccountId })
+        if (cancelled) {
+          return
+        }
+
+        setAssistantRules(response.rules)
+      } catch (loadError) {
+        if (!cancelled) {
+          setAssistantRules([])
+          setError(loadError instanceof Error ? loadError.message : '加载 Agent 失败')
+        }
+      }
+    }
+
+    void loadAssistantRules()
+
+    return () => {
+      cancelled = true
+    }
+  }, [historyAccountId])
+
+  useEffect(() => {
     const timeline = timelineRef.current
     if (!timeline || !history) {
       return
@@ -163,18 +273,34 @@ export function ChatsPage() {
           break
         }
         case 'bottom':
-          timeline.scrollTop = timeline.scrollHeight
+          scrollTimelineToBottom()
           break
         default:
           break
       }
 
+      keepTimelinePinnedRef.current = isNearBottom(timeline)
       previousTimelineMetricsRef.current = undefined
       pendingScrollModeRef.current = 'none'
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [history])
+  }, [history, scrollTimelineToBottom])
+
+  useEffect(() => {
+    const timeline = timelineRef.current
+    if (!timeline) {
+      return
+    }
+
+    const handleScroll = () => {
+      keepTimelinePinnedRef.current = isNearBottom(timeline)
+    }
+
+    handleScroll()
+    timeline.addEventListener('scroll', handleScroll)
+    return () => timeline.removeEventListener('scroll', handleScroll)
+  }, [selectedChatId])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -184,9 +310,7 @@ export function ChatsPage() {
       }
     }, 5000)
 
-    return () => {
-      window.clearInterval(timer)
-    }
+    return () => window.clearInterval(timer)
   }, [loadChatsList, loadHistory, selectedChatId])
 
   useEffect(() => {
@@ -216,6 +340,7 @@ export function ChatsPage() {
         scrollTop: timelineRef.current.scrollTop,
       }
     }
+
     pendingScrollModeRef.current = 'preserve'
     setHistoryLoading(true)
     setError(undefined)
@@ -243,21 +368,239 @@ export function ChatsPage() {
     }
   }
 
+  async function handleSendMessage() {
+    if (!selectedChatId || !history || !selectedChat) {
+      return
+    }
+
+    const content = draftMessage.trim()
+    if (!content || sending) {
+      return
+    }
+
+    if (!isChatSendable(history.chat.wa_chat_jid, history.chat.chat_type)) {
+      setError(getChatSendBlockedReason(history.chat.wa_chat_jid, history.chat.chat_type))
+      return
+    }
+
+    setSending(true)
+    setError(undefined)
+
+    try {
+      const response = await sendChatMessage(selectedChatId, { message_text: content })
+      appendOptimisticMessage(response, history.chat, selectedChat)
+      setDraftMessage('')
+      pendingScrollModeRef.current = 'bottom'
+      keepTimelinePinnedRef.current = true
+      void loadHistory(selectedChatId, true)
+      void loadChatsList(true)
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : '发送消息失败')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  async function handleGenerateAssistantDraft() {
+    if (!selectedChatId || !history || assistantBusy) {
+      return
+    }
+
+    setAssistantBusy(true)
+    setAssistantNotice(undefined)
+    setError(undefined)
+    setAssistantRun(undefined)
+    setAssistantDraft('')
+
+    try {
+      await streamGenerateAgentRun(
+        {
+          chat_id: selectedChatId,
+          rule_id: effectiveAssistantRuleId || undefined,
+        },
+        {
+          onStart: (run) => {
+            setAssistantRun(run)
+          },
+          onDelta: (text) => {
+            setAssistantDraft((current) => current + text)
+          },
+          onComplete: (run) => {
+            setAssistantRun(run)
+            setAssistantDraft((current) => run.output_draft ?? current)
+            setAssistantNotice(getAssistantRunNotice(run))
+          },
+          onError: (message, run) => {
+            if (run) {
+              setAssistantRun(run)
+              setAssistantDraft((current) => run.output_draft ?? current)
+            }
+            setAssistantNotice(message)
+          },
+        },
+      )
+
+      void loadChatsList(true)
+      void loadHistory(selectedChatId, true)
+    } catch (generateError) {
+      setError(generateError instanceof Error ? generateError.message : '生成 Agent 草稿失败')
+    } finally {
+      setAssistantBusy(false)
+    }
+  }
+
+  function handleWriteAssistantDraft() {
+    const content = assistantDraft.trim()
+    if (!content) {
+      return
+    }
+
+    setDraftMessage(content)
+    setAssistantNotice('已写回输入框，发送前还能继续改。')
+  }
+
+  async function handleSendAssistantDraft() {
+    if (!selectedChatId || !assistantRun || !assistantDraft.trim() || assistantSending) {
+      return
+    }
+
+    setAssistantSending(true)
+    setAssistantNotice(undefined)
+    setError(undefined)
+
+    try {
+      const response = await sendAgentRun(assistantRun.id, {
+        message_text: assistantDraft.trim(),
+      })
+      setAssistantRun(response.run)
+      setAssistantDraft(response.run.output_draft ?? assistantDraft)
+      setAssistantNotice('Agent 草稿已发送。')
+      pendingScrollModeRef.current = 'bottom'
+      keepTimelinePinnedRef.current = true
+      void loadHistory(selectedChatId, true)
+      void loadChatsList(true)
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : '发送 Agent 草稿失败')
+    } finally {
+      setAssistantSending(false)
+    }
+  }
+
+  function appendOptimisticMessage(
+    response: {
+      chat_id: string
+      wa_chat_jid: string
+      wa_message_id: string
+      message_text: string
+      sent_at: string
+    },
+    chatHeader: ChatHeader,
+    chatSummary: ChatSummary,
+  ) {
+    const optimisticMessage: MessageView = {
+      id: `optimistic-${response.wa_message_id}`,
+      account_id: chatHeader.account_id,
+      chat_id: chatHeader.id,
+      wa_message_id: response.wa_message_id,
+      sender_jid: 'me',
+      from_me: true,
+      message_type: 'text',
+      text_content: response.message_text,
+      sent_at: response.sent_at,
+      media: [],
+    }
+
+    setHistory((current) => {
+      if (!current || current.chat.id !== response.chat_id) {
+        return current
+      }
+
+      const deduped = current.messages.filter(
+        (message) => message.wa_message_id !== response.wa_message_id,
+      )
+
+      return {
+        ...current,
+        chat: {
+          ...current.chat,
+          last_message_at: response.sent_at,
+        },
+        messages: [...deduped, optimisticMessage],
+      }
+    })
+
+    setChats((current) =>
+      current.map((chat) =>
+        chat.id === chatSummary.id
+          ? {
+              ...chat,
+              last_message_at: response.sent_at,
+              latest_message_preview: response.message_text,
+              latest_message_type: 'text',
+              latest_from_me: true,
+            }
+          : chat,
+      ),
+    )
+  }
+
+  function handleMediaLayoutReady() {
+    if (!keepTimelinePinnedRef.current) {
+      return
+    }
+
+    window.requestAnimationFrame(() => {
+      scrollTimelineToBottom()
+    })
+  }
+
   const selectedChat = chats.find((item) => item.id === selectedChatId)
+  const compatibleAssistantRules =
+    history && selectedChat
+      ? assistantRules.filter((rule) => isRuleUsableInChat(rule, history.chat))
+      : []
+  const effectiveAssistantRuleId = compatibleAssistantRules.some((rule) => rule.id === assistantRuleId)
+    ? assistantRuleId
+    : compatibleAssistantRules[0]?.id ?? ''
+  const selectedAssistantRule = compatibleAssistantRules.find(
+    (rule) => rule.id === effectiveAssistantRuleId,
+  )
+  const canGenerateAssistantDraft = Boolean(
+    selectedChatId && history && compatibleAssistantRules.length > 0 && !assistantBusy,
+  )
+  const canUseAssistantDraft = Boolean(
+    assistantRun?.status === 'ready_for_review' && assistantDraft.trim(),
+  )
+  const canSendInCurrentChat = Boolean(
+    history && isChatSendable(history.chat.wa_chat_jid, history.chat.chat_type),
+  )
+  const canSendMessage = Boolean(canSendInCurrentChat && draftMessage.trim() && !sending)
+  const sendBlockReason =
+    history && !canSendInCurrentChat
+      ? getChatSendBlockedReason(history.chat.wa_chat_jid, history.chat.chat_type)
+      : undefined
 
   return (
-    <div className="page page-chats">
-      <section className="chat-frame">
-        <aside className="panel chat-sidebar-panel">
-          <div className="panel-heading">
+    <div className="page page-chats whatsapp-chat-page">
+      <section className="chat-frame whatsapp-chat-frame">
+        <aside className="panel chat-sidebar-panel whatsapp-chat-sidebar">
+          <div className="whatsapp-chat-sidebar-header">
             <div>
-              <p className="eyebrow">筛选区</p>
-              <h3>会话列表</h3>
+              <h2>聊天</h2>
             </div>
-            <span className="subtle-text">{listLoading ? '同步中...' : `${chats.length} 条结果`}</span>
+            <span className="subtle-text">{listLoading ? '同步中...' : `${chats.length} 个会话`}</span>
           </div>
 
-          <div className="chat-filter-grid">
+          <label className="field whatsapp-chat-search-field">
+            <span className="visually-hidden">搜索会话</span>
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索或开始新聊天"
+            />
+          </label>
+
+          <div className="whatsapp-chat-filter-bar">
             <label className="field compact-field">
               <span>账号</span>
               <select value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}>
@@ -283,35 +626,32 @@ export function ChatsPage() {
                 ))}
               </select>
             </label>
-
-            <label className="field compact-field chat-search-field">
-              <span>搜索</span>
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="搜联系人、群聊名、消息预览"
-              />
-            </label>
           </div>
 
           {chats.length > 0 ? (
-            <div className="chat-list-scroll">
-              <div className="chat-list">
+            <div className="chat-list-scroll whatsapp-chat-list-scroll">
+              <div className="chat-list whatsapp-chat-list">
                 {chats.map((chat) => (
                   <button
                     key={chat.id}
                     type="button"
-                    className={`chat-row${selectedChatId === chat.id ? ' selected' : ''}`}
+                    className={`chat-row whatsapp-chat-row${selectedChatId === chat.id ? ' selected' : ''}`}
                     onClick={() => startTransition(() => setSelectedChatId(chat.id))}
                   >
-                    <div className="chat-row-header">
-                      <strong>{chat.title || chat.wa_chat_jid}</strong>
-                      <StatusBadge status={chat.chat_type} />
+                    <div className="whatsapp-chat-avatar" aria-hidden="true">
+                      {getChatAvatarLabel(getChatDisplayName(chat))}
                     </div>
-                    <p>{chat.latest_message_preview || fallbackMessageCopy(chat.latest_message_type)}</p>
-                    <div className="chat-row-meta">
-                      <span>{chat.wa_chat_jid}</span>
-                      <small>{formatDateTime(chat.last_message_at)}</small>
+
+                    <div className="whatsapp-chat-row-content">
+                      <div className="chat-row-header whatsapp-chat-row-header">
+                        <strong>{getChatDisplayName(chat)}</strong>
+                        <small>{formatDateTime(chat.last_message_at)}</small>
+                      </div>
+
+                      <div className="chat-row-meta whatsapp-chat-row-meta">
+                        <p>{getChatPreviewText(chat)}</p>
+                        <StatusBadge status={chat.chat_type} />
+                      </div>
                     </div>
                   </button>
                 ))}
@@ -320,47 +660,52 @@ export function ChatsPage() {
           ) : (
             <EmptyPanel
               title="没有找到会话"
-              description="先确认账号已成功接入，再按账号、类型或关键词筛选。"
+              description="先确认账号已成功接入，再按账号、类型或关键字筛选。"
             />
           )}
         </aside>
 
-        <section className="panel chat-main-panel">
+        <section className="panel chat-main-panel whatsapp-chat-main">
           {selectedChat && history ? (
             <>
-              <div className="chat-stage-header">
-                <div>
-                  <p className="eyebrow">当前会话</p>
-                  <h3>{history.chat.title || history.chat.wa_chat_jid}</h3>
-                  <p className="subtle-text">
-                    {history.chat.wa_chat_jid}
-                    {history.chat.participant_count ? ` · ${history.chat.participant_count} 人` : ''}
-                  </p>
+              <div className="chat-stage-header whatsapp-chat-stage-header">
+                <div className="whatsapp-chat-contact">
+                  <div className="whatsapp-chat-avatar large" aria-hidden="true">
+                    {getChatAvatarLabel(getChatDisplayName(history.chat))}
+                  </div>
+                  <div>
+                    <h3>{getChatDisplayName(history.chat)}</h3>
+                    <p className="subtle-text">{history.chat.wa_chat_jid}</p>
+                  </div>
                 </div>
-                <div className="chat-stage-meta">
+
+                <div className="chat-stage-meta whatsapp-chat-stage-meta">
                   <StatusBadge status={history.chat.chat_type} />
                   <span>{history.messages.length} 条已加载消息</span>
                 </div>
               </div>
 
-              <div className="chat-stage-toolbar">
+              <div className="whatsapp-history-toolbar">
                 {history.has_more ? (
                   <button className="secondary-button" type="button" onClick={() => void loadMoreMessages()}>
-                    {historyLoading ? '正在加载更早消息...' : '加载更早消息'}
+                    {historyLoading ? '正在加载更早消息...' : '查看更多消息'}
                   </button>
-                ) : (
-                  <span className="subtle-text">更早消息已经到底了</span>
-                )}
-                <span className="subtle-text">新消息会在你靠近底部时自动贴底</span>
+                ) : null}
               </div>
 
-              <div ref={timelineRef} className="message-timeline">
+              <div ref={timelineRef} className="message-timeline whatsapp-message-timeline">
                 {history.messages.map((message) => (
-                  <article key={message.id} className={`message-card${message.from_me ? ' own' : ''}`}>
-                    <div className="message-meta">
-                      <strong>{message.from_me ? '本机发送' : message.sender_jid}</strong>
-                      <span>{formatDateTime(message.sent_at)}</span>
-                    </div>
+                  <article
+                    key={message.id}
+                    className={`message-card whatsapp-message-card${message.from_me ? ' own' : ''}`}
+                  >
+                    {!message.from_me ? (
+                      <div className="message-meta">
+                        <strong>{getMessageSenderName(message)}</strong>
+                        <span>{formatDateTime(message.sent_at)}</span>
+                      </div>
+                    ) : null}
+
                     <p>{message.text_content || fallbackMessageCopy(message.message_type)}</p>
 
                     {message.media.length > 0 ? (
@@ -380,6 +725,7 @@ export function ChatsPage() {
                                   src={mediaUrl}
                                   alt={label}
                                   loading="lazy"
+                                  onLoad={handleMediaLayoutReady}
                                 />
                                 <figcaption>{label}</figcaption>
                               </figure>
@@ -389,7 +735,13 @@ export function ChatsPage() {
                           if (media.media_type === 'video' && media.download_status === 'ready') {
                             return (
                               <figure key={media.id} className="media-preview-card">
-                                <video className="media-preview-video" src={mediaUrl} controls preload="metadata" />
+                                <video
+                                  className="media-preview-video"
+                                  src={mediaUrl}
+                                  controls
+                                  preload="metadata"
+                                  onLoadedMetadata={handleMediaLayoutReady}
+                                />
                                 <figcaption>{label}</figcaption>
                               </figure>
                             )
@@ -398,7 +750,13 @@ export function ChatsPage() {
                           if (media.media_type === 'audio' && media.download_status === 'ready') {
                             return (
                               <figure key={media.id} className="media-preview-card">
-                                <audio className="media-preview-audio" src={mediaUrl} controls preload="metadata" />
+                                <audio
+                                  className="media-preview-audio"
+                                  src={mediaUrl}
+                                  controls
+                                  preload="metadata"
+                                  onLoadedMetadata={handleMediaLayoutReady}
+                                />
                                 <figcaption>{label}</figcaption>
                               </figure>
                             )
@@ -428,22 +786,327 @@ export function ChatsPage() {
                         })}
                       </div>
                     ) : null}
+
+                    <div className="whatsapp-message-foot">
+                      <span>{formatDateTime(message.sent_at)}</span>
+                      {message.from_me ? <span className="whatsapp-message-check">✓✓</span> : null}
+                    </div>
                   </article>
                 ))}
+              </div>
+
+              <div className="chat-compose-panel whatsapp-chat-compose">
+                {sendBlockReason ? <div className="warning-banner">{sendBlockReason}</div> : null}
+
+                <div className="whatsapp-chat-compose-shell">
+                  <button className="whatsapp-compose-utility" type="button" aria-label="更多操作">
+                    +
+                  </button>
+
+                  <div className="chat-compose-box whatsapp-chat-compose-box">
+                    <textarea
+                      value={draftMessage}
+                      onChange={(event) => setDraftMessage(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault()
+                          void handleSendMessage()
+                        }
+                      }}
+                      placeholder={canSendInCurrentChat ? '输入消息' : '当前会话不支持发送消息'}
+                      rows={3}
+                      disabled={!canSendInCurrentChat}
+                    />
+                  </div>
+
+                  <button
+                    className="primary-button whatsapp-send-button"
+                    type="button"
+                    onClick={() => void handleSendMessage()}
+                    disabled={!canSendMessage}
+                  >
+                    {sending ? '发送中...' : '发送'}
+                  </button>
+                </div>
+
+                <div className="whatsapp-compose-meta">
+                  <span className="field-hint">当前会话：{getChatDisplayName(history.chat)}</span>
+                </div>
               </div>
             </>
           ) : (
             <EmptyPanel
-              title="右侧还没有内容"
-              description="左边点一条会话，右边就会按固定高度展示时间线，滚动逻辑会保持最新消息在底部。"
+              title="先选择一个聊天"
+              description="左边点一条会话，右边就会进入固定高度的聊天工作区。"
             />
           )}
         </section>
+
+        <aside className="panel chat-assistant-panel whatsapp-chat-assistant">
+          <div className="whatsapp-assistant-header">
+            <div>
+              <p className="eyebrow">AI 助手</p>
+              <h3>对话辅助</h3>
+            </div>
+            <span className="toolbar-chip active">实验中</span>
+          </div>
+
+          {selectedChat && history ? (
+            <div className="assistant-panel-body whatsapp-assistant-body">
+              <section className="assistant-card assistant-chat-context">
+                <span className="assistant-section-label">当前会话</span>
+                <strong>{getChatDisplayName(history.chat)}</strong>
+                <p>{history.chat.wa_chat_jid}</p>
+                <div className="assistant-chip-row">
+                  <span className="toolbar-chip active">
+                    {selectedAssistantRule ? getAgentProviderLabel(selectedAssistantRule) : '未选择'}
+                  </span>
+                  <span className="toolbar-chip">{compatibleAssistantRules.length} 个 Agent</span>
+                </div>
+              </section>
+
+              <section className="assistant-card">
+                <span className="assistant-section-label">Agent 回复</span>
+                {compatibleAssistantRules.length > 0 ? (
+                  <label className="field compact-field assistant-rule-field">
+                    <span>选择 Agent</span>
+                    <select
+                      value={effectiveAssistantRuleId}
+                      onChange={(event) => setAssistantRuleId(event.target.value)}
+                    >
+                      {compatibleAssistantRules.map((rule) => (
+                        <option key={rule.id} value={rule.id}>
+                          {rule.name} · {getAgentProviderLabel(rule)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <div className="warning-banner">当前会话没有可用 Agent，请先到智能回复页配置 API。</div>
+                )}
+
+                <button
+                  className="secondary-button assistant-action-button"
+                  type="button"
+                  onClick={() => void handleGenerateAssistantDraft()}
+                  disabled={!canGenerateAssistantDraft}
+                >
+                  {assistantBusy ? '生成中...' : '生成回复建议'}
+                </button>
+
+                {assistantRun ? (
+                  <div className="assistant-chip-row">
+                    <StatusBadge status={assistantRun.status} />
+                    <span className="toolbar-chip">{assistantRun.rule_name}</span>
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="assistant-card">
+                <span className="assistant-section-label">草稿</span>
+                <textarea
+                  className="assistant-draft-box"
+                  ref={assistantDraftRef}
+                  value={assistantDraft}
+                  onChange={(event) => setAssistantDraft(event.target.value)}
+                  placeholder="生成后会出现在这里"
+                  rows={7}
+                />
+                {assistantRun?.block_reason ? (
+                  <div className="warning-banner">{assistantRun.block_reason}</div>
+                ) : null}
+                {assistantNotice ? <div className="success-banner">{assistantNotice}</div> : null}
+
+                <div className="button-row">
+                  <button
+                    className="secondary-button assistant-action-button"
+                    type="button"
+                    onClick={handleWriteAssistantDraft}
+                    disabled={!canUseAssistantDraft}
+                  >
+                    写回输入框
+                  </button>
+                  <button
+                    className="primary-button assistant-action-button"
+                    type="button"
+                    onClick={() => void handleSendAssistantDraft()}
+                    disabled={!canUseAssistantDraft || !canSendInCurrentChat || assistantSending}
+                  >
+                    {assistantSending ? '发送中...' : '发送草稿'}
+                  </button>
+                </div>
+              </section>
+
+              <section className="assistant-card assistant-legacy-actions">
+                <span className="assistant-section-label">快捷操作</span>
+                <button className="secondary-button assistant-action-button" type="button" disabled>
+                  生成回复建议
+                </button>
+                <button className="secondary-button assistant-action-button" type="button" disabled>
+                  切换 Agent
+                </button>
+                <button className="secondary-button assistant-action-button" type="button" disabled>
+                  写回输入框
+                </button>
+              </section>
+            </div>
+          ) : (
+            <EmptyPanel title="先选一个会话" description="右侧助手会基于当前聊天上下文工作。" />
+          )}
+        </aside>
       </section>
 
       {error ? <div className="error-banner">{error}</div> : null}
     </div>
   )
+}
+
+function choosePreferredChatId(chats: ChatSummary[], current?: string) {
+  if (current && chats.some((chat) => chat.id === current)) {
+    return current
+  }
+
+  const firstSendable = chats.find((chat) => isChatSendable(chat.wa_chat_jid, chat.chat_type))
+  return firstSendable?.id ?? chats[0]?.id
+}
+
+function isRuleUsableInChat(rule: AgentRuleView, chat: ChatHeader) {
+  if (rule.reply_mode === 'manual') {
+    return false
+  }
+
+  const scopedChatIds = rule.scope_filter.chat_ids ?? []
+  if (scopedChatIds.length > 0 && !scopedChatIds.includes(chat.id)) {
+    return false
+  }
+
+  const scopedChatTypes = rule.scope_filter.chat_types ?? []
+  if (scopedChatTypes.length > 0 && !scopedChatTypes.includes(chat.chat_type)) {
+    return false
+  }
+
+  return true
+}
+
+function getAgentProviderLabel(agent: AgentRuleView) {
+  const type = String(agent.provider_config?.type ?? '').trim().toLowerCase()
+  switch (type) {
+    case 'coze':
+      return 'Coze'
+    case 'n8n':
+      return 'n8n'
+    case 'webhook':
+      return 'Webhook'
+    case 'openai':
+    case 'openai_compatible':
+    case 'openai-compatible':
+      return '大模型 API'
+    default:
+      return 'Agent'
+  }
+}
+
+function getChatDisplayName(chat: ChatDisplaySource) {
+  const title = chat.title?.trim()
+  if (title && isRawChatTitle(title, chat.wa_chat_jid) && chat.chat_type === 'group') {
+    return formatGroupFallback(chat)
+  }
+
+  if (title && title !== '0') {
+    return title
+  }
+
+  if (chat.chat_type === 'group') {
+    return formatGroupFallback(chat)
+  }
+
+  if (!isChatSendable(chat.wa_chat_jid, chat.chat_type)) {
+    return '系统会话'
+  }
+
+  return formatChatIdentifier(chat.wa_chat_jid)
+}
+
+function getChatPreviewText(chat: ChatSummary) {
+  const preview = chat.latest_message_preview?.trim()
+  if (preview) {
+    return preview
+  }
+
+  if (!isChatSendable(chat.wa_chat_jid, chat.chat_type)) {
+    return '系统消息'
+  }
+
+  return fallbackMessageCopy(chat.latest_message_type)
+}
+
+function getMessageSenderName(message: MessageView) {
+  const senderName = message.sender_name?.trim()
+  if (senderName && senderName !== '0') {
+    return senderName
+  }
+
+  return formatChatIdentifier(message.sender_jid)
+}
+
+function isRawChatTitle(title: string, chatJID: string) {
+  const normalizedTitle = title.trim().toLowerCase()
+  const normalizedJID = chatJID.trim().toLowerCase()
+  const [jidUser] = normalizedJID.split('@')
+
+  return normalizedTitle === normalizedJID || normalizedTitle === jidUser
+}
+
+function formatGroupFallback(chat: ChatDisplaySource) {
+  if (chat.participant_count && chat.participant_count > 0) {
+    return `群聊 · ${chat.participant_count}人`
+  }
+
+  return '群聊'
+}
+
+function formatChatIdentifier(chatJID: string) {
+  const trimmed = chatJID.trim()
+  if (!trimmed) {
+    return '未知联系人'
+  }
+
+  const [user] = trimmed.split('@')
+  return user || trimmed
+}
+
+function isChatSendable(chatJID: string, chatType: ChatType) {
+  const normalized = chatJID.trim().toLowerCase()
+
+  if (!normalized) {
+    return false
+  }
+
+  if (chatType === 'status' || chatType === 'broadcast') {
+    return false
+  }
+
+  if (normalized === '0@s.whatsapp.net') {
+    return false
+  }
+
+  if (normalized.startsWith('status@')) {
+    return false
+  }
+
+  return true
+}
+
+function getChatSendBlockedReason(chatJID: string, chatType: ChatType) {
+  if (chatType === 'status' || chatType === 'broadcast') {
+    return '当前会话属于系统广播 / 状态同步，不支持直接发送消息。'
+  }
+
+  if (chatJID.trim().toLowerCase() === '0@s.whatsapp.net') {
+    return '这是 WhatsApp 的系统会话，不是可直接聊天的联系人，所以不能发送消息。'
+  }
+
+  return '当前会话不支持发送消息，请切换到真实联系人或群聊。'
 }
 
 function isNearBottom(element: HTMLDivElement | null) {
@@ -468,6 +1131,20 @@ function formatDateTime(value?: string) {
   }).format(new Date(value))
 }
 
+function getChatAvatarLabel(value?: string) {
+  const trimmed = (value ?? '').trim()
+  if (!trimmed) {
+    return '聊'
+  }
+
+  const first = trimmed[0]
+  if (/[a-z0-9]/i.test(first)) {
+    return first.toUpperCase()
+  }
+
+  return first
+}
+
 function fallbackMessageCopy(messageType?: string) {
   switch (messageType) {
     case 'image':
@@ -482,6 +1159,8 @@ function fallbackMessageCopy(messageType?: string) {
       return '贴纸消息'
     case 'reaction':
       return '表情反馈'
+    case 'system':
+      return '系统消息'
     default:
       return '暂无可直接展示的文本内容'
   }

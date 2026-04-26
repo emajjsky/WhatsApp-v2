@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,10 +41,56 @@ func (h *Handler) SetAuditRecorder(recorder interface {
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/agents/settings", h.handleSettings)
 	mux.HandleFunc("/api/agents/rules", h.handleRules)
 	mux.HandleFunc("/api/agents/rules/", h.handleRuleByID)
 	mux.HandleFunc("/api/agent-runs", h.handleRuns)
+	mux.HandleFunc("/api/agent-runs/generate", h.handleGenerateRun)
+	mux.HandleFunc("/api/agent-runs/generate/stream", h.handleGenerateRunStream)
 	mux.HandleFunc("/api/agent-runs/", h.handleRunByID)
+}
+
+func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		accountID := strings.TrimSpace(r.URL.Query().Get("account_id"))
+		settings, err := h.service.GetSettings(r.Context(), accountID)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"settings": settings})
+	case http.MethodPost:
+		var input UpsertSettingsInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		settings, err := h.service.UpsertSettings(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+
+		h.recordAudit(r.Context(), r, audit.RecordInput{
+			ActorType:  audit.ActorTypeUser,
+			ActorID:    audit.RequestActorID(r),
+			Action:     "agent.settings.upsert",
+			TargetType: "agent_settings",
+			TargetID:   settings.AccountID,
+			Outcome:    audit.OutcomeSuccess,
+			Detail: map[string]any{
+				"provider": settings.Provider,
+				"model":    settings.Model,
+			},
+		})
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"settings": settings})
+	default:
+		httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
 }
 
 func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {
@@ -202,6 +249,123 @@ func (h *Handler) handleRuns(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) handleGenerateRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload struct {
+		ChatID      string  `json:"chat_id"`
+		RuleID      string  `json:"rule_id,omitempty"`
+		MessageText *string `json:"message_text,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &payload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	run, err := h.automation.GenerateRun(r.Context(), GenerateRunInput{
+		ChatID:      payload.ChatID,
+		RuleID:      payload.RuleID,
+		MessageText: payload.MessageText,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.recordAudit(r.Context(), r, audit.RecordInput{
+		ActorType:  audit.ActorTypeUser,
+		ActorID:    audit.RequestActorID(r),
+		Action:     "agent.run.generate",
+		TargetType: "agent_run",
+		TargetID:   run.ID,
+		Outcome:    audit.OutcomeSuccess,
+		Detail: map[string]any{
+			"chat_id":    run.ChatID,
+			"account_id": run.AccountID,
+			"rule_id":    run.RuleID,
+			"status":     run.Status,
+		},
+	})
+
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"run": run})
+}
+
+func (h *Handler) handleGenerateRunStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload struct {
+		ChatID      string  `json:"chat_id"`
+		RuleID      string  `json:"rule_id,omitempty"`
+		MessageText *string `json:"message_text,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &payload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	finalRun, err := h.automation.GenerateRunStream(
+		r.Context(),
+		GenerateRunInput{
+			ChatID:      payload.ChatID,
+			RuleID:      payload.RuleID,
+			MessageText: payload.MessageText,
+		},
+		GenerateRunStreamCallbacks{
+			OnStart: func(run RunView) error {
+				return writeAgentRunSSE(w, "start", map[string]any{"run": run})
+			},
+			OnDelta: func(text string) error {
+				return writeAgentRunSSE(w, "delta", map[string]any{"text": text})
+			},
+		},
+	)
+	if err != nil {
+		errorPayload := map[string]any{"message": err.Error()}
+		if strings.TrimSpace(finalRun.ID) != "" {
+			errorPayload["run"] = finalRun
+		}
+		_ = writeAgentRunSSE(w, "error", errorPayload)
+		return
+	}
+
+	h.recordAudit(r.Context(), r, audit.RecordInput{
+		ActorType:  audit.ActorTypeUser,
+		ActorID:    audit.RequestActorID(r),
+		Action:     "agent.run.generate.stream",
+		TargetType: "agent_run",
+		TargetID:   finalRun.ID,
+		Outcome:    audit.OutcomeSuccess,
+		Detail: map[string]any{
+			"chat_id":    finalRun.ChatID,
+			"account_id": finalRun.AccountID,
+			"rule_id":    finalRun.RuleID,
+			"status":     finalRun.Status,
+		},
+	})
+
+	_ = writeAgentRunSSE(w, "complete", map[string]any{"run": finalRun})
+}
+
 func (h *Handler) handleRunByID(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/agent-runs/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -260,6 +424,8 @@ func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrRuleNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrSettingsNotFound):
+		httpx.WriteError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrAccountNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 	default:
@@ -273,6 +439,22 @@ func (h *Handler) recordAudit(ctx context.Context, r *http.Request, input audit.
 	}
 
 	_ = h.auditRecorder.Record(ctx, input)
+}
+
+func writeAgentRunSSE(w http.ResponseWriter, event string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, body); err != nil {
+		return err
+	}
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	return nil
 }
 
 func parseRuleFilters(r *http.Request) (RuleListFilters, error) {

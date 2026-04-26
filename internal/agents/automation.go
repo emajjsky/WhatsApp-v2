@@ -109,6 +109,25 @@ type SendRunInput struct {
 	MessageText *string
 }
 
+type GenerateRunInput struct {
+	ChatID      string
+	RuleID      string
+	MessageText *string
+}
+
+type GenerateRunStreamCallbacks struct {
+	OnStart func(RunView) error
+	OnDelta func(string) error
+}
+
+type preparedManualRun struct {
+	RunID         string
+	AccountID     string
+	ChatHeader    chats.ChatHeader
+	RunRule       AgentRule
+	RunnerRequest RunnerRunRequest
+}
+
 func (a *Automation) SendRun(ctx context.Context, runID string, input SendRunInput) (RunView, error) {
 	if a == nil {
 		return RunView{}, fmt.Errorf("agent automation is not configured")
@@ -169,6 +188,206 @@ func (a *Automation) SendRun(ctx context.Context, runID string, input SendRunInp
 	return a.repository.GetRunViewByID(ctx, run.ID)
 }
 
+func (a *Automation) GenerateRun(ctx context.Context, input GenerateRunInput) (RunView, error) {
+	prepared, err := a.prepareManualRun(ctx, input)
+	if err != nil {
+		if prepared.RunID != "" {
+			return a.failRun(ctx, prepared.RunID, err.Error())
+		}
+		return RunView{}, err
+	}
+
+	runnerResp, err := a.runner.Run(ctx, prepared.RunnerRequest)
+	if err != nil {
+		return a.failRun(ctx, prepared.RunID, fmt.Sprintf("agent runner failed: %v", err))
+	}
+
+	if err := a.applyRunnerDecision(
+		ctx,
+		prepared.RunID,
+		prepared.AccountID,
+		prepared.ChatHeader,
+		prepared.RunRule,
+		runnerResp,
+	); err != nil {
+		return RunView{}, err
+	}
+
+	return a.repository.GetRunViewByID(ctx, prepared.RunID)
+}
+
+func (a *Automation) GenerateRunStream(
+	ctx context.Context,
+	input GenerateRunInput,
+	callbacks GenerateRunStreamCallbacks,
+) (RunView, error) {
+	prepared, err := a.prepareManualRun(ctx, input)
+	if prepared.RunID != "" && callbacks.OnStart != nil {
+		run, loadErr := a.repository.GetRunViewByID(ctx, prepared.RunID)
+		if loadErr != nil {
+			return RunView{}, loadErr
+		}
+		if callbackErr := callbacks.OnStart(run); callbackErr != nil {
+			return run, callbackErr
+		}
+	}
+	if err != nil {
+		if prepared.RunID != "" {
+			failed, updateErr := a.failRun(ctx, prepared.RunID, err.Error())
+			if updateErr != nil {
+				return RunView{}, updateErr
+			}
+			return failed, err
+		}
+		return RunView{}, err
+	}
+
+	runnerResp, err := a.runner.RunStream(ctx, prepared.RunnerRequest, func(event RunnerRunStreamEvent) error {
+		if event.Type != "delta" || callbacks.OnDelta == nil {
+			return nil
+		}
+		return callbacks.OnDelta(event.Text)
+	})
+	if err != nil {
+		failed, updateErr := a.failRun(ctx, prepared.RunID, fmt.Sprintf("agent runner failed: %v", err))
+		if updateErr != nil {
+			return RunView{}, updateErr
+		}
+		return failed, err
+	}
+
+	if err := a.applyRunnerDecision(
+		ctx,
+		prepared.RunID,
+		prepared.AccountID,
+		prepared.ChatHeader,
+		prepared.RunRule,
+		runnerResp,
+	); err != nil {
+		return RunView{}, err
+	}
+
+	return a.repository.GetRunViewByID(ctx, prepared.RunID)
+}
+
+func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInput) (preparedManualRun, error) {
+	if a == nil {
+		return preparedManualRun{}, fmt.Errorf("agent automation is not configured")
+	}
+
+	chatID := strings.TrimSpace(input.ChatID)
+	if chatID == "" {
+		return preparedManualRun{}, fmt.Errorf("chat_id is required")
+	}
+
+	chatHeader, err := a.chatRepository.GetChatHeader(ctx, chatID)
+	if err != nil {
+		return preparedManualRun{}, err
+	}
+
+	trigger, recentMessages, err := a.resolveManualTrigger(ctx, chatID, input.MessageText)
+	if err != nil {
+		return preparedManualRun{}, err
+	}
+
+	selected, err := a.resolveManualRule(ctx, chatHeader, chatID, trigger.Text, input.RuleID)
+	if err != nil {
+		return preparedManualRun{}, err
+	}
+
+	runRule := selected
+	runRule.ReplyMode = ReplyModeSuggest
+
+	runID := ids.NewUUID()
+	createdAt := a.now()
+	contextMessages := buildRunnerRecentMessages(recentMessages)
+
+	inputContext, err := json.Marshal(map[string]any{
+		"chat_title":        chatHeader.Title,
+		"wa_chat_jid":       chatHeader.WAChatJID,
+		"trigger_text":      trigger.Text,
+		"trigger_wa_id":     trigger.WAMessageID,
+		"rule_id":           selected.ID,
+		"rule_name":         selected.Name,
+		"rule_reply_mode":   selected.ReplyMode,
+		"manual":            true,
+		"runner_configured": a.runner.Configured(),
+		"received_at":       createdAt,
+	})
+	if err != nil {
+		return preparedManualRun{}, fmt.Errorf("encode manual agent run context: %w", err)
+	}
+
+	prepared := preparedManualRun{
+		RunID:      runID,
+		AccountID:  chatHeader.AccountID,
+		ChatHeader: chatHeader,
+		RunRule:    runRule,
+	}
+
+	if err := a.repository.CreateRun(ctx, AgentRun{
+		ID:               runID,
+		RuleID:           selected.ID,
+		AccountID:        chatHeader.AccountID,
+		ChatID:           chatID,
+		TriggerMessageID: trigger.ID,
+		Status:           RunStatusGenerating,
+		InputContext:     inputContext,
+	}); err != nil {
+		return preparedManualRun{}, err
+	}
+
+	if !a.runner.Configured() {
+		return prepared, fmt.Errorf("agent runner is not configured (AGENT_RUNNER_BASE_URL)")
+	}
+
+	providerConfig, err := a.buildRunnerProvider(ctx, chatHeader.AccountID, selected)
+	if err != nil {
+		return prepared, fmt.Errorf("load agent settings failed: %w", err)
+	}
+	resolvedPrompt := resolveRunnerPrompt(selected, providerConfig)
+
+	prepared.RunnerRequest = RunnerRunRequest{
+		RequestID:        runID,
+		AccountID:        chatHeader.AccountID,
+		ChatID:           chatID,
+		TriggerMessageID: trigger.ID,
+		ChatTitle:        chatHeader.Title,
+		Rule: RunnerRule{
+			Name:                    runRule.Name,
+			Enabled:                 runRule.Enabled,
+			ReplyMode:               runRule.ReplyMode,
+			CooldownSeconds:         runRule.CooldownSeconds,
+			MaxAutoRepliesPerThread: runRule.MaxAutoRepliesPerThread,
+			TriggerFilter:           runRule.TriggerFilter,
+			BlacklistFilter:         runRule.BlacklistFilter,
+			PromptTemplate:          resolvedPrompt,
+			KnowledgeBinding:        runRule.KnowledgeBinding,
+		},
+		Message: RunnerMessage{Text: trigger.Text},
+		Context: RunnerContext{
+			ChatTitle:      chatHeader.Title,
+			RecentMessages: contextMessages,
+		},
+		Provider: providerConfig,
+	}
+
+	return prepared, nil
+}
+
+func (a *Automation) failRun(ctx context.Context, runID string, reason string) (RunView, error) {
+	completedAt := a.now()
+	if err := a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
+		Status:      RunStatusFailed,
+		BlockReason: stringPointer(reason),
+		CompletedAt: &completedAt,
+	}); err != nil {
+		return RunView{}, err
+	}
+
+	return a.repository.GetRunViewByID(ctx, runID)
+}
+
 func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Event) error {
 	message := event.Message
 	if message == nil {
@@ -219,6 +438,9 @@ func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Even
 	if !ok {
 		return nil
 	}
+	if selected.ReplyMode == ReplyModeManual {
+		return nil
+	}
 
 	existingRunID, err := a.repository.GetRunIDByRuleAndTriggerMessage(ctx, selected.ID, triggerMessageID)
 	if err == nil && existingRunID != "" {
@@ -239,26 +461,7 @@ func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Even
 		return err
 	}
 
-	contextMessages := make([]RunnerRecentMessage, 0, len(recentMessages))
-	for _, item := range recentMessages {
-		preview := strings.TrimSpace(derefString(item.TextContent))
-		if preview == "" && item.MessageType != "" {
-			preview = fmt.Sprintf("[%s]", item.MessageType)
-		}
-		if preview == "" {
-			continue
-		}
-
-		role := "customer"
-		if item.FromMe {
-			role = "agent"
-		}
-
-		contextMessages = append(contextMessages, RunnerRecentMessage{
-			Role: role,
-			Text: preview,
-		})
-	}
+	contextMessages := buildRunnerRecentMessages(recentMessages)
 
 	inputContext, err := json.Marshal(map[string]any{
 		"chat_title":        chatHeader.Title,
@@ -306,6 +509,17 @@ func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Even
 		recentAutoReplies = count
 	}
 
+	providerConfig, err := a.buildRunnerProvider(ctx, event.AccountID, selected)
+	if err != nil {
+		completedAt := a.now()
+		return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
+			Status:      RunStatusFailed,
+			BlockReason: stringPointer(fmt.Sprintf("load agent settings failed: %v", err)),
+			CompletedAt: &completedAt,
+		})
+	}
+	resolvedPrompt := resolveRunnerPrompt(selected, providerConfig)
+
 	runnerResp, err := a.runner.Run(ctx, RunnerRunRequest{
 		RequestID:         runID,
 		AccountID:         event.AccountID,
@@ -321,7 +535,7 @@ func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Even
 			MaxAutoRepliesPerThread: selected.MaxAutoRepliesPerThread,
 			TriggerFilter:           selected.TriggerFilter,
 			BlacklistFilter:         selected.BlacklistFilter,
-			PromptTemplate:          selected.PromptTemplate,
+			PromptTemplate:          resolvedPrompt,
 			KnowledgeBinding:        selected.KnowledgeBinding,
 		},
 		Message: RunnerMessage{Text: text},
@@ -329,6 +543,7 @@ func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Even
 			ChatTitle:      chatHeader.Title,
 			RecentMessages: contextMessages,
 		},
+		Provider: providerConfig,
 	})
 	if err != nil {
 		completedAt := a.now()
@@ -502,10 +717,7 @@ func pickFirstMatchingRule(rules []AgentRule, chatHeader chats.ChatHeader, chatI
 		if !rule.Enabled {
 			continue
 		}
-		if len(rule.ScopeFilter.ChatIDs) > 0 && !containsString(rule.ScopeFilter.ChatIDs, chatID) {
-			continue
-		}
-		if len(rule.ScopeFilter.ChatTypes) > 0 && !containsString(rule.ScopeFilter.ChatTypes, string(chatHeader.ChatType)) {
+		if !ruleScopeMatches(rule, chatHeader, chatID) {
 			continue
 		}
 		if !triggerMatches(rule.TriggerFilter, text) {
@@ -516,6 +728,157 @@ func pickFirstMatchingRule(rules []AgentRule, chatHeader chats.ChatHeader, chatI
 	}
 
 	return AgentRule{}, false
+}
+
+type manualTrigger struct {
+	ID          string
+	WAMessageID string
+	Text        string
+}
+
+func (a *Automation) resolveManualTrigger(
+	ctx context.Context,
+	chatID string,
+	messageText *string,
+) (manualTrigger, []chats.MessageView, error) {
+	recentMessages, _, err := a.chatRepository.ListMessages(ctx, chats.MessageListFilters{
+		ChatID: chatID,
+		Limit:  30,
+	})
+	if err != nil {
+		return manualTrigger{}, nil, err
+	}
+
+	if len(recentMessages) == 0 {
+		return manualTrigger{}, nil, fmt.Errorf("chat has no messages to use as agent context")
+	}
+
+	overrideText := ""
+	if messageText != nil {
+		overrideText = strings.TrimSpace(*messageText)
+	}
+
+	if overrideText != "" {
+		if trigger, ok := latestTextTrigger(recentMessages, true); ok {
+			trigger.Text = overrideText
+			return trigger, recentMessages, nil
+		}
+		if trigger, ok := latestTextTrigger(recentMessages, false); ok {
+			trigger.Text = overrideText
+			return trigger, recentMessages, nil
+		}
+		return manualTrigger{}, nil, fmt.Errorf("chat has no text message to anchor agent run")
+	}
+
+	if trigger, ok := latestTextTrigger(recentMessages, true); ok {
+		return trigger, recentMessages, nil
+	}
+
+	return manualTrigger{}, nil, fmt.Errorf("chat has no incoming text message to reply to")
+}
+
+func (a *Automation) resolveManualRule(
+	ctx context.Context,
+	chatHeader chats.ChatHeader,
+	chatID string,
+	triggerText string,
+	ruleID string,
+) (AgentRule, error) {
+	trimmedRuleID := strings.TrimSpace(ruleID)
+	if trimmedRuleID != "" {
+		rule, err := a.repository.GetRuleByID(ctx, trimmedRuleID)
+		if err != nil {
+			return AgentRule{}, err
+		}
+		if rule.AccountID != chatHeader.AccountID {
+			return AgentRule{}, fmt.Errorf("agent rule does not belong to this chat account")
+		}
+		if rule.ReplyMode == ReplyModeManual {
+			return AgentRule{}, fmt.Errorf("manual reply rule cannot generate agent drafts")
+		}
+		if !ruleScopeMatches(rule, chatHeader, chatID) {
+			return AgentRule{}, fmt.Errorf("agent rule scope does not include this chat")
+		}
+		return rule, nil
+	}
+
+	rules, err := a.repository.ListRules(ctx, RuleListFilters{AccountID: chatHeader.AccountID})
+	if err != nil {
+		return AgentRule{}, err
+	}
+
+	for _, rule := range rules {
+		if rule.ReplyMode == ReplyModeManual {
+			continue
+		}
+		if !ruleScopeMatches(rule, chatHeader, chatID) {
+			continue
+		}
+		if !triggerMatches(rule.TriggerFilter, triggerText) {
+			continue
+		}
+		return rule, nil
+	}
+
+	return AgentRule{}, fmt.Errorf("no agent rule matches this chat and message")
+}
+
+func latestTextTrigger(messages []chats.MessageView, inboundOnly bool) (manualTrigger, bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if inboundOnly && message.FromMe {
+			continue
+		}
+
+		text := strings.TrimSpace(derefString(message.TextContent))
+		if text == "" {
+			continue
+		}
+
+		return manualTrigger{
+			ID:          message.ID,
+			WAMessageID: message.WAMessageID,
+			Text:        text,
+		}, true
+	}
+
+	return manualTrigger{}, false
+}
+
+func buildRunnerRecentMessages(messages []chats.MessageView) []RunnerRecentMessage {
+	contextMessages := make([]RunnerRecentMessage, 0, len(messages))
+	for _, item := range messages {
+		preview := strings.TrimSpace(derefString(item.TextContent))
+		if preview == "" && item.MessageType != "" {
+			preview = fmt.Sprintf("[%s]", item.MessageType)
+		}
+		if preview == "" {
+			continue
+		}
+
+		role := "customer"
+		if item.FromMe {
+			role = "agent"
+		}
+
+		contextMessages = append(contextMessages, RunnerRecentMessage{
+			Role: role,
+			Text: preview,
+		})
+	}
+
+	return contextMessages
+}
+
+func ruleScopeMatches(rule AgentRule, chatHeader chats.ChatHeader, chatID string) bool {
+	if len(rule.ScopeFilter.ChatIDs) > 0 && !containsString(rule.ScopeFilter.ChatIDs, chatID) {
+		return false
+	}
+	if len(rule.ScopeFilter.ChatTypes) > 0 && !containsString(rule.ScopeFilter.ChatTypes, string(chatHeader.ChatType)) {
+		return false
+	}
+
+	return true
 }
 
 func triggerMatches(filter TriggerFilter, text string) bool {
@@ -602,6 +965,58 @@ func stringPointer(value string) *string {
 	}
 	trimmed := strings.TrimSpace(value)
 	return &trimmed
+}
+
+func (a *Automation) buildRunnerProvider(ctx context.Context, accountID string, rule AgentRule) (map[string]any, error) {
+	if providerType := strings.TrimSpace(anyString(rule.ProviderConfig["type"])); providerType != "" {
+		config := cloneProviderConfig(rule.ProviderConfig)
+		config["type"] = strings.ToLower(providerType)
+		config["prompt_template"] = strings.TrimSpace(resolveRunnerPrompt(rule, config))
+		return config, nil
+	}
+
+	settings, err := a.repository.GetSettings(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	promptTemplate := strings.TrimSpace(rule.PromptTemplate)
+	if promptTemplate == "" {
+		promptTemplate = strings.TrimSpace(settings.PromptTemplate)
+	}
+
+	providerType := strings.ToLower(strings.TrimSpace(settings.Provider))
+	if providerType == "" {
+		return nil, fmt.Errorf("provider is required")
+	}
+
+	config := map[string]any{
+		"type":            providerType,
+		"base_url":        strings.TrimSpace(settings.BaseURL),
+		"api_key":         strings.TrimSpace(settings.APIKey),
+		"model":           strings.TrimSpace(settings.Model),
+		"prompt_template": promptTemplate,
+	}
+
+	return config, nil
+}
+
+func resolveRunnerPrompt(rule AgentRule, providerConfig map[string]any) string {
+	promptTemplate := strings.TrimSpace(rule.PromptTemplate)
+	if promptTemplate != "" {
+		return promptTemplate
+	}
+
+	configuredPrompt, _ := providerConfig["prompt_template"].(string)
+	return strings.TrimSpace(configuredPrompt)
+}
+
+func cloneProviderConfig(config map[string]any) map[string]any {
+	cloned := make(map[string]any, len(config))
+	for key, value := range config {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 var _ = sql.ErrNoRows

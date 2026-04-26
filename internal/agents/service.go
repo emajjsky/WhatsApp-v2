@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	ErrRuleNotFound    = errors.New("agent rule not found")
-	ErrAccountNotFound = errors.New("account not found")
+	ErrRuleNotFound     = errors.New("agent rule not found")
+	ErrSettingsNotFound = errors.New("agent settings not found")
+	ErrAccountNotFound  = errors.New("account not found")
 )
 
 type AccountLookup interface {
@@ -95,11 +96,12 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 	}
 	blacklistFilter := normalizeBlacklistFilter(input.BlacklistFilter)
 	knowledgeBinding := normalizeKnowledgeBinding(input.KnowledgeBinding)
+	providerConfig, err := normalizeProviderConfig(input.ProviderConfig)
+	if err != nil {
+		return RuleView{}, err
+	}
 
 	promptTemplate := strings.TrimSpace(input.PromptTemplate)
-	if promptTemplate == "" {
-		return RuleView{}, fmt.Errorf("prompt_template is required")
-	}
 
 	cooldownSeconds := input.CooldownSeconds
 	if cooldownSeconds < 0 {
@@ -136,6 +138,7 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 			MaxAutoRepliesPerThread: maxAutoReplies,
 			BlacklistFilter:         blacklistFilter,
 			PromptTemplate:          promptTemplate,
+			ProviderConfig:          providerConfig,
 			KnowledgeBinding:        knowledgeBinding,
 			CreatedAt:               s.now(),
 			UpdatedAt:               s.now(),
@@ -174,6 +177,7 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 		MaxAutoRepliesPerThread: maxAutoReplies,
 		BlacklistFilter:         blacklistFilter,
 		PromptTemplate:          promptTemplate,
+		ProviderConfig:          providerConfig,
 		KnowledgeBinding:        knowledgeBinding,
 		CreatedAt:               existing.CreatedAt,
 		UpdatedAt:               s.now(),
@@ -229,6 +233,75 @@ func (s *Service) DeleteRule(ctx context.Context, ruleID string) (RuleView, erro
 	}
 
 	return mapRuleToView(rule), nil
+}
+
+func (s *Service) GetSettings(ctx context.Context, accountID string) (SettingsView, error) {
+	trimmedAccountID := strings.TrimSpace(accountID)
+	if trimmedAccountID == "" {
+		return SettingsView{}, fmt.Errorf("account_id is required")
+	}
+
+	settings, err := s.repository.GetSettings(ctx, trimmedAccountID)
+	if err != nil {
+		return SettingsView{}, mapSettingsError(trimmedAccountID, err)
+	}
+
+	return mapSettingsToView(settings), nil
+}
+
+func (s *Service) UpsertSettings(ctx context.Context, input UpsertSettingsInput) (SettingsView, error) {
+	accountID := strings.TrimSpace(input.AccountID)
+	if accountID == "" {
+		return SettingsView{}, fmt.Errorf("account_id is required")
+	}
+	if err := s.ensureAccountExists(ctx, accountID); err != nil {
+		return SettingsView{}, err
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(input.Provider))
+	if provider == "" {
+		return SettingsView{}, fmt.Errorf("provider is required")
+	}
+
+	model := strings.TrimSpace(input.Model)
+	if model == "" {
+		return SettingsView{}, fmt.Errorf("model is required")
+	}
+
+	baseURL := strings.TrimSpace(input.BaseURL)
+	if baseURL == "" {
+		return SettingsView{}, fmt.Errorf("base_url is required")
+	}
+
+	apiKey := strings.TrimSpace(input.APIKey)
+	if apiKey == "" {
+		return SettingsView{}, fmt.Errorf("api_key is required")
+	}
+
+	promptTemplate := strings.TrimSpace(input.PromptTemplate)
+	if promptTemplate == "" {
+		return SettingsView{}, fmt.Errorf("prompt_template is required")
+	}
+
+	settings := AgentSettings{
+		AccountID:      accountID,
+		Provider:       provider,
+		Model:          model,
+		BaseURL:        baseURL,
+		APIKey:         apiKey,
+		PromptTemplate: promptTemplate,
+	}
+
+	if err := s.repository.UpsertSettings(ctx, settings); err != nil {
+		return SettingsView{}, err
+	}
+
+	stored, err := s.repository.GetSettings(ctx, accountID)
+	if err != nil {
+		return SettingsView{}, mapSettingsError(accountID, err)
+	}
+
+	return mapSettingsToView(stored), nil
 }
 
 func (s *Service) ListRuns(ctx context.Context, filters RunListFilters) (RunListResult, error) {
@@ -293,8 +366,18 @@ func mapRuleError(ruleID string, err error) error {
 	return err
 }
 
+func mapSettingsError(accountID string, err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: %s", ErrSettingsNotFound, accountID)
+	}
+
+	return err
+}
+
 func normalizeReplyMode(value ReplyMode) ReplyMode {
 	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case string(ReplyModeManual):
+		return ReplyModeManual
 	case string(ReplyModeSuggest):
 		return ReplyModeSuggest
 	case string(ReplyModeAutoSend):
@@ -403,6 +486,74 @@ func normalizeKnowledgeBinding(binding *KnowledgeBinding) *KnowledgeBinding {
 		Summary:    summary,
 		References: references,
 	}
+}
+
+func normalizeProviderConfig(config map[string]any) (map[string]any, error) {
+	if len(config) == 0 {
+		return map[string]any{}, nil
+	}
+
+	normalized := make(map[string]any, len(config))
+	for key, value := range config {
+		cleanKey := strings.TrimSpace(key)
+		if cleanKey == "" || value == nil {
+			continue
+		}
+
+		switch typed := value.(type) {
+		case string:
+			cleanValue := strings.TrimSpace(typed)
+			if cleanValue != "" {
+				normalized[cleanKey] = cleanValue
+			}
+		case bool, float64, float32, int, int64, int32, uint, uint64, uint32:
+			normalized[cleanKey] = typed
+		case []any:
+			normalized[cleanKey] = typed
+		case map[string]any:
+			normalized[cleanKey] = typed
+		default:
+			normalized[cleanKey] = typed
+		}
+	}
+
+	providerType := normalizeProviderType(anyString(normalized["type"]))
+	if providerType == "" {
+		if len(normalized) == 0 {
+			return map[string]any{}, nil
+		}
+		return nil, fmt.Errorf("provider_config.type is required")
+	}
+	normalized["type"] = providerType
+
+	return normalized, nil
+}
+
+func normalizeProviderType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "openai", "openai_compatible", "openaicompatible", "openai-compatible":
+		return "openai_compatible"
+	case "coze":
+		return "coze"
+	case "n8n":
+		return "n8n"
+	case "webhook":
+		return "webhook"
+	case "mock":
+		return "mock"
+	case "static":
+		return "static"
+	default:
+		return ""
+	}
+}
+
+func anyString(value any) string {
+	if value == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func normalizeStringList(values []string) []string {

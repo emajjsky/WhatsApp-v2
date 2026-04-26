@@ -39,14 +39,15 @@ function getTone(status: string): BadgeTone {
     case 'auto_send':
     case 'ready_for_review':
       return 'warning'
+    case 'manual':
+    case 'disabled':
+    case 'logged_out':
+      return 'neutral'
     case 'down':
     case 'blocked':
       return 'danger'
     case 'generating':
       return 'info'
-    case 'disabled':
-    case 'logged_out':
-      return 'neutral'
     default:
       return (
         accountToneMap[status as AccountStatus] ??
@@ -90,6 +91,8 @@ function getLabel(status: string) {
       return '已启用'
     case 'disabled':
       return '未启用'
+    case 'manual':
+      return '手动回复'
     case 'suggest':
       return '建议草稿'
     case 'auto_send':

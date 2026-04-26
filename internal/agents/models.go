@@ -8,6 +8,7 @@ import (
 type ReplyMode string
 
 const (
+	ReplyModeManual   ReplyMode = "manual"
 	ReplyModeSuggest  ReplyMode = "suggest"
 	ReplyModeAutoSend ReplyMode = "auto_send"
 )
@@ -53,6 +54,7 @@ type AgentRule struct {
 	MaxAutoRepliesPerThread int
 	BlacklistFilter         BlacklistFilter
 	PromptTemplate          string
+	ProviderConfig          map[string]any
 	KnowledgeBinding        *KnowledgeBinding
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
@@ -70,6 +72,7 @@ type RuleView struct {
 	MaxAutoRepliesPerThread int               `json:"max_auto_replies_per_thread"`
 	BlacklistFilter         BlacklistFilter   `json:"blacklist_filter"`
 	PromptTemplate          string            `json:"prompt_template"`
+	ProviderConfig          map[string]any    `json:"provider_config"`
 	KnowledgeBinding        *KnowledgeBinding `json:"knowledge_binding,omitempty"`
 	CreatedAt               time.Time         `json:"created_at"`
 	UpdatedAt               time.Time         `json:"updated_at"`
@@ -87,7 +90,39 @@ type UpsertRuleInput struct {
 	MaxAutoRepliesPerThread int               `json:"max_auto_replies_per_thread"`
 	BlacklistFilter         BlacklistFilter   `json:"blacklist_filter"`
 	PromptTemplate          string            `json:"prompt_template"`
+	ProviderConfig          map[string]any    `json:"provider_config,omitempty"`
 	KnowledgeBinding        *KnowledgeBinding `json:"knowledge_binding,omitempty"`
+}
+
+type AgentSettings struct {
+	AccountID      string
+	Provider       string
+	Model          string
+	BaseURL        string
+	APIKey         string
+	PromptTemplate string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type SettingsView struct {
+	AccountID      string    `json:"account_id"`
+	Provider       string    `json:"provider"`
+	Model          string    `json:"model"`
+	BaseURL        string    `json:"base_url"`
+	APIKey         string    `json:"api_key"`
+	PromptTemplate string    `json:"prompt_template"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type UpsertSettingsInput struct {
+	AccountID      string `json:"account_id"`
+	Provider       string `json:"provider"`
+	Model          string `json:"model"`
+	BaseURL        string `json:"base_url"`
+	APIKey         string `json:"api_key"`
+	PromptTemplate string `json:"prompt_template"`
 }
 
 type RuleListFilters struct {
@@ -175,6 +210,7 @@ func mapRuleToView(rule AgentRule) RuleView {
 		MaxAutoRepliesPerThread: rule.MaxAutoRepliesPerThread,
 		BlacklistFilter:         rule.BlacklistFilter,
 		PromptTemplate:          rule.PromptTemplate,
+		ProviderConfig:          rule.ProviderConfig,
 		KnowledgeBinding:        rule.KnowledgeBinding,
 		CreatedAt:               rule.CreatedAt,
 		UpdatedAt:               rule.UpdatedAt,
@@ -195,9 +231,25 @@ func mapRuleToView(rule AgentRule) RuleView {
 	if view.BlacklistFilter.SensitiveTopics == nil {
 		view.BlacklistFilter.SensitiveTopics = make([]string, 0)
 	}
+	if view.ProviderConfig == nil {
+		view.ProviderConfig = make(map[string]any)
+	}
 	if view.KnowledgeBinding != nil && view.KnowledgeBinding.References == nil {
 		view.KnowledgeBinding.References = make([]string, 0)
 	}
 
 	return view
+}
+
+func mapSettingsToView(settings AgentSettings) SettingsView {
+	return SettingsView{
+		AccountID:      settings.AccountID,
+		Provider:       settings.Provider,
+		Model:          settings.Model,
+		BaseURL:        settings.BaseURL,
+		APIKey:         settings.APIKey,
+		PromptTemplate: settings.PromptTemplate,
+		CreatedAt:      settings.CreatedAt,
+		UpdatedAt:      settings.UpdatedAt,
+	}
 }

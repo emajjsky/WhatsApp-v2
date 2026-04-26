@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from collections.abc import Iterator
 from typing import Any, Mapping
 
 
@@ -36,6 +37,11 @@ class BaseProvider(ABC):
     @abstractmethod
     def generate(self, request: ProviderRequest) -> ProviderResponse:
         raise NotImplementedError
+
+    def stream_generate(self, request: ProviderRequest) -> Iterator[str]:
+        response = self.generate(request)
+        if response.draft:
+            yield response.draft
 
 
 class MockProvider(BaseProvider):
@@ -116,6 +122,10 @@ def build_provider(config: Mapping[str, Any] | None) -> BaseProvider:
         from .openai_compatible import OpenAICompatibleProvider
 
         return OpenAICompatibleProvider(config)
+    if provider_type in {"webhook", "coze", "n8n"}:
+        from .webhook import WebhookProvider
+
+        return WebhookProvider(config, provider_type=provider_type)
 
     raise ProviderError(f"unsupported provider type: {provider_type}")
 
@@ -125,4 +135,7 @@ def available_providers() -> list[dict[str, str]]:
         {"type": "mock", "description": "Built-in deterministic draft provider for local development"},
         {"type": "static", "description": "Return a fixed templated response supplied in the request"},
         {"type": "openai_compatible", "description": "Call an OpenAI-compatible /v1/chat/completions endpoint"},
+        {"type": "coze", "description": "Call a Coze workflow or bot webhook and read a draft from the response"},
+        {"type": "n8n", "description": "Call an n8n webhook and read a draft from the response"},
+        {"type": "webhook", "description": "Call a custom agent webhook and read a draft from the response"},
     ]

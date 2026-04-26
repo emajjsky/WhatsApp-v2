@@ -77,6 +77,7 @@ type MessageView struct {
 	ChatID             string             `json:"chat_id"`
 	WAMessageID        string             `json:"wa_message_id"`
 	SenderJID          string             `json:"sender_jid"`
+	SenderName         *string            `json:"sender_name,omitempty"`
 	FromMe             bool               `json:"from_me"`
 	MessageType        ingest.MessageType `json:"message_type"`
 	TextContent        *string            `json:"text_content,omitempty"`
@@ -144,7 +145,27 @@ SELECT
     c.account_id,
     c.wa_chat_jid,
     c.chat_type,
-    c.title,
+    CASE
+        WHEN c.chat_type = 'direct' THEN COALESCE(
+            NULLIF(ct.display_name, ''),
+            NULLIF(ct.push_name, ''),
+            NULLIF(wmct.full_name, ''),
+            NULLIF(wmct.first_name, ''),
+            NULLIF(wmct.push_name, ''),
+            NULLIF(wmct.business_name, ''),
+            NULLIF(wmct.redacted_phone, ''),
+            NULLIF(wmpn.full_name, ''),
+            NULLIF(wmpn.first_name, ''),
+            NULLIF(wmpn.push_name, ''),
+            NULLIF(wmpn.business_name, ''),
+            NULLIF(wmpn.redacted_phone, ''),
+            NULLIF(ct.phone_number, ''),
+            NULLIF(lidmap.pn, ''),
+            NULLIF(c.title, ''),
+            c.wa_chat_jid
+        )
+        ELSE COALESCE(NULLIF(c.title, ''), c.wa_chat_jid)
+    END AS display_title,
     c.participant_count,
     c.archived,
     COALESCE(c.last_message_at, latest.sent_at),
@@ -153,6 +174,19 @@ SELECT
     latest.sender_jid,
     latest.from_me
 FROM chats c
+LEFT JOIN contacts ct
+    ON ct.account_id = c.account_id
+   AND ct.wa_jid = c.wa_chat_jid
+LEFT JOIN session_credentials sc
+    ON sc.account_id = c.account_id
+LEFT JOIN whatsmeow_contacts wmct
+    ON wmct.our_jid = sc.device_id
+   AND wmct.their_jid = c.wa_chat_jid
+LEFT JOIN whatsmeow_lid_map lidmap
+    ON c.wa_chat_jid = CONCAT(lidmap.lid, '@lid')
+LEFT JOIN whatsmeow_contacts wmpn
+    ON wmpn.our_jid = sc.device_id
+   AND wmpn.their_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
 LEFT JOIN LATERAL (
     SELECT
         m.text_content,
@@ -226,16 +260,49 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 func (r *Repository) GetChatHeader(ctx context.Context, chatID string) (ChatHeader, error) {
 	const query = `
 SELECT
-    id,
-    account_id,
-    wa_chat_jid,
-    chat_type,
-    title,
-    participant_count,
-    archived,
-    last_message_at
-FROM chats
-WHERE id = $1`
+    c.id,
+    c.account_id,
+    c.wa_chat_jid,
+    c.chat_type,
+    CASE
+        WHEN c.chat_type = 'direct' THEN COALESCE(
+            NULLIF(ct.display_name, ''),
+            NULLIF(ct.push_name, ''),
+            NULLIF(wmct.full_name, ''),
+            NULLIF(wmct.first_name, ''),
+            NULLIF(wmct.push_name, ''),
+            NULLIF(wmct.business_name, ''),
+            NULLIF(wmct.redacted_phone, ''),
+            NULLIF(wmpn.full_name, ''),
+            NULLIF(wmpn.first_name, ''),
+            NULLIF(wmpn.push_name, ''),
+            NULLIF(wmpn.business_name, ''),
+            NULLIF(wmpn.redacted_phone, ''),
+            NULLIF(ct.phone_number, ''),
+            NULLIF(lidmap.pn, ''),
+            NULLIF(c.title, ''),
+            c.wa_chat_jid
+        )
+        ELSE COALESCE(NULLIF(c.title, ''), c.wa_chat_jid)
+    END AS display_title,
+    c.participant_count,
+    c.archived,
+    c.last_message_at
+FROM chats c
+LEFT JOIN contacts ct
+    ON ct.account_id = c.account_id
+   AND ct.wa_jid = c.wa_chat_jid
+LEFT JOIN session_credentials sc
+    ON sc.account_id = c.account_id
+LEFT JOIN whatsmeow_contacts wmct
+    ON wmct.our_jid = sc.device_id
+   AND wmct.their_jid = c.wa_chat_jid
+LEFT JOIN whatsmeow_lid_map lidmap
+    ON c.wa_chat_jid = CONCAT(lidmap.lid, '@lid')
+LEFT JOIN whatsmeow_contacts wmpn
+    ON wmpn.our_jid = sc.device_id
+   AND wmpn.their_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
+WHERE c.id = $1`
 
 	var (
 		header           ChatHeader
@@ -278,16 +345,49 @@ func (r *Repository) ListChatHeadersByIDs(ctx context.Context, chatIDs []string)
 
 	query := fmt.Sprintf(`
 SELECT
-    id,
-    account_id,
-    wa_chat_jid,
-    chat_type,
-    title,
-    participant_count,
-    archived,
-    last_message_at
-FROM chats
-WHERE id IN (%s)`, strings.Join(placeholders, ", "))
+    c.id,
+    c.account_id,
+    c.wa_chat_jid,
+    c.chat_type,
+    CASE
+        WHEN c.chat_type = 'direct' THEN COALESCE(
+            NULLIF(ct.display_name, ''),
+            NULLIF(ct.push_name, ''),
+            NULLIF(wmct.full_name, ''),
+            NULLIF(wmct.first_name, ''),
+            NULLIF(wmct.push_name, ''),
+            NULLIF(wmct.business_name, ''),
+            NULLIF(wmct.redacted_phone, ''),
+            NULLIF(wmpn.full_name, ''),
+            NULLIF(wmpn.first_name, ''),
+            NULLIF(wmpn.push_name, ''),
+            NULLIF(wmpn.business_name, ''),
+            NULLIF(wmpn.redacted_phone, ''),
+            NULLIF(ct.phone_number, ''),
+            NULLIF(lidmap.pn, ''),
+            NULLIF(c.title, ''),
+            c.wa_chat_jid
+        )
+        ELSE COALESCE(NULLIF(c.title, ''), c.wa_chat_jid)
+    END AS display_title,
+    c.participant_count,
+    c.archived,
+    c.last_message_at
+FROM chats c
+LEFT JOIN contacts ct
+    ON ct.account_id = c.account_id
+   AND ct.wa_jid = c.wa_chat_jid
+LEFT JOIN session_credentials sc
+    ON sc.account_id = c.account_id
+LEFT JOIN whatsmeow_contacts wmct
+    ON wmct.our_jid = sc.device_id
+   AND wmct.their_jid = c.wa_chat_jid
+LEFT JOIN whatsmeow_lid_map lidmap
+    ON c.wa_chat_jid = CONCAT(lidmap.lid, '@lid')
+LEFT JOIN whatsmeow_contacts wmpn
+    ON wmpn.our_jid = sc.device_id
+   AND wmpn.their_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
+WHERE c.id IN (%s)`, strings.Join(placeholders, ", "))
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -369,6 +469,22 @@ SELECT
     m.chat_id,
     m.wa_message_id,
     m.sender_jid,
+    COALESCE(
+        NULLIF(ct.display_name, ''),
+        NULLIF(ct.push_name, ''),
+        NULLIF(wmct.full_name, ''),
+        NULLIF(wmct.first_name, ''),
+        NULLIF(wmct.push_name, ''),
+        NULLIF(wmct.business_name, ''),
+        NULLIF(wmct.redacted_phone, ''),
+        NULLIF(wmpn.full_name, ''),
+        NULLIF(wmpn.first_name, ''),
+        NULLIF(wmpn.push_name, ''),
+        NULLIF(wmpn.business_name, ''),
+        NULLIF(wmpn.redacted_phone, ''),
+        NULLIF(ct.phone_number, ''),
+        NULLIF(lidmap.pn, '')
+    ) AS sender_name,
     m.from_me,
     m.message_type,
     m.text_content,
@@ -377,6 +493,19 @@ SELECT
     m.delivered_at,
     m.read_at
 FROM messages m
+LEFT JOIN contacts ct
+    ON ct.account_id = m.account_id
+   AND ct.wa_jid = m.sender_jid
+LEFT JOIN session_credentials sc
+    ON sc.account_id = m.account_id
+LEFT JOIN whatsmeow_contacts wmct
+    ON wmct.our_jid = sc.device_id
+   AND wmct.their_jid = m.sender_jid
+LEFT JOIN whatsmeow_lid_map lidmap
+    ON m.sender_jid = CONCAT(lidmap.lid, '@lid')
+LEFT JOIN whatsmeow_contacts wmpn
+    ON wmpn.our_jid = sc.device_id
+   AND wmpn.their_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
 WHERE %s
 ORDER BY m.sent_at DESC, m.id DESC
 LIMIT $%d`, strings.Join(conditions, " AND "), limitIndex)
@@ -391,6 +520,7 @@ LIMIT $%d`, strings.Join(conditions, " AND "), limitIndex)
 	for rows.Next() {
 		var (
 			item               MessageView
+			senderName         sql.NullString
 			textContent        sql.NullString
 			replyToWAMessageID sql.NullString
 			deliveredAt        sql.NullTime
@@ -403,6 +533,7 @@ LIMIT $%d`, strings.Join(conditions, " AND "), limitIndex)
 			&item.ChatID,
 			&item.WAMessageID,
 			&item.SenderJID,
+			&senderName,
 			&item.FromMe,
 			&item.MessageType,
 			&textContent,
@@ -414,6 +545,7 @@ LIMIT $%d`, strings.Join(conditions, " AND "), limitIndex)
 			return nil, false, fmt.Errorf("scan message row: %w", err)
 		}
 
+		item.SenderName = nullableString(senderName)
 		item.TextContent = nullableString(textContent)
 		item.ReplyToWAMessageID = nullableString(replyToWAMessageID)
 		item.DeliveredAt = nullableTime(deliveredAt)

@@ -130,7 +130,7 @@ func New(cfg config.Config) (*App, error) {
 			return nil, err
 		}
 
-		chatService, err := chats.NewService(chatRepo)
+		chatService, err := chats.NewService(chatRepo, sessionManager)
 		if err != nil {
 			_ = database.Close()
 			return nil, err

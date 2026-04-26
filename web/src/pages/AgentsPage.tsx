@@ -1,74 +1,199 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   deleteAgentRule,
-  disableAgentRule,
-  enableAgentRule,
   listAccounts,
-  listAgentRuns,
   listAgentRules,
-  listChats,
   upsertAgentRule,
   type AccountView,
-  type AgentKnowledgeBinding,
+  type AgentProviderConfig,
   type AgentRuleView,
-  type AgentRunView,
-  type ChatSummary,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
-import { RuleEditor, type RuleEditorValue } from '../components/RuleEditor'
-import { StatusBadge } from '../components/StatusBadge'
 
-function createEmptyDraft(defaultAccountId: string): RuleEditorValue {
+type AgentProviderType = 'openai_compatible' | 'coze' | 'n8n' | 'webhook'
+
+interface AgentFormValue {
+  id?: string
+  accountId: string
+  name: string
+  providerType: AgentProviderType
+  model: string
+  baseUrl: string
+  apiKey: string
+  endpointUrl: string
+  authorization: string
+  method: string
+  responsePath: string
+  temperature: string
+  maxTokens: string
+  timeoutSeconds: string
+  enableThinking: boolean
+  promptTemplate: string
+}
+
+const providerOptions: Array<{ value: AgentProviderType; label: string; badge: string }> = [
+  { value: 'openai_compatible', label: '大模型 API', badge: 'Prompt + Model' },
+  { value: 'coze', label: 'Coze', badge: 'Agent API' },
+  { value: 'n8n', label: 'n8n', badge: 'Webhook' },
+  { value: 'webhook', label: 'Webhook', badge: 'Custom' },
+]
+
+function createEmptyAgent(accountId: string): AgentFormValue {
   return {
-    accountId: defaultAccountId,
+    accountId,
     name: '',
-    enabled: false,
-    replyMode: 'suggest',
-    scopeChatTypes: ['direct'],
-    scopeChatIds: [],
-    triggerKeywordsText: '',
-    matchMode: 'any',
-    ignoreFromMe: true,
-    minMessageChars: 0,
-    cooldownSeconds: 300,
-    maxAutoRepliesPerThread: 1,
-    blockedKeywordsText: '',
-    sensitiveTopicsText: '支付\n退款\n账号安全\n法律投诉',
-    promptTemplate:
-      '你是客服助手。请根据聊天上下文，用简短、礼貌、准确的中文给出回复。遇到支付、退款、账号安全、法律投诉时，只能建议人工接手，不要自己承诺结果。',
-    knowledgeSummary: '',
-    knowledgeReferencesText: '',
+    providerType: 'openai_compatible',
+    model: '',
+    baseUrl: '',
+    apiKey: '',
+    endpointUrl: '',
+    authorization: '',
+    method: 'POST',
+    responsePath: 'draft',
+    temperature: '0.2',
+    maxTokens: '600',
+    timeoutSeconds: '30',
+    enableThinking: false,
+    promptTemplate: '你是 WhatsApp 客服回复助手。根据当前聊天上下文生成一条简洁、礼貌、可直接发送给客户的回复建议。',
   }
 }
 
-function mapRuleToDraft(rule: AgentRuleView): RuleEditorValue {
+function mapRuleToForm(rule: AgentRuleView): AgentFormValue {
+  const config = rule.provider_config ?? {}
+  const providerType = normalizeProviderType(readConfigString(config, 'type'))
+
   return {
     id: rule.id,
     accountId: rule.account_id,
     name: rule.name,
-    enabled: rule.enabled,
-    replyMode: rule.reply_mode,
-    scopeChatTypes: (rule.scope_filter.chat_types ?? []),
-    scopeChatIds: (rule.scope_filter.chat_ids ?? []),
-    triggerKeywordsText: (rule.trigger_filter.keywords ?? []).join('\n'),
-    matchMode: rule.trigger_filter.match_mode,
-    ignoreFromMe: rule.trigger_filter.ignore_from_me,
-    minMessageChars: rule.trigger_filter.min_message_chars ?? 0,
-    cooldownSeconds: rule.cooldown_seconds,
-    maxAutoRepliesPerThread: rule.max_auto_replies_per_thread,
-    blockedKeywordsText: (rule.blacklist_filter.blocked_keywords ?? []).join('\n'),
-    sensitiveTopicsText: (rule.blacklist_filter.sensitive_topics ?? []).join('\n'),
+    providerType,
+    model: readConfigString(config, 'model'),
+    baseUrl: readConfigString(config, 'base_url'),
+    apiKey: readConfigString(config, 'api_key'),
+    endpointUrl: readConfigString(config, 'endpoint_url') || readConfigString(config, 'base_url'),
+    authorization: readConfigString(config, 'authorization'),
+    method: readConfigString(config, 'method') || 'POST',
+    responsePath: readConfigString(config, 'response_path') || 'draft',
+    temperature: readConfigString(config, 'temperature') || '0.2',
+    maxTokens: readConfigString(config, 'max_tokens') || '600',
+    timeoutSeconds: readConfigString(config, 'timeout_seconds') || '30',
+    enableThinking: readConfigBool(config, 'enable_thinking', false),
     promptTemplate: rule.prompt_template,
-    knowledgeSummary: rule.knowledge_binding?.summary ?? '',
-    knowledgeReferencesText: rule.knowledge_binding?.references?.join('\n') ?? '',
   }
 }
 
-function splitList(value: string) {
-  return value
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean)
+function normalizeProviderType(value: string): AgentProviderType {
+  switch (value.trim().toLowerCase()) {
+    case 'coze':
+      return 'coze'
+    case 'n8n':
+      return 'n8n'
+    case 'webhook':
+      return 'webhook'
+    default:
+      return 'openai_compatible'
+  }
+}
+
+function readConfigString(config: AgentProviderConfig, key: string) {
+  const value = config[key]
+  if (value === undefined || value === null) {
+    return ''
+  }
+  return String(value)
+}
+
+function readConfigBool(config: AgentProviderConfig, key: string, fallback: boolean) {
+  const value = config[key]
+  if (typeof value === 'boolean') {
+    return value
+  }
+  if (value === undefined || value === null) {
+    return fallback
+  }
+
+  const normalized = String(value).trim().toLowerCase()
+  if (['true', '1', 'yes', 'on', 'enabled'].includes(normalized)) {
+    return true
+  }
+  if (['false', '0', 'no', 'off', 'disabled'].includes(normalized)) {
+    return false
+  }
+
+  return fallback
+}
+
+function optionalNumber(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return undefined
+  }
+
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function compactConfig(config: AgentProviderConfig) {
+  return Object.fromEntries(
+    Object.entries(config).filter(([, value]) => value !== undefined && value !== ''),
+  ) as AgentProviderConfig
+}
+
+function buildProviderConfig(form: AgentFormValue): AgentProviderConfig {
+  if (form.providerType === 'openai_compatible') {
+    return compactConfig({
+      type: 'openai_compatible',
+      model: form.model.trim(),
+      base_url: form.baseUrl.trim(),
+      api_key: form.apiKey.trim(),
+      temperature: optionalNumber(form.temperature),
+      max_tokens: optionalNumber(form.maxTokens),
+      timeout_seconds: optionalNumber(form.timeoutSeconds),
+      enable_thinking: form.enableThinking,
+    })
+  }
+
+  return compactConfig({
+    type: form.providerType,
+    endpoint_url: form.endpointUrl.trim(),
+    api_key: form.apiKey.trim(),
+    authorization: form.authorization.trim(),
+    method: form.method.trim().toUpperCase() || 'POST',
+    response_path: form.responsePath.trim() || 'draft',
+    timeout_seconds: optionalNumber(form.timeoutSeconds),
+  })
+}
+
+function validateAgentForm(form: AgentFormValue) {
+  if (!form.accountId) {
+    return '请选择绑定账号'
+  }
+  if (!form.name.trim()) {
+    return 'Agent 名称不能为空'
+  }
+
+  if (form.providerType === 'openai_compatible') {
+    if (!form.model.trim()) {
+      return '大模型接入需要填写 Model'
+    }
+    if (!form.baseUrl.trim()) {
+      return '大模型接入需要填写 Base URL'
+    }
+    if (!form.apiKey.trim()) {
+      return '大模型接入需要填写 API Key'
+    }
+    if (!form.promptTemplate.trim()) {
+      return '大模型接入需要填写提示词'
+    }
+  } else if (!form.endpointUrl.trim()) {
+    return `${getProviderLabel(form.providerType)} 接入需要填写 API 地址`
+  }
+
+  return undefined
+}
+
+function getProviderLabel(providerType: string) {
+  return providerOptions.find((option) => option.value === providerType)?.label ?? '大模型 API'
 }
 
 function formatDateTime(value: string) {
@@ -82,58 +207,43 @@ function formatDateTime(value: string) {
 
 export function AgentsPage() {
   const [accounts, setAccounts] = useState<AccountView[]>([])
-  const [chats, setChats] = useState<ChatSummary[]>([])
-  const [rules, setRules] = useState<AgentRuleView[]>([])
-  const [runs, setRuns] = useState<AgentRunView[]>([])
-  const [runTotal, setRunTotal] = useState(0)
-  const [selectedRuleId, setSelectedRuleId] = useState<string>('new')
-  const [draft, setDraft] = useState<RuleEditorValue>(createEmptyDraft(''))
+  const [agents, setAgents] = useState<AgentRuleView[]>([])
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('new')
+  const [form, setForm] = useState<AgentFormValue>(createEmptyAgent(''))
   const [loading, setLoading] = useState(true)
-  const [refreshingRuns, setRefreshingRuns] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
 
-  async function loadRuns() {
-    setRefreshingRuns(true)
-    try {
-      const response = await listAgentRuns({ limit: 12 })
-      setRuns(response.runs)
-      setRunTotal(response.total)
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '加载运行记录失败')
-    } finally {
-      setRefreshingRuns(false)
-    }
-  }
+  const accountNameMap = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.display_name])),
+    [accounts],
+  )
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId)
 
   async function loadData() {
     setLoading(true)
     setError(undefined)
 
     try {
-      const [accountsResponse, chatsResponse, rulesResponse, runsResponse] = await Promise.all([
+      const [accountsResponse, agentsResponse] = await Promise.all([
         listAccounts(),
-        listChats({ limit: 200 }),
         listAgentRules(),
-        listAgentRuns({ limit: 12 }),
       ])
 
       setAccounts(accountsResponse.accounts)
-      setChats(chatsResponse.chats)
-      setRules(rulesResponse.rules)
-      setRuns(runsResponse.runs)
-      setRunTotal(runsResponse.total)
-      setSelectedRuleId((current) => {
+      setAgents(agentsResponse.rules)
+      setSelectedAgentId((current) => {
         if (current === 'new') {
           return 'new'
         }
-        return rulesResponse.rules.some((rule) => rule.id === current)
+        return agentsResponse.rules.some((agent) => agent.id === current)
           ? current
-          : rulesResponse.rules[0]?.id ?? 'new'
+          : agentsResponse.rules[0]?.id ?? 'new'
       })
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '加载 Agent 页面失败')
+      setError(loadError instanceof Error ? loadError.message : '加载 Agent 配置失败')
     } finally {
       setLoading(false)
     }
@@ -144,343 +254,403 @@ export function AgentsPage() {
   }, [])
 
   useEffect(() => {
-    if (selectedRuleId === 'new') {
-      setDraft((current) =>
-        current.accountId ? current : createEmptyDraft(accounts[0]?.id ?? ''),
-      )
+    if (selectedAgentId === 'new') {
+      setForm((current) => {
+        const accountId = current.accountId || accounts[0]?.id || ''
+        return current.id ? createEmptyAgent(accountId) : { ...current, accountId }
+      })
       return
     }
 
-    const selectedRule = rules.find((rule) => rule.id === selectedRuleId)
-    if (selectedRule) {
-      setDraft(mapRuleToDraft(selectedRule))
+    const agent = agents.find((item) => item.id === selectedAgentId)
+    if (agent) {
+      setForm(mapRuleToForm(agent))
     }
-  }, [accounts, rules, selectedRuleId])
+  }, [accounts, agents, selectedAgentId])
+
+  function updateForm(next: Partial<AgentFormValue>) {
+    setForm((current) => ({ ...current, ...next }))
+  }
+
+  function handleCreateAgent() {
+    setSelectedAgentId('new')
+    setForm(createEmptyAgent(accounts[0]?.id ?? ''))
+    setError(undefined)
+    setNotice(undefined)
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setSubmitting(true)
     setError(undefined)
     setNotice(undefined)
 
-    const references = splitList(draft.knowledgeReferencesText)
-    const knowledgeBinding: AgentKnowledgeBinding | undefined =
-      draft.knowledgeSummary.trim() || references.length > 0
-        ? {
-            summary: draft.knowledgeSummary.trim() || undefined,
-            references,
-          }
-        : undefined
+    const validationError = validateAgentForm(form)
+    if (validationError) {
+      setError(validationError)
+      return
+    }
 
+    setSubmitting(true)
     try {
       const response = await upsertAgentRule({
-        id: draft.id,
-        account_id: draft.accountId,
-        name: draft.name,
-        enabled: draft.enabled,
+        id: form.id,
+        account_id: form.accountId,
+        name: form.name.trim(),
+        enabled: true,
         scope_filter: {
-          chat_ids: draft.scopeChatIds,
-          chat_types: draft.scopeChatTypes,
+          chat_ids: [],
+          chat_types: [],
         },
         trigger_filter: {
-          keywords: splitList(draft.triggerKeywordsText),
-          match_mode: draft.matchMode,
-          ignore_from_me: draft.ignoreFromMe,
-          min_message_chars: draft.minMessageChars,
+          keywords: [],
+          match_mode: 'any',
+          ignore_from_me: true,
+          min_message_chars: 0,
         },
-        reply_mode: draft.replyMode,
-        cooldown_seconds: draft.cooldownSeconds,
-        max_auto_replies_per_thread: draft.maxAutoRepliesPerThread,
+        reply_mode: 'suggest',
+        cooldown_seconds: 300,
+        max_auto_replies_per_thread: 0,
         blacklist_filter: {
-          blocked_keywords: splitList(draft.blockedKeywordsText),
-          sensitive_topics: splitList(draft.sensitiveTopicsText),
+          blocked_keywords: [],
+          sensitive_topics: [],
         },
-        prompt_template: draft.promptTemplate,
-        knowledge_binding: knowledgeBinding,
+        prompt_template: form.promptTemplate.trim(),
+        provider_config: buildProviderConfig(form),
       })
 
       await loadData()
-      setSelectedRuleId(response.rule.id)
-      setNotice(
-        response.rule.reply_mode === 'auto_send' && !response.rule.enabled
-          ? '规则已保存。因为它是自动发送模式，所以仍保持停用，需要你回到左侧再手动启用。'
-          : '规则已保存。',
-      )
+      setSelectedAgentId(response.rule.id)
+      setNotice('Agent 已保存，可以在右侧对话辅助里手动生成回复建议。')
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : '保存规则失败')
+      setError(submitError instanceof Error ? submitError.message : '保存 Agent 失败')
     } finally {
       setSubmitting(false)
     }
   }
 
-  async function handleToggleRule(rule: AgentRuleView) {
-    setError(undefined)
-    setNotice(undefined)
-
-    try {
-      if (rule.enabled) {
-        await disableAgentRule(rule.id)
-        setNotice(`已停用规则：${rule.name}`)
-      } else {
-        await enableAgentRule(rule.id)
-        setNotice(`已启用规则：${rule.name}`)
-      }
-
-      await loadData()
-    } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : '切换规则状态失败')
+  async function handleDeleteAgent() {
+    if (!selectedAgent) {
+      return
     }
-  }
 
-  async function handleDeleteRule(rule: AgentRuleView) {
-    setError(undefined)
-    setNotice(undefined)
-
-    const confirmed = window.confirm(
-      `确定要删除规则「${rule.name}」吗？\n\n删除后将同时删除该规则的运行记录，且不可恢复。`,
-    )
+    const confirmed = window.confirm(`确定删除 Agent「${selectedAgent.name}」吗？`)
     if (!confirmed) {
       return
     }
 
+    setDeleting(true)
+    setError(undefined)
+    setNotice(undefined)
+
     try {
-      await deleteAgentRule(rule.id)
+      await deleteAgentRule(selectedAgent.id)
       await loadData()
-      setNotice(`已删除规则：${rule.name}`)
+      handleCreateAgent()
+      setNotice(`Agent 已删除：${selectedAgent.name}`)
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : '删除规则失败')
+      setError(deleteError instanceof Error ? deleteError.message : '删除 Agent 失败')
+    } finally {
+      setDeleting(false)
     }
   }
 
-  function handleCreateRule() {
-    setSelectedRuleId('new')
-    setDraft(createEmptyDraft(accounts[0]?.id ?? ''))
-    setNotice(undefined)
-    setError(undefined)
+  if (loading && accounts.length === 0) {
+    return (
+      <div className="page page-agents">
+        <section className="panel agent-loading-panel">
+          <p className="eyebrow">智能回复</p>
+          <h3>正在加载 Agent 配置</h3>
+        </section>
+      </div>
+    )
   }
 
-  function handleCancelEdit() {
-    setError(undefined)
-    setNotice(undefined)
-
-    if (selectedRuleId === 'new') {
-      setDraft(createEmptyDraft(accounts[0]?.id ?? ''))
-      return
-    }
-
-    const selectedRule = rules.find((rule) => rule.id === selectedRuleId)
-    if (selectedRule) {
-      setDraft(mapRuleToDraft(selectedRule))
-    }
-  }
-
-  const autoSendRuleCount = rules.filter((rule) => rule.reply_mode === 'auto_send').length
-  const blockedRunCount = runs.filter((run) => run.status === 'blocked').length
-  const accountNameMap = new Map(accounts.map((account) => [account.id, account.display_name]))
-
-  return (
-    <div className="page-grid">
-      <section className="hero-strip">
-        <div className="hero-copy">
-          <p className="eyebrow">推荐顺序</p>
-          <h3>先写建议规则，再观察，再决定是否升级到自动发送</h3>
-          <p>
-            这页把“规则配置”“启停开关”“运行记录”拆成了三个清晰区块。新人不用理解底层协议，只要按顺序走就不容易出错。
-          </p>
-        </div>
-        <div className="hero-steps">
-          <article className="hero-step">
-            <span>01</span>
-            <h4>先建草稿</h4>
-            <p>先让系统给建议稿，不自动发送，确认话术没问题。</p>
-          </article>
-          <article className="hero-step">
-            <span>02</span>
-            <h4>看运行记录</h4>
-            <p>观察有没有被拦截、有没有误触发，再收紧规则范围。</p>
-          </article>
-          <article className="hero-step">
-            <span>03</span>
-            <h4>最后才启用</h4>
-            <p>自动发送规则保存后默认仍停用，必须再手动点一次启用。</p>
-          </article>
-        </div>
-      </section>
-
-      <section className="metric-grid">
-        <article className="metric-card">
-          <span>规则总数</span>
-          <strong>{loading ? '...' : rules.length}</strong>
-          <p>建议先从少量规则开始，一条一条验证，不要一口气铺满整套客服场景。</p>
-        </article>
-        <article className="metric-card">
-          <span>自动发送规则</span>
-          <strong>{loading ? '...' : autoSendRuleCount}</strong>
-          <p>自动发送越多，越要看冷却时间、敏感主题和运行记录，不然很容易翻车。</p>
-        </article>
-        <article className="metric-card">
-          <span>最近拦截记录</span>
-          <strong>{loading ? '...' : blockedRunCount}</strong>
-          <p>拦截不是坏事，它是在提醒你这条规则还不够稳。</p>
-        </article>
-      </section>
-
-      {!loading && accounts.length === 0 ? (
+  if (!loading && accounts.length === 0) {
+    return (
+      <div className="page page-agents">
         <EmptyPanel
           title="还没有可绑定的账号"
-          description="先去“账号接入”页面创建并接入一个 WhatsApp 账号，再回来配置 Agent 规则。"
+          description="先去账号接入页面创建并接入一个 WhatsApp 账号。"
         />
-      ) : (
-        <section className="agent-layout">
-          <article className="panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">规则列表</p>
-                <h3>左侧挑规则，右侧改内容</h3>
-              </div>
-              <button className="primary-button" type="button" onClick={handleCreateRule}>
-                新建规则草案
-              </button>
-            </div>
+        {error ? <div className="error-banner">{error}</div> : null}
+      </div>
+    )
+  }
 
-            {rules.length > 0 ? (
-              <div className="rule-list">
-                {rules.map((rule) => (
-                  <article
-                    key={rule.id}
-                    className={`rule-card${selectedRuleId === rule.id ? ' selected' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className="rule-card-button"
-                      onClick={() => setSelectedRuleId(rule.id)}
-                    >
-                      <div className="rule-card-header">
-                        <div>
-                          <strong>{rule.name}</strong>
-                          <p>{accountNameMap.get(rule.account_id) || rule.account_id}</p>
-                        </div>
-                        <div className="chip-row">
-                          <StatusBadge status={rule.enabled ? 'enabled' : 'disabled'} />
-                          <StatusBadge status={rule.reply_mode} />
-                        </div>
-                      </div>
-
-                      <p className="subtle-text">
-                        关键词 {(rule.trigger_filter.keywords ?? []).length} 个，固定聊天 {(rule.scope_filter.chat_ids ?? []).length} 个，
-                        更新于 {formatDateTime(rule.updated_at)}
-                      </p>
-                    </button>
-
-                    <div className="button-row">
-                      <button
-                        type="button"
-                        className={rule.enabled ? 'danger-button' : 'secondary-button'}
-                        onClick={() => void handleToggleRule(rule)}
-                      >
-                        {rule.enabled ? '停用规则' : '启用规则'}
-                      </button>
-                      <button
-                        type="button"
-                        className="danger-button"
-                        onClick={() => void handleDeleteRule(rule)}
-                      >
-                        删除规则
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <EmptyPanel
-                title="还没有规则"
-                description="先点上面的“新建规则草案”。建议先做建议稿模式，别一上来就自动发送。"
-              />
-            )}
-          </article>
-
-          <RuleEditor
-            accounts={accounts}
-            chats={chats}
-            value={draft}
-            submitting={submitting}
-            onChange={setDraft}
-            onSubmit={handleSubmit}
-            onCancel={handleCancelEdit}
-            canCancel={Boolean(draft.id || draft.name || draft.triggerKeywordsText || draft.promptTemplate)}
-          />
-        </section>
-      )}
-
-      <section className="two-column-grid">
-        <article className="panel danger-panel">
-          <p className="eyebrow">启用前检查</p>
-          <h3>这些问题没想明白，就别开自动发送</h3>
-          <ul className="plain-list">
-            <li>涉及支付、退款、账号找回、法律投诉时，规则是否明确要求转人工。</li>
-            <li>冷却时间和单个聊天自动回复次数，是否足够保守。</li>
-            <li>关键词是否会误伤日常聊天，导致无关消息也被触发。</li>
-          </ul>
-        </article>
-
-        <article className="panel">
-          <p className="eyebrow">给新人的建议</p>
-          <h3>先观察一轮，再逐步放开</h3>
-          <ul className="plain-list">
-            <li>先用“建议草稿”模式跑两天，看看客服是否愿意采纳这些话术。</li>
-            <li>每次只改一条规则，避免多条规则同时变更后不知道是谁惹的祸。</li>
-            <li>运行记录里只要频繁出现“已拦截”，就该回头收紧规则。</li>
-          </ul>
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">运行记录</p>
-            <h3>最近 12 条 Agent 执行结果</h3>
-          </div>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => void loadRuns()}
-            disabled={refreshingRuns}
-          >
-            {refreshingRuns ? '刷新中...' : '刷新记录'}
-          </button>
+  return (
+    <div className="page page-agents">
+      <header className="agent-page-header">
+        <div>
+          <p className="eyebrow">智能回复</p>
+          <h2>智能回复 Agent</h2>
         </div>
-
-        {runs.length > 0 ? (
-          <div className="run-list">
-            {runs.map((run) => (
-              <article key={run.id} className="run-card">
-                <div className="panel-heading">
-                  <div>
-                    <strong>{run.rule_name}</strong>
-                    <p>{run.chat_title || run.wa_chat_jid || run.chat_id}</p>
-                  </div>
-                  <StatusBadge status={run.status} />
-                </div>
-
-                <p className="subtle-text">触发时间：{formatDateTime(run.created_at)}</p>
-                {run.trigger_preview ? <p>触发消息：{run.trigger_preview}</p> : null}
-                {run.output_draft ? <p>生成草稿：{run.output_draft}</p> : null}
-                {run.block_reason ? <div className="warning-banner">{run.block_reason}</div> : null}
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptyPanel
-            title="暂时还没有运行记录"
-            description="等有消息真正触发规则后，这里会显示每次建议回复、拦截原因和发送准备结果。"
-          />
-        )}
-
-        <p className="subtle-text">当前已加载 {runs.length} 条记录，后台总数 {runTotal}。</p>
-      </section>
+        <button className="primary-button" type="button" onClick={handleCreateAgent}>
+          新建 Agent
+        </button>
+      </header>
 
       {notice ? <div className="success-banner">{notice}</div> : null}
       {error ? <div className="error-banner">{error}</div> : null}
+
+      <section className="agent-config-layout">
+        <aside className="panel agent-list-panel">
+          <div className="panel-heading agent-list-heading">
+            <div>
+              <p className="eyebrow">Agent</p>
+              <h3>{agents.length} 个接入</h3>
+            </div>
+          </div>
+
+          {agents.length > 0 ? (
+            <div className="agent-list-scroll">
+              {agents.map((agent) => {
+                const providerType = normalizeProviderType(readConfigString(agent.provider_config ?? {}, 'type'))
+                return (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    className={`agent-list-item${selectedAgentId === agent.id ? ' selected' : ''}`}
+                    onClick={() => setSelectedAgentId(agent.id)}
+                  >
+                    <span className="agent-list-title">{agent.name}</span>
+                    <span className="agent-list-account">
+                      {accountNameMap.get(agent.account_id) || agent.account_id}
+                    </span>
+                    <span className="agent-list-meta">
+                      <span>{getProviderLabel(providerType)}</span>
+                      <span>{formatDateTime(agent.updated_at)}</span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="agent-list-empty">
+              <strong>还没有 Agent</strong>
+              <span>创建一个大模型、Coze、n8n 或 Webhook 接入。</span>
+              <button className="primary-button" type="button" onClick={handleCreateAgent}>
+                新建 Agent
+              </button>
+            </div>
+          )}
+        </aside>
+
+        <section className="panel agent-config-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">{form.id ? '编辑 Agent' : '新建 Agent'}</p>
+              <h3>{form.name.trim() || '未命名 Agent'}</h3>
+            </div>
+            <span className="toolbar-chip active">{getProviderLabel(form.providerType)}</span>
+          </div>
+
+          <form className="agent-config-form" onSubmit={handleSubmit}>
+            <div className="two-column-grid">
+              <label className="field">
+                <span>Agent 名称</span>
+                <input
+                  value={form.name}
+                  onChange={(event) => updateForm({ name: event.target.value })}
+                  placeholder="例如：售前客服 Agent"
+                />
+              </label>
+
+              <label className="field">
+                <span>绑定账号</span>
+                <select
+                  value={form.accountId}
+                  onChange={(event) => updateForm({ accountId: event.target.value })}
+                >
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.display_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="agent-provider-tabs" role="tablist" aria-label="Agent 接入方式">
+              {providerOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`agent-provider-tab${form.providerType === option.value ? ' active' : ''}`}
+                  onClick={() => updateForm({ providerType: option.value })}
+                  aria-pressed={form.providerType === option.value}
+                >
+                  <strong>{option.label}</strong>
+                  <span>{option.badge}</span>
+                </button>
+              ))}
+            </div>
+
+            {form.providerType === 'openai_compatible' ? (
+              <div className="agent-provider-fields">
+                <div className="two-column-grid">
+                  <label className="field">
+                    <span>Model</span>
+                    <input
+                      value={form.model}
+                      onChange={(event) => updateForm({ model: event.target.value })}
+                      placeholder="gpt-4o-mini"
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Base URL</span>
+                    <input
+                      value={form.baseUrl}
+                      onChange={(event) => updateForm({ baseUrl: event.target.value })}
+                      placeholder="https://api.openai.com/v1"
+                    />
+                  </label>
+                </div>
+
+                <label className="field">
+                  <span>API Key</span>
+                  <input
+                    type="password"
+                    value={form.apiKey}
+                    onChange={(event) => updateForm({ apiKey: event.target.value })}
+                    placeholder="sk-..."
+                  />
+                </label>
+
+                <div className="agent-advanced-grid">
+                  <label className="field compact-field">
+                    <span>Temperature</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      value={form.temperature}
+                      onChange={(event) => updateForm({ temperature: event.target.value })}
+                    />
+                  </label>
+                  <label className="field compact-field">
+                    <span>Max Tokens</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={form.maxTokens}
+                      onChange={(event) => updateForm({ maxTokens: event.target.value })}
+                    />
+                  </label>
+                  <label className="field compact-field">
+                    <span>Timeout</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={form.timeoutSeconds}
+                      onChange={(event) => updateForm({ timeoutSeconds: event.target.value })}
+                    />
+                  </label>
+                </div>
+
+                <label className="checkbox-row agent-thinking-row">
+                  <input
+                    type="checkbox"
+                    checked={form.enableThinking}
+                    onChange={(event) => updateForm({ enableThinking: event.target.checked })}
+                  />
+                  <span>启用思考模式</span>
+                </label>
+              </div>
+            ) : (
+              <div className="agent-provider-fields">
+                <label className="field">
+                  <span>API 地址</span>
+                  <input
+                    value={form.endpointUrl}
+                    onChange={(event) => updateForm({ endpointUrl: event.target.value })}
+                    placeholder="https://..."
+                  />
+                </label>
+
+                <div className="two-column-grid">
+                  <label className="field">
+                    <span>Authorization</span>
+                    <input
+                      value={form.authorization}
+                      onChange={(event) => updateForm({ authorization: event.target.value })}
+                      placeholder="Bearer ..."
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>API Key</span>
+                    <input
+                      type="password"
+                      value={form.apiKey}
+                      onChange={(event) => updateForm({ apiKey: event.target.value })}
+                      placeholder="不填则使用 Authorization"
+                    />
+                  </label>
+                </div>
+
+                <div className="agent-advanced-grid">
+                  <label className="field compact-field">
+                    <span>Method</span>
+                    <select
+                      value={form.method}
+                      onChange={(event) => updateForm({ method: event.target.value })}
+                    >
+                      <option value="POST">POST</option>
+                      <option value="PUT">PUT</option>
+                      <option value="PATCH">PATCH</option>
+                    </select>
+                  </label>
+                  <label className="field compact-field">
+                    <span>Response Path</span>
+                    <input
+                      value={form.responsePath}
+                      onChange={(event) => updateForm({ responsePath: event.target.value })}
+                      placeholder="draft"
+                    />
+                  </label>
+                  <label className="field compact-field">
+                    <span>Timeout</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={form.timeoutSeconds}
+                      onChange={(event) => updateForm({ timeoutSeconds: event.target.value })}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <label className="field agent-prompt-field">
+              <span>提示词</span>
+              <textarea
+                rows={8}
+                value={form.promptTemplate}
+                onChange={(event) => updateForm({ promptTemplate: event.target.value })}
+                placeholder="写清楚 Agent 的角色、语气、边界和回复格式"
+              />
+            </label>
+
+            <div className="button-row agent-config-actions">
+              <button className="primary-button" type="submit" disabled={submitting}>
+                {submitting ? '保存中...' : form.id ? '保存 Agent' : '创建 Agent'}
+              </button>
+              {form.id ? (
+                <button
+                  className="danger-button"
+                  type="button"
+                  onClick={() => void handleDeleteAgent()}
+                  disabled={deleting || submitting}
+                >
+                  {deleting ? '删除中...' : '删除 Agent'}
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </section>
+      </section>
     </div>
   )
 }
