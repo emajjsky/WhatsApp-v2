@@ -57,6 +57,22 @@ def _normalize_base_url(value: str) -> str:
 
 
 def _build_user_message(request: ProviderRequest) -> str:
+    if request.metadata.get("task") == "translation":
+        target_language = _optional_str(request.metadata.get("target_language")) or "zh-CN"
+        target_language_name = _optional_str(request.metadata.get("target_language_name")) or target_language
+        return "\n".join(
+            [
+                "[Translation Task]",
+                f"Target language: {target_language_name} ({target_language})",
+                "Detect the source language, translate the text into the target language, and return only strict JSON.",
+                "Use a Simplified Chinese language name for source_language_name when possible.",
+                'JSON schema: {"source_language_code":"string","source_language_name":"string","translated_text":"string"}',
+                "",
+                "[Source Text]",
+                request.customer_message.strip(),
+            ]
+        ).strip()
+
     lines: list[str] = []
 
     if request.knowledge_summary:

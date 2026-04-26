@@ -68,6 +68,9 @@ class AgentRunnerHandler(BaseHTTPRequestHandler):
         if route == "/v1/runs/stream":
             self.handle_stream_request()
             return
+        if route == "/v1/translations":
+            self.handle_translation_request()
+            return
 
         self.respond(HTTPStatus.NOT_FOUND, {"error": "route not found"})
 
@@ -116,6 +119,22 @@ class AgentRunnerHandler(BaseHTTPRequestHandler):
             self.write_ndjson({"type": "error", "error": str(exc)})
         except Exception as exc:
             self.write_ndjson({"type": "error", "error": f"internal runner error: {exc}"})
+
+    def handle_translation_request(self) -> None:
+        try:
+            payload = self.read_json()
+            response = self.server.handle_translation(payload)
+        except ValueError as exc:
+            self.respond(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        except ProviderError as exc:
+            self.respond(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        except Exception as exc:
+            self.respond(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"internal runner error: {exc}"})
+            return
+
+        self.respond(HTTPStatus.OK, response)
 
     def read_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -278,6 +297,53 @@ class AgentRunnerServer(ThreadingHTTPServer):
 
         return iterator()
 
+    def handle_translation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        request_id = str(payload.get("request_id") or uuid4())
+        provider_config = expect_object(
+            payload.get("provider", {"type": self.config.default_provider}),
+            "provider",
+        )
+        text = required_string(payload, "text")
+        target_language = optional_string(payload.get("target_language")) or "zh-CN"
+        target_language_name = optional_string(payload.get("target_language_name")) or target_language
+        prompt_template = optional_string(payload.get("prompt_template")) or (
+            "You are a precise translation engine for customer support. "
+            "Return only strict JSON and do not add markdown."
+        )
+
+        provider = build_provider(provider_config)
+        provider_response = provider.generate(
+            ProviderRequest(
+                rule_name="translation",
+                prompt_template=prompt_template,
+                knowledge_summary=None,
+                knowledge_references=[],
+                chat_title=None,
+                customer_message=text,
+                recent_messages=[],
+                metadata={
+                    "task": "translation",
+                    "target_language": target_language,
+                    "target_language_name": target_language_name,
+                },
+            )
+        )
+        translation = parse_translation_payload(provider_response.draft)
+
+        return {
+            "request_id": request_id,
+            "source_language_code": translation["source_language_code"],
+            "source_language_name": translation["source_language_name"],
+            "target_language": target_language,
+            "target_language_name": target_language_name,
+            "translated_text": translation["translated_text"],
+            "provider": {
+                "type": provider_response.provider,
+                "model": provider_response.model,
+                "usage": provider_response.usage,
+            },
+        }
+
 
 def required_string(payload: dict[str, Any], key: str) -> str:
     value = optional_string(payload.get(key))
@@ -338,6 +404,35 @@ def normalize_recent_messages(value: Any) -> list[dict[str, Any]]:
         )
 
     return result
+
+
+def parse_translation_payload(text: str) -> dict[str, str]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`").strip()
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    try:
+        decoded = json.loads(cleaned)
+    except Exception:
+        return {
+            "source_language_code": "unknown",
+            "source_language_name": "Unknown",
+            "translated_text": cleaned,
+        }
+
+    if not isinstance(decoded, dict):
+        return {
+            "source_language_code": "unknown",
+            "source_language_name": "Unknown",
+            "translated_text": cleaned,
+        }
+
+    return {
+        "source_language_code": optional_string(decoded.get("source_language_code")) or "unknown",
+        "source_language_name": optional_string(decoded.get("source_language_name")) or "Unknown",
+        "translated_text": optional_string(decoded.get("translated_text")) or cleaned,
+    }
 
 
 def main() -> None:

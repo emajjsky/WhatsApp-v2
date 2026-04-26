@@ -110,14 +110,31 @@ type SendRunInput struct {
 }
 
 type GenerateRunInput struct {
-	ChatID      string
-	RuleID      string
-	MessageText *string
+	ChatID              string
+	RuleID              string
+	MessageText         *string
+	ContextEnabled      bool
+	ContextMessageLimit int
 }
 
 type GenerateRunStreamCallbacks struct {
 	OnStart func(RunView) error
 	OnDelta func(string) error
+}
+
+type TranslateTextInput struct {
+	AccountID          string
+	Text               string
+	TargetLanguage     string
+	TargetLanguageName string
+}
+
+type TranslationView struct {
+	SourceLanguageCode string `json:"source_language_code"`
+	SourceLanguageName string `json:"source_language_name"`
+	TargetLanguage     string `json:"target_language"`
+	TargetLanguageName string `json:"target_language_name"`
+	TranslatedText     string `json:"translated_text"`
 }
 
 type preparedManualRun struct {
@@ -270,6 +287,65 @@ func (a *Automation) GenerateRunStream(
 	return a.repository.GetRunViewByID(ctx, prepared.RunID)
 }
 
+func (a *Automation) TranslateText(ctx context.Context, input TranslateTextInput) (TranslationView, error) {
+	if a == nil {
+		return TranslationView{}, fmt.Errorf("agent automation is not configured")
+	}
+	if !a.runner.Configured() {
+		return TranslationView{}, fmt.Errorf("agent runner is not configured (AGENT_RUNNER_BASE_URL)")
+	}
+
+	accountID := strings.TrimSpace(input.AccountID)
+	if accountID == "" {
+		return TranslationView{}, fmt.Errorf("account_id is required")
+	}
+	text := strings.TrimSpace(input.Text)
+	if text == "" {
+		return TranslationView{}, fmt.Errorf("text is required")
+	}
+	targetLanguage := strings.TrimSpace(input.TargetLanguage)
+	if targetLanguage == "" {
+		targetLanguage = "zh-CN"
+	}
+	targetLanguageName := strings.TrimSpace(input.TargetLanguageName)
+	if targetLanguageName == "" {
+		targetLanguageName = targetLanguage
+	}
+
+	rule, err := a.repository.FindRuleByPurposeAndAccount(ctx, AgentPurposeTranslation, accountID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return TranslationView{}, fmt.Errorf("no translation agent is configured for this account")
+		}
+		return TranslationView{}, err
+	}
+
+	providerConfig, err := a.buildRunnerProvider(ctx, accountID, rule)
+	if err != nil {
+		return TranslationView{}, fmt.Errorf("load translation agent settings failed: %w", err)
+	}
+
+	response, err := a.runner.Translate(ctx, RunnerTranslationRequest{
+		RequestID:          ids.NewUUID(),
+		Text:               text,
+		TargetLanguage:     targetLanguage,
+		TargetLanguageName: targetLanguageName,
+		PromptTemplate:     resolveRunnerPrompt(rule, providerConfig),
+		Provider:           providerConfig,
+	})
+	if err != nil {
+		return TranslationView{}, err
+	}
+
+	return TranslationView{
+		SourceLanguageCode: strings.TrimSpace(response.SourceLanguageCode),
+		SourceLanguageName: strings.TrimSpace(response.SourceLanguageName),
+		TargetLanguage:     strings.TrimSpace(response.TargetLanguage),
+		TargetLanguageName: strings.TrimSpace(response.TargetLanguageName),
+		TranslatedText:     strings.TrimSpace(response.TranslatedText),
+	}, nil
+}
+
 func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInput) (preparedManualRun, error) {
 	if a == nil {
 		return preparedManualRun{}, fmt.Errorf("agent automation is not configured")
@@ -285,7 +361,8 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 		return preparedManualRun{}, err
 	}
 
-	trigger, recentMessages, err := a.resolveManualTrigger(ctx, chatID, input.MessageText)
+	contextLimit := normalizeContextMessageLimit(input.ContextMessageLimit)
+	trigger, recentMessages, err := a.resolveManualTrigger(ctx, chatID, input.MessageText, contextLimit)
 	if err != nil {
 		return preparedManualRun{}, err
 	}
@@ -300,7 +377,10 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 
 	runID := ids.NewUUID()
 	createdAt := a.now()
-	contextMessages := buildRunnerRecentMessages(recentMessages)
+	contextMessages := []RunnerRecentMessage{}
+	if input.ContextEnabled {
+		contextMessages = buildRunnerRecentMessages(tailMessages(recentMessages, contextLimit))
+	}
 
 	inputContext, err := json.Marshal(map[string]any{
 		"chat_title":        chatHeader.Title,
@@ -311,6 +391,8 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 		"rule_name":         selected.Name,
 		"rule_reply_mode":   selected.ReplyMode,
 		"manual":            true,
+		"context_enabled":   input.ContextEnabled,
+		"context_limit":     contextLimit,
 		"runner_configured": a.runner.Configured(),
 		"received_at":       createdAt,
 	})
@@ -717,6 +799,9 @@ func pickFirstMatchingRule(rules []AgentRule, chatHeader chats.ChatHeader, chatI
 		if !rule.Enabled {
 			continue
 		}
+		if rule.Purpose != AgentPurposeReply {
+			continue
+		}
 		if !ruleScopeMatches(rule, chatHeader, chatID) {
 			continue
 		}
@@ -740,10 +825,11 @@ func (a *Automation) resolveManualTrigger(
 	ctx context.Context,
 	chatID string,
 	messageText *string,
+	contextLimit int,
 ) (manualTrigger, []chats.MessageView, error) {
 	recentMessages, _, err := a.chatRepository.ListMessages(ctx, chats.MessageListFilters{
 		ChatID: chatID,
-		Limit:  30,
+		Limit:  maxInt(contextLimit+8, 30),
 	})
 	if err != nil {
 		return manualTrigger{}, nil, err
@@ -791,7 +877,12 @@ func (a *Automation) resolveManualRule(
 			return AgentRule{}, err
 		}
 		if rule.AccountID != chatHeader.AccountID {
-			return AgentRule{}, fmt.Errorf("agent rule does not belong to this chat account")
+			if !ruleBelongsToAccount(rule, chatHeader.AccountID) {
+				return AgentRule{}, fmt.Errorf("agent rule does not belong to this chat account")
+			}
+		}
+		if rule.Purpose != AgentPurposeReply {
+			return AgentRule{}, fmt.Errorf("selected agent is not a reply agent")
 		}
 		if rule.ReplyMode == ReplyModeManual {
 			return AgentRule{}, fmt.Errorf("manual reply rule cannot generate agent drafts")
@@ -808,6 +899,9 @@ func (a *Automation) resolveManualRule(
 	}
 
 	for _, rule := range rules {
+		if rule.Purpose != AgentPurposeReply {
+			continue
+		}
 		if rule.ReplyMode == ReplyModeManual {
 			continue
 		}
@@ -870,7 +964,34 @@ func buildRunnerRecentMessages(messages []chats.MessageView) []RunnerRecentMessa
 	return contextMessages
 }
 
+func normalizeContextMessageLimit(value int) int {
+	if value <= 0 {
+		return 12
+	}
+	if value > 50 {
+		return 50
+	}
+	return value
+}
+
+func tailMessages(messages []chats.MessageView, limit int) []chats.MessageView {
+	if limit <= 0 || len(messages) <= limit {
+		return messages
+	}
+	return messages[len(messages)-limit:]
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
 func ruleScopeMatches(rule AgentRule, chatHeader chats.ChatHeader, chatID string) bool {
+	if !ruleBelongsToAccount(rule, chatHeader.AccountID) {
+		return false
+	}
 	if len(rule.ScopeFilter.ChatIDs) > 0 && !containsString(rule.ScopeFilter.ChatIDs, chatID) {
 		return false
 	}
@@ -879,6 +1000,17 @@ func ruleScopeMatches(rule AgentRule, chatHeader chats.ChatHeader, chatID string
 	}
 
 	return true
+}
+
+func ruleBelongsToAccount(rule AgentRule, accountID string) bool {
+	trimmed := strings.TrimSpace(accountID)
+	if trimmed == "" {
+		return false
+	}
+	if rule.AccountID == trimmed {
+		return true
+	}
+	return containsString(rule.AccountIDs, trimmed)
 }
 
 func triggerMatches(filter TriggerFilter, text string) bool {

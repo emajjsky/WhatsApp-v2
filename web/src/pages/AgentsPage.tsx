@@ -15,6 +15,8 @@ type AgentProviderType = 'openai_compatible' | 'coze' | 'n8n' | 'webhook'
 interface AgentFormValue {
   id?: string
   accountId: string
+  accountIds: string[]
+  purpose: 'reply' | 'translation'
   name: string
   providerType: AgentProviderType
   model: string
@@ -38,9 +40,15 @@ const providerOptions: Array<{ value: AgentProviderType; label: string; badge: s
   { value: 'webhook', label: 'Webhook', badge: 'Custom' },
 ]
 
+const defaultReplyPrompt = '你是 WhatsApp 客服回复助手。根据当前聊天上下文生成一条简洁、礼貌、可直接发送给客户的回复建议。'
+const defaultTranslationPrompt =
+  '你是 WhatsApp 客服翻译助手。检测原文语种，并把文本准确翻译成目标语种。source_language_name 尽量使用中文语种名。只输出严格 JSON，不要 Markdown。'
+
 function createEmptyAgent(accountId: string): AgentFormValue {
   return {
     accountId,
+    accountIds: accountId ? [accountId] : [],
+    purpose: 'reply',
     name: '',
     providerType: 'openai_compatible',
     model: '',
@@ -54,7 +62,7 @@ function createEmptyAgent(accountId: string): AgentFormValue {
     maxTokens: '600',
     timeoutSeconds: '30',
     enableThinking: false,
-    promptTemplate: '你是 WhatsApp 客服回复助手。根据当前聊天上下文生成一条简洁、礼貌、可直接发送给客户的回复建议。',
+    promptTemplate: defaultReplyPrompt,
   }
 }
 
@@ -65,6 +73,8 @@ function mapRuleToForm(rule: AgentRuleView): AgentFormValue {
   return {
     id: rule.id,
     accountId: rule.account_id,
+    accountIds: rule.account_ids?.length ? rule.account_ids : [rule.account_id],
+    purpose: rule.purpose ?? 'reply',
     name: rule.name,
     providerType,
     model: readConfigString(config, 'model'),
@@ -165,7 +175,7 @@ function buildProviderConfig(form: AgentFormValue): AgentProviderConfig {
 }
 
 function validateAgentForm(form: AgentFormValue) {
-  if (!form.accountId) {
+  if (form.accountIds.length === 0) {
     return '请选择绑定账号'
   }
   if (!form.name.trim()) {
@@ -194,6 +204,23 @@ function validateAgentForm(form: AgentFormValue) {
 
 function getProviderLabel(providerType: string) {
   return providerOptions.find((option) => option.value === providerType)?.label ?? '大模型 API'
+}
+
+function normalizeSelectedAccountIds(accountIds: string[], fallbackAccountId: string) {
+  const result: string[] = []
+  const seen = new Set<string>()
+  const add = (value: string) => {
+    const trimmed = value.trim()
+    if (!trimmed || seen.has(trimmed)) {
+      return
+    }
+    seen.add(trimmed)
+    result.push(trimmed)
+  }
+
+  accountIds.forEach(add)
+  add(fallbackAccountId)
+  return result
 }
 
 function formatDateTime(value: string) {
@@ -257,7 +284,9 @@ export function AgentsPage() {
     if (selectedAgentId === 'new') {
       setForm((current) => {
         const accountId = current.accountId || accounts[0]?.id || ''
-        return current.id ? createEmptyAgent(accountId) : { ...current, accountId }
+        return current.id
+          ? createEmptyAgent(accountId)
+          : { ...current, accountId, accountIds: current.accountIds.length ? current.accountIds : accountId ? [accountId] : [] }
       })
       return
     }
@@ -270,6 +299,33 @@ export function AgentsPage() {
 
   function updateForm(next: Partial<AgentFormValue>) {
     setForm((current) => ({ ...current, ...next }))
+  }
+
+  function updatePurpose(purpose: AgentFormValue['purpose']) {
+    setForm((current) => ({
+      ...current,
+      purpose,
+      providerType: purpose === 'translation' ? 'openai_compatible' : current.providerType,
+      promptTemplate:
+        current.promptTemplate === defaultReplyPrompt || current.promptTemplate === defaultTranslationPrompt
+          ? purpose === 'translation'
+            ? defaultTranslationPrompt
+            : defaultReplyPrompt
+          : current.promptTemplate,
+    }))
+  }
+
+  function updateAccountSelection(accountId: string, checked: boolean) {
+    setForm((current) => {
+      const accountIds = checked
+        ? normalizeSelectedAccountIds([...current.accountIds, accountId], current.accountId)
+        : current.accountIds.filter((value) => value !== accountId)
+      return {
+        ...current,
+        accountIds,
+        accountId: accountIds[0] ?? '',
+      }
+    })
   }
 
   function handleCreateAgent() {
@@ -292,9 +348,12 @@ export function AgentsPage() {
 
     setSubmitting(true)
     try {
+      const accountIds = normalizeSelectedAccountIds(form.accountIds, form.accountId)
       const response = await upsertAgentRule({
         id: form.id,
-        account_id: form.accountId,
+        account_id: accountIds[0],
+        account_ids: accountIds,
+        purpose: form.purpose,
         name: form.name.trim(),
         enabled: true,
         scope_filter: {
@@ -405,6 +464,10 @@ export function AgentsPage() {
             <div className="agent-list-scroll">
               {agents.map((agent) => {
                 const providerType = normalizeProviderType(readConfigString(agent.provider_config ?? {}, 'type'))
+                const accountLabel =
+                  agent.account_ids?.length > 1
+                    ? `${agent.account_ids.length} 个账号`
+                    : accountNameMap.get(agent.account_id) || agent.account_id
                 return (
                   <button
                     key={agent.id}
@@ -414,7 +477,7 @@ export function AgentsPage() {
                   >
                     <span className="agent-list-title">{agent.name}</span>
                     <span className="agent-list-account">
-                      {accountNameMap.get(agent.account_id) || agent.account_id}
+                      {agent.purpose === 'translation' ? '翻译 Agent' : '回复 Agent'} · {accountLabel}
                     </span>
                     <span className="agent-list-meta">
                       <span>{getProviderLabel(providerType)}</span>
@@ -455,23 +518,48 @@ export function AgentsPage() {
                 />
               </label>
 
-              <label className="field">
+              <div className="field">
                 <span>绑定账号</span>
-                <select
-                  value={form.accountId}
-                  onChange={(event) => updateForm({ accountId: event.target.value })}
-                >
+                <div className="agent-account-checklist">
                   {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.display_name}
-                    </option>
+                    <label key={account.id} className="checkbox-row agent-account-option">
+                      <input
+                        type="checkbox"
+                        checked={form.accountIds.includes(account.id)}
+                        onChange={(event) => updateAccountSelection(account.id, event.target.checked)}
+                      />
+                      <span>{account.display_name}</span>
+                    </label>
                   ))}
-                </select>
-              </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="agent-provider-tabs agent-purpose-tabs" role="tablist" aria-label="Agent 用途">
+              <button
+                type="button"
+                className={`agent-provider-tab${form.purpose === 'reply' ? ' active' : ''}`}
+                onClick={() => updatePurpose('reply')}
+                aria-pressed={form.purpose === 'reply'}
+              >
+                <strong>回复 Agent</strong>
+                <span>生成客服草稿</span>
+              </button>
+              <button
+                type="button"
+                className={`agent-provider-tab${form.purpose === 'translation' ? ' active' : ''}`}
+                onClick={() => updatePurpose('translation')}
+                aria-pressed={form.purpose === 'translation'}
+              >
+                <strong>翻译 Agent</strong>
+                <span>语言检测 + 翻译</span>
+              </button>
             </div>
 
             <div className="agent-provider-tabs" role="tablist" aria-label="Agent 接入方式">
-              {providerOptions.map((option) => (
+              {providerOptions
+                .filter((option) => form.purpose === 'reply' || option.value === 'openai_compatible')
+                .map((option) => (
                 <button
                   key={option.value}
                   type="button"

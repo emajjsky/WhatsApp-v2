@@ -51,6 +51,7 @@ func (r *Repository) CreateRule(ctx context.Context, rule AgentRule) error {
 INSERT INTO agent_rules (
     id,
     account_id,
+    purpose,
     name,
     enabled,
     scope_filter,
@@ -62,13 +63,14 @@ INSERT INTO agent_rules (
     prompt_template,
     provider_config,
     knowledge_binding
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 
 	if _, err := r.db.ExecContext(
 		ctx,
 		query,
 		rule.ID,
 		rule.AccountID,
+		rule.Purpose,
 		rule.Name,
 		rule.Enabled,
 		scopeFilter,
@@ -82,6 +84,10 @@ INSERT INTO agent_rules (
 		knowledgeBinding,
 	); err != nil {
 		return fmt.Errorf("create agent rule %q: %w", rule.ID, err)
+	}
+
+	if err := r.syncRuleAccounts(ctx, rule.ID, rule.AccountID, rule.AccountIDs); err != nil {
+		return err
 	}
 
 	return nil
@@ -113,17 +119,18 @@ func (r *Repository) UpdateRule(ctx context.Context, rule AgentRule) error {
 UPDATE agent_rules
 SET
     account_id = $2,
-    name = $3,
-    enabled = $4,
-    scope_filter = $5,
-    trigger_filter = $6,
-    reply_mode = $7,
-    cooldown_seconds = $8,
-    max_auto_replies_per_thread = $9,
-    blacklist_filter = $10,
-    prompt_template = $11,
-    provider_config = $12,
-    knowledge_binding = $13,
+    purpose = $3,
+    name = $4,
+    enabled = $5,
+    scope_filter = $6,
+    trigger_filter = $7,
+    reply_mode = $8,
+    cooldown_seconds = $9,
+    max_auto_replies_per_thread = $10,
+    blacklist_filter = $11,
+    prompt_template = $12,
+    provider_config = $13,
+    knowledge_binding = $14,
     updated_at = NOW()
 WHERE id = $1`
 
@@ -132,6 +139,7 @@ WHERE id = $1`
 		query,
 		rule.ID,
 		rule.AccountID,
+		rule.Purpose,
 		rule.Name,
 		rule.Enabled,
 		scopeFilter,
@@ -148,29 +156,40 @@ WHERE id = $1`
 		return fmt.Errorf("update agent rule %q: %w", rule.ID, err)
 	}
 
-	return ensureAffected(result, rule.ID)
+	if err := ensureAffected(result, rule.ID); err != nil {
+		return err
+	}
+
+	return r.syncRuleAccounts(ctx, rule.ID, rule.AccountID, rule.AccountIDs)
 }
 
 func (r *Repository) GetRuleByID(ctx context.Context, id string) (AgentRule, error) {
 	const query = `
 SELECT
-    id,
-    account_id,
-    name,
-    enabled,
-    scope_filter,
-    trigger_filter,
-    reply_mode,
-    cooldown_seconds,
-    max_auto_replies_per_thread,
-    blacklist_filter,
-    prompt_template,
-    provider_config,
-    knowledge_binding,
-    created_at,
-    updated_at
-FROM agent_rules
-WHERE id = $1`
+    ar.id,
+    ar.account_id,
+    ar.purpose,
+    ar.name,
+    ar.enabled,
+    ar.scope_filter,
+    ar.trigger_filter,
+    ar.reply_mode,
+    ar.cooldown_seconds,
+    ar.max_auto_replies_per_thread,
+    ar.blacklist_filter,
+    ar.prompt_template,
+    ar.provider_config,
+    ar.knowledge_binding,
+    COALESCE(accounts.account_ids, jsonb_build_array(ar.account_id::text)) AS account_ids,
+    ar.created_at,
+    ar.updated_at
+FROM agent_rules ar
+LEFT JOIN LATERAL (
+    SELECT jsonb_agg(ara.account_id::text ORDER BY ara.account_id::text) AS account_ids
+    FROM agent_rule_accounts ara
+    WHERE ara.rule_id = ar.id
+) AS accounts ON TRUE
+WHERE ar.id = $1`
 
 	var (
 		rule             AgentRule
@@ -179,11 +198,13 @@ WHERE id = $1`
 		blacklistFilter  []byte
 		providerConfig   []byte
 		knowledgeBinding []byte
+		accountIDs       []byte
 	)
 
 	if err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&rule.ID,
 		&rule.AccountID,
+		&rule.Purpose,
 		&rule.Name,
 		&rule.Enabled,
 		&scopeFilter,
@@ -195,13 +216,14 @@ WHERE id = $1`
 		&rule.PromptTemplate,
 		&providerConfig,
 		&knowledgeBinding,
+		&accountIDs,
 		&rule.CreatedAt,
 		&rule.UpdatedAt,
 	); err != nil {
 		return AgentRule{}, fmt.Errorf("get agent rule %q: %w", id, err)
 	}
 
-	if err := decodeRuleFilters(&rule, scopeFilter, triggerFilter, blacklistFilter, providerConfig, knowledgeBinding); err != nil {
+	if err := decodeRuleFilters(&rule, scopeFilter, triggerFilter, blacklistFilter, providerConfig, knowledgeBinding, accountIDs); err != nil {
 		return AgentRule{}, err
 	}
 
@@ -213,24 +235,31 @@ func (r *Repository) ListRules(ctx context.Context, filters RuleListFilters) ([]
 
 	query := fmt.Sprintf(`
 SELECT
-    id,
-    account_id,
-    name,
-    enabled,
-    scope_filter,
-    trigger_filter,
-    reply_mode,
-    cooldown_seconds,
-    max_auto_replies_per_thread,
-    blacklist_filter,
-    prompt_template,
-    provider_config,
-    knowledge_binding,
-    created_at,
-    updated_at
-FROM agent_rules
+    ar.id,
+    ar.account_id,
+    ar.purpose,
+    ar.name,
+    ar.enabled,
+    ar.scope_filter,
+    ar.trigger_filter,
+    ar.reply_mode,
+    ar.cooldown_seconds,
+    ar.max_auto_replies_per_thread,
+    ar.blacklist_filter,
+    ar.prompt_template,
+    ar.provider_config,
+    ar.knowledge_binding,
+    COALESCE(accounts.account_ids, jsonb_build_array(ar.account_id::text)) AS account_ids,
+    ar.created_at,
+    ar.updated_at
+FROM agent_rules ar
+LEFT JOIN LATERAL (
+    SELECT jsonb_agg(ara.account_id::text ORDER BY ara.account_id::text) AS account_ids
+    FROM agent_rule_accounts ara
+    WHERE ara.rule_id = ar.id
+) AS accounts ON TRUE
 WHERE %s
-ORDER BY enabled DESC, updated_at DESC, id DESC`, whereClause)
+ORDER BY ar.enabled DESC, ar.updated_at DESC, ar.id DESC`, whereClause)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -247,11 +276,13 @@ ORDER BY enabled DESC, updated_at DESC, id DESC`, whereClause)
 			blacklistFilter  []byte
 			providerConfig   []byte
 			knowledgeBinding []byte
+			accountIDs       []byte
 		)
 
 		if err := rows.Scan(
 			&rule.ID,
 			&rule.AccountID,
+			&rule.Purpose,
 			&rule.Name,
 			&rule.Enabled,
 			&scopeFilter,
@@ -263,13 +294,14 @@ ORDER BY enabled DESC, updated_at DESC, id DESC`, whereClause)
 			&rule.PromptTemplate,
 			&providerConfig,
 			&knowledgeBinding,
+			&accountIDs,
 			&rule.CreatedAt,
 			&rule.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan agent rule row: %w", err)
 		}
 
-		if err := decodeRuleFilters(&rule, scopeFilter, triggerFilter, blacklistFilter, providerConfig, knowledgeBinding); err != nil {
+		if err := decodeRuleFilters(&rule, scopeFilter, triggerFilter, blacklistFilter, providerConfig, knowledgeBinding, accountIDs); err != nil {
 			return nil, err
 		}
 
@@ -281,6 +313,25 @@ ORDER BY enabled DESC, updated_at DESC, id DESC`, whereClause)
 	}
 
 	return items, nil
+}
+
+func (r *Repository) FindRuleByPurposeAndAccount(ctx context.Context, purpose AgentPurpose, accountID string) (AgentRule, error) {
+	filters := RuleListFilters{
+		AccountID: strings.TrimSpace(accountID),
+		Enabled:   boolPointer(true),
+	}
+	rules, err := r.ListRules(ctx, filters)
+	if err != nil {
+		return AgentRule{}, err
+	}
+
+	for _, rule := range rules {
+		if rule.Purpose == purpose {
+			return rule, nil
+		}
+	}
+
+	return AgentRule{}, sql.ErrNoRows
 }
 
 func (r *Repository) SetRuleEnabled(ctx context.Context, id string, enabled bool) error {
@@ -659,11 +710,19 @@ func buildRuleWhere(filters RuleListFilters) (string, []any) {
 
 	if filters.AccountID != "" {
 		args = append(args, filters.AccountID)
-		conditions = append(conditions, fmt.Sprintf("account_id = $%d", len(args)))
+		conditions = append(conditions, fmt.Sprintf(`(
+    ar.account_id = $%d
+    OR EXISTS (
+        SELECT 1
+        FROM agent_rule_accounts ara_filter
+        WHERE ara_filter.rule_id = ar.id
+          AND ara_filter.account_id = $%d
+    )
+)`, len(args), len(args)))
 	}
 	if filters.Enabled != nil {
 		args = append(args, *filters.Enabled)
-		conditions = append(conditions, fmt.Sprintf("enabled = $%d", len(args)))
+		conditions = append(conditions, fmt.Sprintf("ar.enabled = $%d", len(args)))
 	}
 
 	return strings.Join(conditions, " AND "), args
@@ -700,6 +759,7 @@ func decodeRuleFilters(
 	blacklistFilter []byte,
 	providerConfig []byte,
 	knowledgeBinding []byte,
+	accountIDs []byte,
 ) error {
 	if err := unmarshalOrDefault(scopeFilter, &rule.ScopeFilter); err != nil {
 		return fmt.Errorf("decode rule %q scope filter: %w", rule.ID, err)
@@ -716,6 +776,17 @@ func decodeRuleFilters(
 	if rule.ProviderConfig == nil {
 		rule.ProviderConfig = make(map[string]any)
 	}
+	if len(accountIDs) > 0 {
+		if err := json.Unmarshal(accountIDs, &rule.AccountIDs); err != nil {
+			return fmt.Errorf("decode rule %q account ids: %w", rule.ID, err)
+		}
+	}
+	if len(rule.AccountIDs) == 0 {
+		rule.AccountIDs = []string{rule.AccountID}
+	}
+	if rule.Purpose == "" {
+		rule.Purpose = AgentPurposeReply
+	}
 	if len(knowledgeBinding) == 0 {
 		rule.KnowledgeBinding = nil
 		return nil
@@ -726,6 +797,26 @@ func decodeRuleFilters(
 		return fmt.Errorf("decode rule %q knowledge binding: %w", rule.ID, err)
 	}
 	rule.KnowledgeBinding = &binding
+
+	return nil
+}
+
+func (r *Repository) syncRuleAccounts(ctx context.Context, ruleID string, primaryAccountID string, accountIDs []string) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM agent_rule_accounts WHERE rule_id = $1`, ruleID); err != nil {
+		return fmt.Errorf("clear agent rule accounts for %q: %w", ruleID, err)
+	}
+
+	normalized := normalizeAccountIDs(primaryAccountID, accountIDs)
+	for _, accountID := range normalized {
+		if _, err := r.db.ExecContext(
+			ctx,
+			`INSERT INTO agent_rule_accounts (rule_id, account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			ruleID,
+			accountID,
+		); err != nil {
+			return fmt.Errorf("bind agent rule %q to account %q: %w", ruleID, accountID, err)
+		}
+	}
 
 	return nil
 }
@@ -800,4 +891,8 @@ func nullableTime(value sql.NullTime) *time.Time {
 
 	result := value.Time
 	return &result
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }

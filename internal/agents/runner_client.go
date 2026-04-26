@@ -76,6 +76,25 @@ type RunnerRunStreamEvent struct {
 	Response RunnerRunResponse
 }
 
+type RunnerTranslationRequest struct {
+	RequestID          string         `json:"request_id,omitempty"`
+	Text               string         `json:"text"`
+	TargetLanguage     string         `json:"target_language"`
+	TargetLanguageName string         `json:"target_language_name,omitempty"`
+	PromptTemplate     string         `json:"prompt_template,omitempty"`
+	Provider           map[string]any `json:"provider,omitempty"`
+}
+
+type RunnerTranslationResponse struct {
+	RequestID          string         `json:"request_id"`
+	SourceLanguageCode string         `json:"source_language_code"`
+	SourceLanguageName string         `json:"source_language_name"`
+	TargetLanguage     string         `json:"target_language"`
+	TargetLanguageName string         `json:"target_language_name"`
+	TranslatedText     string         `json:"translated_text"`
+	Provider           map[string]any `json:"provider"`
+}
+
 func NewRunnerClient(baseURL string) *RunnerClient {
 	return &RunnerClient{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
@@ -218,4 +237,43 @@ func (c *RunnerClient) RunStream(
 	}
 
 	return RunnerRunResponse{}, fmt.Errorf("agent runner stream ended before completion")
+}
+
+func (c *RunnerClient) Translate(ctx context.Context, payload RunnerTranslationRequest) (RunnerTranslationResponse, error) {
+	if c == nil || strings.TrimSpace(c.baseURL) == "" {
+		return RunnerTranslationResponse{}, fmt.Errorf("agent runner is not configured")
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return RunnerTranslationResponse{}, fmt.Errorf("encode runner translation request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/translations", bytes.NewReader(body))
+	if err != nil {
+		return RunnerTranslationResponse{}, fmt.Errorf("build runner translation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return RunnerTranslationResponse{}, fmt.Errorf("call agent runner translation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		message := strings.TrimSpace(string(detail))
+		if message == "" {
+			message = resp.Status
+		}
+		return RunnerTranslationResponse{}, fmt.Errorf("agent runner translation returned status %d: %s", resp.StatusCode, message)
+	}
+
+	var decoded RunnerTranslationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return RunnerTranslationResponse{}, fmt.Errorf("decode runner translation response: %w", err)
+	}
+
+	return decoded, nil
 }

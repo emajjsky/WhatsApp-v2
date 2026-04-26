@@ -47,6 +47,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-runs", h.handleRuns)
 	mux.HandleFunc("/api/agent-runs/generate", h.handleGenerateRun)
 	mux.HandleFunc("/api/agent-runs/generate/stream", h.handleGenerateRunStream)
+	mux.HandleFunc("/api/agent-translations", h.handleTranslateText)
 	mux.HandleFunc("/api/agent-runs/", h.handleRunByID)
 }
 
@@ -260,9 +261,11 @@ func (h *Handler) handleGenerateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var payload struct {
-		ChatID      string  `json:"chat_id"`
-		RuleID      string  `json:"rule_id,omitempty"`
-		MessageText *string `json:"message_text,omitempty"`
+		ChatID              string  `json:"chat_id"`
+		RuleID              string  `json:"rule_id,omitempty"`
+		MessageText         *string `json:"message_text,omitempty"`
+		ContextEnabled      *bool   `json:"context_enabled,omitempty"`
+		ContextMessageLimit int     `json:"context_message_limit,omitempty"`
 	}
 	if err := httpx.DecodeJSON(r, &payload); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
@@ -270,9 +273,11 @@ func (h *Handler) handleGenerateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	run, err := h.automation.GenerateRun(r.Context(), GenerateRunInput{
-		ChatID:      payload.ChatID,
-		RuleID:      payload.RuleID,
-		MessageText: payload.MessageText,
+		ChatID:              payload.ChatID,
+		RuleID:              payload.RuleID,
+		MessageText:         payload.MessageText,
+		ContextEnabled:      optionalBoolValue(payload.ContextEnabled, true),
+		ContextMessageLimit: payload.ContextMessageLimit,
 	})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
@@ -297,6 +302,41 @@ func (h *Handler) handleGenerateRun(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"run": run})
 }
 
+func (h *Handler) handleTranslateText(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload struct {
+		AccountID          string `json:"account_id"`
+		Text               string `json:"text"`
+		TargetLanguage     string `json:"target_language"`
+		TargetLanguageName string `json:"target_language_name,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &payload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	translation, err := h.automation.TranslateText(r.Context(), TranslateTextInput{
+		AccountID:          payload.AccountID,
+		Text:               payload.Text,
+		TargetLanguage:     payload.TargetLanguage,
+		TargetLanguageName: payload.TargetLanguageName,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"translation": translation})
+}
+
 func (h *Handler) handleGenerateRunStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpx.WriteMethodNotAllowed(w, http.MethodPost)
@@ -308,9 +348,11 @@ func (h *Handler) handleGenerateRunStream(w http.ResponseWriter, r *http.Request
 	}
 
 	var payload struct {
-		ChatID      string  `json:"chat_id"`
-		RuleID      string  `json:"rule_id,omitempty"`
-		MessageText *string `json:"message_text,omitempty"`
+		ChatID              string  `json:"chat_id"`
+		RuleID              string  `json:"rule_id,omitempty"`
+		MessageText         *string `json:"message_text,omitempty"`
+		ContextEnabled      *bool   `json:"context_enabled,omitempty"`
+		ContextMessageLimit int     `json:"context_message_limit,omitempty"`
 	}
 	if err := httpx.DecodeJSON(r, &payload); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
@@ -326,9 +368,11 @@ func (h *Handler) handleGenerateRunStream(w http.ResponseWriter, r *http.Request
 	finalRun, err := h.automation.GenerateRunStream(
 		r.Context(),
 		GenerateRunInput{
-			ChatID:      payload.ChatID,
-			RuleID:      payload.RuleID,
-			MessageText: payload.MessageText,
+			ChatID:              payload.ChatID,
+			RuleID:              payload.RuleID,
+			MessageText:         payload.MessageText,
+			ContextEnabled:      optionalBoolValue(payload.ContextEnabled, true),
+			ContextMessageLimit: payload.ContextMessageLimit,
 		},
 		GenerateRunStreamCallbacks{
 			OnStart: func(run RunView) error {
@@ -455,6 +499,13 @@ func writeAgentRunSSE(w http.ResponseWriter, event string, payload any) error {
 	}
 
 	return nil
+}
+
+func optionalBoolValue(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func parseRuleFilters(r *http.Request) (RuleListFilters, error) {

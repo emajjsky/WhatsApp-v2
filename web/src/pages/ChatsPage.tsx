@@ -16,6 +16,7 @@ import {
   sendChatMessage,
   streamGenerateAgentRun,
   subscribeLiveUpdates,
+  translateText,
   type AccountView,
   type AgentRuleView,
   type AgentRunView,
@@ -25,6 +26,7 @@ import {
   type LiveUpdate,
   type MessageHistoryResponse,
   type MessageView,
+  type TranslationView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
 import { StatusBadge } from '../components/StatusBadge'
@@ -43,6 +45,61 @@ type ChatDisplaySource = {
   title?: string
   participant_count?: number
 }
+
+type TranslationState = {
+  loading?: boolean
+  error?: string
+  translation?: TranslationView
+}
+
+type StoredMessageTranslation = {
+  cached_at: string
+  translation: TranslationView
+}
+
+type AttachmentAction =
+  | 'document'
+  | 'media'
+  | 'camera'
+  | 'audio'
+  | 'contact'
+  | 'poll'
+  | 'event'
+  | 'sticker'
+
+const languageOptions = [
+  { code: 'en', name: '英语' },
+  { code: 'ja', name: '日语' },
+  { code: 'ko', name: '韩语' },
+  { code: 'th', name: '泰语' },
+  { code: 'vi', name: '越南语' },
+  { code: 'id', name: '印尼语' },
+  { code: 'ms', name: '马来语' },
+  { code: 'tl', name: '菲律宾语' },
+  { code: 'ar', name: '阿拉伯语' },
+  { code: 'es', name: '西班牙语' },
+  { code: 'fr', name: '法语' },
+  { code: 'pt', name: '葡萄牙语' },
+]
+
+const attachmentActions: Array<{
+  key: AttachmentAction
+  label: string
+  icon: string
+  tone: string
+}> = [
+  { key: 'document', label: '文档', icon: '▣', tone: 'purple' },
+  { key: 'media', label: '照片和视频', icon: '▧', tone: 'blue' },
+  { key: 'camera', label: '相机', icon: '●', tone: 'pink' },
+  { key: 'audio', label: '音频', icon: '♪', tone: 'orange' },
+  { key: 'contact', label: '联系人', icon: '●', tone: 'cyan' },
+  { key: 'poll', label: '投票', icon: '≡', tone: 'yellow' },
+  { key: 'event', label: '活动', icon: '□', tone: 'rose' },
+  { key: 'sticker', label: '新建贴图', icon: '+', tone: 'green' },
+]
+
+const messageTranslationCacheStorageKey = 'whatsapp.messageTranslations.v1'
+const messageTranslationCacheLimit = 800
 
 function getAssistantRunNotice(run: AgentRunView) {
   if (run.status === 'ready_for_review') {
@@ -71,15 +128,31 @@ export function ChatsPage() {
   const [sending, setSending] = useState(false)
   const [draftMessage, setDraftMessage] = useState('')
   const [error, setError] = useState<string>()
+  const [composeNotice, setComposeNotice] = useState<string>()
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [assistantRules, setAssistantRules] = useState<AgentRuleView[]>([])
   const [assistantRuleId, setAssistantRuleId] = useState('')
   const [assistantRun, setAssistantRun] = useState<AgentRunView>()
   const [assistantDraft, setAssistantDraft] = useState('')
+  const [messageTranslations, setMessageTranslations] =
+    useState<Record<string, TranslationState>>(loadMessageTranslationCache)
+  const [draftTargetLanguage, setDraftTargetLanguage] = useState('en')
+  const [draftTargetLanguageName, setDraftTargetLanguageName] = useState('英语')
+  const [translatedDraft, setTranslatedDraft] = useState('')
+  const [draftTranslationBusy, setDraftTranslationBusy] = useState(false)
+  const [assistantContextEnabled, setAssistantContextEnabled] = useState(true)
+  const [assistantContextLimit, setAssistantContextLimit] = useState(12)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [assistantSending, setAssistantSending] = useState(false)
   const [assistantNotice, setAssistantNotice] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
   const assistantDraftRef = useRef<HTMLTextAreaElement>(null)
+  const composeAttachmentRef = useRef<HTMLDivElement>(null)
+  const documentInputRef = useRef<HTMLInputElement>(null)
+  const mediaInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const audioInputRef = useRef<HTMLInputElement>(null)
+  const pendingMessageTranslationKeysRef = useRef<Set<string>>(new Set())
   const keepTimelinePinnedRef = useRef(true)
   const pendingScrollModeRef = useRef<'bottom' | 'preserve' | 'none'>('bottom')
   const previousTimelineMetricsRef = useRef<
@@ -138,7 +211,10 @@ export function ChatsPage() {
 
   const loadHistory = useCallback(async (chatId: string, background = false) => {
     if (background) {
-      pendingScrollModeRef.current = keepTimelinePinnedRef.current ? 'bottom' : 'none'
+      const timeline = timelineRef.current
+      const shouldStickToBottom = timeline ? isNearBottom(timeline) : keepTimelinePinnedRef.current
+      keepTimelinePinnedRef.current = shouldStickToBottom
+      pendingScrollModeRef.current = shouldStickToBottom ? 'bottom' : 'none'
     } else {
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
@@ -214,8 +290,27 @@ export function ChatsPage() {
   useEffect(() => {
     setAssistantRun(undefined)
     setAssistantDraft('')
+    setTranslatedDraft('')
     setAssistantNotice(undefined)
+    setComposeNotice(undefined)
+    setAttachmentMenuOpen(false)
   }, [selectedChatId])
+
+  useEffect(() => {
+    if (!attachmentMenuOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (composeAttachmentRef.current?.contains(event.target as Node)) {
+        return
+      }
+      setAttachmentMenuOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [attachmentMenuOpen])
 
   useEffect(() => {
     if (!assistantBusy || !assistantDraftRef.current) {
@@ -390,6 +485,7 @@ export function ChatsPage() {
       const response = await sendChatMessage(selectedChatId, { message_text: content })
       appendOptimisticMessage(response, history.chat, selectedChat)
       setDraftMessage('')
+      setComposeNotice(undefined)
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
       void loadHistory(selectedChatId, true)
@@ -398,6 +494,118 @@ export function ChatsPage() {
       setError(sendError instanceof Error ? sendError.message : '发送消息失败')
     } finally {
       setSending(false)
+    }
+  }
+
+  function handleAttachmentAction(action: AttachmentAction) {
+    setAttachmentMenuOpen(false)
+
+    switch (action) {
+      case 'document':
+        documentInputRef.current?.click()
+        return
+      case 'media':
+        mediaInputRef.current?.click()
+        return
+      case 'camera':
+        cameraInputRef.current?.click()
+        return
+      case 'audio':
+        audioInputRef.current?.click()
+        return
+      default:
+        setComposeNotice(`${getAttachmentActionLabel(action)}入口已就绪，发送能力还需要接后端媒体接口。`)
+    }
+  }
+
+  function handleAttachmentFiles(kind: AttachmentAction, files: FileList | null) {
+    const selected = files?.[0]
+    if (!selected) {
+      return
+    }
+
+    setComposeNotice(`${getAttachmentActionLabel(kind)}已选择：${selected.name}。媒体发送接口还没接入，当前先支持文本发送。`)
+  }
+
+  async function translateMessageToChinese(message: MessageView) {
+    const text = message.text_content?.trim()
+    const accountID = message.account_id || history?.chat.account_id
+    const translationKey = getMessageTranslationKey(message, text)
+    if (!text || !accountID || !translationKey) {
+      return
+    }
+    if (
+      pendingMessageTranslationKeysRef.current.has(translationKey) ||
+      isMessageTranslationLocked(messageTranslations[translationKey])
+    ) {
+      return
+    }
+
+    pendingMessageTranslationKeysRef.current.add(translationKey)
+    setMessageTranslations((current) =>
+      isMessageTranslationLocked(current[translationKey])
+        ? current
+        : {
+            ...current,
+            [translationKey]: { loading: true },
+          },
+    )
+
+    try {
+      const response = await translateText({
+        account_id: accountID,
+        text,
+        target_language: 'zh-CN',
+        target_language_name: '中文',
+      })
+      setMessageTranslations((current) => ({
+        ...current,
+        [translationKey]: { translation: response.translation },
+      }))
+      persistMessageTranslation(translationKey, response.translation)
+
+      if (!isChineseLanguage(response.translation.source_language_code)) {
+        const option = resolveLanguageOption(
+          response.translation.source_language_code,
+          response.translation.source_language_name,
+        )
+        setDraftTargetLanguage(option.code)
+        setDraftTargetLanguageName(option.name)
+      }
+    } catch (translateError) {
+      setMessageTranslations((current) => ({
+        ...current,
+        [translationKey]: {
+          error: translateError instanceof Error ? translateError.message : '翻译失败',
+        },
+      }))
+    } finally {
+      pendingMessageTranslationKeysRef.current.delete(translationKey)
+    }
+  }
+
+  async function translateDraftToTarget() {
+    if (!history || !assistantDraft.trim() || draftTranslationBusy) {
+      return
+    }
+
+    const option = resolveLanguageOption(draftTargetLanguage, draftTargetLanguageName)
+    setDraftTranslationBusy(true)
+    setTranslatedDraft('')
+
+    try {
+      const response = await translateText({
+        account_id: history.chat.account_id,
+        text: assistantDraft.trim(),
+        target_language: option.code,
+        target_language_name: option.name,
+      })
+      setTranslatedDraft(response.translation.translated_text)
+      setAssistantNotice(`已翻译成${option.name}。`)
+    } catch (translateError) {
+      setAssistantNotice(translateError instanceof Error ? translateError.message : '翻译草稿失败')
+    } finally {
+      setDraftTranslationBusy(false)
     }
   }
 
@@ -411,12 +619,15 @@ export function ChatsPage() {
     setError(undefined)
     setAssistantRun(undefined)
     setAssistantDraft('')
+    setTranslatedDraft('')
 
     try {
       await streamGenerateAgentRun(
         {
           chat_id: selectedChatId,
           rule_id: effectiveAssistantRuleId || undefined,
+          context_enabled: assistantContextEnabled,
+          context_message_limit: assistantContextLimit,
         },
         {
           onStart: (run) => {
@@ -450,7 +661,7 @@ export function ChatsPage() {
   }
 
   function handleWriteAssistantDraft() {
-    const content = assistantDraft.trim()
+    const content = getOutboundDraft(assistantDraft, translatedDraft)
     if (!content) {
       return
     }
@@ -460,7 +671,8 @@ export function ChatsPage() {
   }
 
   async function handleSendAssistantDraft() {
-    if (!selectedChatId || !assistantRun || !assistantDraft.trim() || assistantSending) {
+    const outboundDraft = getOutboundDraft(assistantDraft, translatedDraft)
+    if (!selectedChatId || !assistantRun || !outboundDraft || assistantSending) {
       return
     }
 
@@ -470,7 +682,7 @@ export function ChatsPage() {
 
     try {
       const response = await sendAgentRun(assistantRun.id, {
-        message_text: assistantDraft.trim(),
+        message_text: outboundDraft,
       })
       setAssistantRun(response.run)
       setAssistantDraft(response.run.output_draft ?? assistantDraft)
@@ -545,7 +757,8 @@ export function ChatsPage() {
   }
 
   function handleMediaLayoutReady() {
-    if (!keepTimelinePinnedRef.current) {
+    if (!isNearBottom(timelineRef.current)) {
+      keepTimelinePinnedRef.current = false
       return
     }
 
@@ -694,114 +907,128 @@ export function ChatsPage() {
               </div>
 
               <div ref={timelineRef} className="message-timeline whatsapp-message-timeline">
-                {history.messages.map((message) => (
-                  <article
-                    key={message.id}
-                    className={`message-card whatsapp-message-card${message.from_me ? ' own' : ''}`}
-                  >
-                    {!message.from_me ? (
-                      <div className="message-meta">
-                        <strong>{getMessageSenderName(message)}</strong>
+                {history.messages.map((message) => {
+                  const textContent = message.text_content?.trim()
+                  const hasMedia = message.media.length > 0
+
+                  return (
+                    <article
+                      key={message.id}
+                      className={`message-card whatsapp-message-card${message.from_me ? ' own' : ''}${hasMedia ? ' media-message' : ''}`}
+                    >
+                      {!message.from_me ? (
+                        <div className="message-meta">
+                          <strong>{getMessageSenderName(message)}</strong>
+                          <span>{formatDateTime(message.sent_at)}</span>
+                        </div>
+                      ) : null}
+
+                      {hasMedia ? (
+                        <div className="media-block-list">
+                          {message.media.map((media) => renderMediaAttachment(media, handleMediaLayoutReady))}
+                        </div>
+                      ) : null}
+
+                      {textContent ? (
+                        <p className={hasMedia ? 'message-caption' : undefined}>{textContent}</p>
+                      ) : !hasMedia ? (
+                        <p className="message-fallback">{fallbackMessageCopy(message.message_type)}</p>
+                      ) : null}
+
+                      {renderMessageTranslation(
+                        messageTranslations[getMessageTranslationKey(message)],
+                        canOfferMessageTranslation(message)
+                          ? () => void translateMessageToChinese(message)
+                          : undefined,
+                      )}
+
+                      <div className="whatsapp-message-foot">
                         <span>{formatDateTime(message.sent_at)}</span>
+                        {message.from_me ? <span className="whatsapp-message-check">✓✓</span> : null}
                       </div>
-                    ) : null}
-
-                    <p>{message.text_content || fallbackMessageCopy(message.message_type)}</p>
-
-                    {message.media.length > 0 ? (
-                      <div className="media-block-list">
-                        {message.media.map((media) => {
-                          const mediaUrl = getMediaAssetUrl(media.id)
-                          const label = media.file_name || media.media_type
-
-                          if (
-                            (media.media_type === 'image' || media.media_type === 'sticker') &&
-                            media.download_status === 'ready'
-                          ) {
-                            return (
-                              <figure key={media.id} className="media-preview-card">
-                                <img
-                                  className={`media-preview-image${media.media_type === 'sticker' ? ' sticker' : ''}`}
-                                  src={mediaUrl}
-                                  alt={label}
-                                  loading="lazy"
-                                  onLoad={handleMediaLayoutReady}
-                                />
-                                <figcaption>{label}</figcaption>
-                              </figure>
-                            )
-                          }
-
-                          if (media.media_type === 'video' && media.download_status === 'ready') {
-                            return (
-                              <figure key={media.id} className="media-preview-card">
-                                <video
-                                  className="media-preview-video"
-                                  src={mediaUrl}
-                                  controls
-                                  preload="metadata"
-                                  onLoadedMetadata={handleMediaLayoutReady}
-                                />
-                                <figcaption>{label}</figcaption>
-                              </figure>
-                            )
-                          }
-
-                          if (media.media_type === 'audio' && media.download_status === 'ready') {
-                            return (
-                              <figure key={media.id} className="media-preview-card">
-                                <audio
-                                  className="media-preview-audio"
-                                  src={mediaUrl}
-                                  controls
-                                  preload="metadata"
-                                  onLoadedMetadata={handleMediaLayoutReady}
-                                />
-                                <figcaption>{label}</figcaption>
-                              </figure>
-                            )
-                          }
-
-                          if (media.download_status === 'ready') {
-                            return (
-                              <a
-                                key={media.id}
-                                className="media-link"
-                                href={mediaUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                打开附件 · {label}
-                              </a>
-                            )
-                          }
-
-                          return (
-                            <span key={media.id} className={`media-chip status-${media.download_status}`}>
-                              {media.media_type}
-                              {media.file_name ? ` · ${media.file_name}` : ''}
-                              {media.download_status === 'failed' ? ' · 下载失败' : ' · 下载中'}
-                            </span>
-                          )
-                        })}
-                      </div>
-                    ) : null}
-
-                    <div className="whatsapp-message-foot">
-                      <span>{formatDateTime(message.sent_at)}</span>
-                      {message.from_me ? <span className="whatsapp-message-check">✓✓</span> : null}
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  )
+                })}
               </div>
 
               <div className="chat-compose-panel whatsapp-chat-compose">
                 {sendBlockReason ? <div className="warning-banner">{sendBlockReason}</div> : null}
 
                 <div className="whatsapp-chat-compose-shell">
-                  <button className="whatsapp-compose-utility" type="button" aria-label="更多操作">
-                    +
-                  </button>
+                  <div className="whatsapp-compose-attachment" ref={composeAttachmentRef}>
+                    <button
+                      className={`whatsapp-compose-utility${attachmentMenuOpen ? ' active' : ''}`}
+                      type="button"
+                      aria-label="更多操作"
+                      aria-haspopup="menu"
+                      aria-expanded={attachmentMenuOpen}
+                      onClick={() => setAttachmentMenuOpen((current) => !current)}
+                      disabled={!canSendInCurrentChat}
+                    >
+                      +
+                    </button>
+
+                    {attachmentMenuOpen ? (
+                      <div className="whatsapp-attachment-menu" role="menu">
+                        {attachmentActions.map((action) => (
+                          <button
+                            key={action.key}
+                            className="whatsapp-attachment-item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => handleAttachmentAction(action.key)}
+                          >
+                            <span className={`attachment-icon tone-${action.tone}`} aria-hidden="true">
+                              {action.icon}
+                            </span>
+                            <span>{action.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <input
+                      ref={documentInputRef}
+                      className="visually-hidden"
+                      type="file"
+                      onChange={(event) => {
+                        handleAttachmentFiles('document', event.currentTarget.files)
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                    <input
+                      ref={mediaInputRef}
+                      className="visually-hidden"
+                      type="file"
+                      accept="image/*,video/*"
+                      multiple
+                      onChange={(event) => {
+                        handleAttachmentFiles('media', event.currentTarget.files)
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                    <input
+                      ref={cameraInputRef}
+                      className="visually-hidden"
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(event) => {
+                        handleAttachmentFiles('camera', event.currentTarget.files)
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                    <input
+                      ref={audioInputRef}
+                      className="visually-hidden"
+                      type="file"
+                      accept="audio/*"
+                      onChange={(event) => {
+                        handleAttachmentFiles('audio', event.currentTarget.files)
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                  </div>
 
                   <div className="chat-compose-box whatsapp-chat-compose-box">
                     <textarea
@@ -832,6 +1059,7 @@ export function ChatsPage() {
                 <div className="whatsapp-compose-meta">
                   <span className="field-hint">当前会话：{getChatDisplayName(history.chat)}</span>
                 </div>
+                {composeNotice ? <div className="compose-attachment-notice">{composeNotice}</div> : null}
               </div>
             </>
           ) : (
@@ -885,6 +1113,31 @@ export function ChatsPage() {
                   <div className="warning-banner">当前会话没有可用 Agent，请先到智能回复页配置 API。</div>
                 )}
 
+                <div className="assistant-context-controls">
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={assistantContextEnabled}
+                      onChange={(event) => setAssistantContextEnabled(event.target.checked)}
+                    />
+                    <span>携带上下文</span>
+                  </label>
+                  <label className="field compact-field">
+                    <span>历史条数</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={assistantContextLimit}
+                      disabled={!assistantContextEnabled}
+                      onChange={(event) => {
+                        const next = Number(event.target.value)
+                        setAssistantContextLimit(Number.isFinite(next) ? next : 12)
+                      }}
+                    />
+                  </label>
+                </div>
+
                 <button
                   className="secondary-button assistant-action-button"
                   type="button"
@@ -912,6 +1165,44 @@ export function ChatsPage() {
                   placeholder="生成后会出现在这里"
                   rows={7}
                 />
+                <div className="assistant-translation-panel">
+                  <div className="assistant-translation-row">
+                    <label className="field compact-field">
+                      <span>译文语种</span>
+                      <select
+                        value={draftTargetLanguage}
+                        onChange={(event) => {
+                          const option = resolveLanguageOption(event.target.value)
+                          setDraftTargetLanguage(option.code)
+                          setDraftTargetLanguageName(option.name)
+                          setTranslatedDraft('')
+                        }}
+                      >
+                        {languageOptions.map((option) => (
+                          <option key={option.code} value={option.code}>
+                            {option.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="secondary-button assistant-action-button"
+                      type="button"
+                      onClick={() => void translateDraftToTarget()}
+                      disabled={!assistantDraft.trim() || draftTranslationBusy}
+                    >
+                      {draftTranslationBusy ? '翻译中...' : '翻译草稿'}
+                    </button>
+                  </div>
+                  {translatedDraft ? (
+                    <textarea
+                      className="assistant-draft-box assistant-translated-draft"
+                      value={translatedDraft}
+                      onChange={(event) => setTranslatedDraft(event.target.value)}
+                      rows={5}
+                    />
+                  ) : null}
+                </div>
                 {assistantRun?.block_reason ? (
                   <div className="warning-banner">{assistantRun.block_reason}</div>
                 ) : null}
@@ -961,6 +1252,126 @@ export function ChatsPage() {
   )
 }
 
+function renderMessageTranslation(state?: TranslationState, onTranslate?: () => void) {
+  if (state?.translation) {
+    return (
+      <div className="message-translation-box">
+        <span className="message-translation-label">
+          {formatTranslationSourceLabel(state.translation)}
+        </span>
+        <p className="message-translation-text">{state.translation.translated_text}</p>
+      </div>
+    )
+  }
+
+  if (state?.loading) {
+    return <div className="message-translation-box muted">翻译中...</div>
+  }
+
+  if (state?.error) {
+    return (
+      <div className="message-translation-box muted">
+        <span>{state.error}</span>
+        {onTranslate ? (
+          <button className="message-translation-action" type="button" onClick={onTranslate}>
+            重新翻译
+          </button>
+        ) : null}
+      </div>
+    )
+  }
+
+  if (onTranslate) {
+    return (
+      <div className="message-translation-box">
+        <button className="message-translation-action" type="button" onClick={onTranslate}>
+          翻译成中文
+        </button>
+      </div>
+    )
+  }
+
+  return null
+}
+
+function renderMediaAttachment(
+  media: MessageView['media'][number],
+  onMediaLayoutReady: () => void,
+) {
+  const mediaUrl = getMediaAssetUrl(media.id)
+  const label = media.file_name || media.media_type
+
+  if (
+    (media.media_type === 'image' || media.media_type === 'sticker') &&
+    media.download_status === 'ready'
+  ) {
+    return (
+      <figure key={media.id} className={`media-preview-card ${media.media_type}`}>
+        <img
+          className={`media-preview-image${media.media_type === 'sticker' ? ' sticker' : ''}`}
+          src={mediaUrl}
+          alt={label}
+          loading="lazy"
+          onLoad={onMediaLayoutReady}
+        />
+      </figure>
+    )
+  }
+
+  if (media.media_type === 'video' && media.download_status === 'ready') {
+    return (
+      <figure key={media.id} className="media-preview-card video">
+        <video
+          className="media-preview-video"
+          src={mediaUrl}
+          controls
+          preload="metadata"
+          onLoadedMetadata={onMediaLayoutReady}
+        />
+      </figure>
+    )
+  }
+
+  if (media.media_type === 'audio' && media.download_status === 'ready') {
+    return (
+      <figure key={media.id} className="media-preview-card audio">
+        <audio
+          className="media-preview-audio"
+          src={mediaUrl}
+          controls
+          preload="metadata"
+          onLoadedMetadata={onMediaLayoutReady}
+        />
+      </figure>
+    )
+  }
+
+  if (media.download_status === 'ready') {
+    return (
+      <a
+        key={media.id}
+        className="media-document-card"
+        href={mediaUrl}
+        target="_blank"
+        rel="noreferrer"
+      >
+        <span className="media-document-icon" aria-hidden="true">▣</span>
+        <span>
+          <strong>{label}</strong>
+          <small>{media.media_type}</small>
+        </span>
+      </a>
+    )
+  }
+
+  return (
+    <span key={media.id} className={`media-chip status-${media.download_status}`}>
+      {media.file_name || media.media_type}
+      {media.download_status === 'failed' ? ' · 下载失败' : ' · 下载中'}
+    </span>
+  )
+}
+
 function choosePreferredChatId(chats: ChatSummary[], current?: string) {
   if (current && chats.some((chat) => chat.id === current)) {
     return current
@@ -971,7 +1382,15 @@ function choosePreferredChatId(chats: ChatSummary[], current?: string) {
 }
 
 function isRuleUsableInChat(rule: AgentRuleView, chat: ChatHeader) {
+  if (rule.purpose === 'translation') {
+    return false
+  }
   if (rule.reply_mode === 'manual') {
+    return false
+  }
+
+  const boundAccountIds = rule.account_ids ?? [rule.account_id]
+  if (!boundAccountIds.includes(chat.account_id)) {
     return false
   }
 
@@ -1118,6 +1537,180 @@ function isNearBottom(element: HTMLDivElement | null) {
   return distance < 56
 }
 
+function getMessageTranslationKey(message: MessageView, rawText?: string) {
+  const text = (rawText ?? message.text_content ?? '').trim()
+  if (!message.account_id || !message.id || !text) {
+    return ''
+  }
+
+  return `${message.account_id}:${message.id}:${hashText(text)}`
+}
+
+function canOfferMessageTranslation(message: MessageView) {
+  const text = message.text_content?.trim()
+  return Boolean(text && !message.from_me && needsChineseTranslation(text))
+}
+
+function isMessageTranslationLocked(state?: TranslationState) {
+  return Boolean(state?.loading || state?.translation)
+}
+
+function hashText(value: string) {
+  let hash = 5381
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(index)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function loadMessageTranslationCache(): Record<string, TranslationState> {
+  const stored = readStoredMessageTranslationCache()
+  return Object.fromEntries(
+    Object.entries(stored).map(([key, value]) => [key, { translation: value.translation }]),
+  )
+}
+
+function persistMessageTranslation(key: string, translation: TranslationView) {
+  if (!key) {
+    return
+  }
+
+  const stored = readStoredMessageTranslationCache()
+  stored[key] = {
+    cached_at: new Date().toISOString(),
+    translation,
+  }
+
+  writeStoredMessageTranslationCache(trimStoredMessageTranslationCache(stored))
+}
+
+function readStoredMessageTranslationCache(): Record<string, StoredMessageTranslation> {
+  if (typeof window === 'undefined') {
+    return {}
+  }
+
+  try {
+    const raw = window.localStorage.getItem(messageTranslationCacheStorageKey)
+    if (!raw) {
+      return {}
+    }
+    const decoded = JSON.parse(raw)
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+      return {}
+    }
+
+    return Object.fromEntries(
+      Object.entries(decoded).filter((entry): entry is [string, StoredMessageTranslation] => {
+        const value = entry[1]
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          return false
+        }
+        const candidate = value as Partial<StoredMessageTranslation>
+        return Boolean(candidate.cached_at && isTranslationView(candidate.translation))
+      }),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function writeStoredMessageTranslationCache(cache: Record<string, StoredMessageTranslation>) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(messageTranslationCacheStorageKey, JSON.stringify(cache))
+  } catch {
+    // Ignore local cache write failures; translation still renders from in-memory state.
+  }
+}
+
+function trimStoredMessageTranslationCache(cache: Record<string, StoredMessageTranslation>) {
+  const entries = Object.entries(cache)
+  if (entries.length <= messageTranslationCacheLimit) {
+    return cache
+  }
+
+  return Object.fromEntries(
+    entries
+      .sort((left, right) => left[1].cached_at.localeCompare(right[1].cached_at))
+      .slice(-messageTranslationCacheLimit),
+  )
+}
+
+function isTranslationView(value: unknown): value is TranslationView {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const candidate = value as Partial<TranslationView>
+  return typeof candidate.translated_text === 'string'
+}
+
+function formatTranslationSourceLabel(translation: TranslationView) {
+  const code = translation.source_language_code?.trim()
+  const name = getLocalizedLanguageName(code, translation.source_language_name)
+
+  if (code && code.toLowerCase() !== 'unknown') {
+    return `原文语种：${name} (${code}) · 中文翻译`
+  }
+
+  return `原文语种：${name} · 中文翻译`
+}
+
+function getLocalizedLanguageName(code?: string, fallback?: string) {
+  const normalizedCode = code?.trim()
+  if (normalizedCode && normalizedCode.toLowerCase() !== 'unknown') {
+    try {
+      return new Intl.DisplayNames(['zh-CN'], { type: 'language' }).of(normalizedCode) ?? normalizedCode
+    } catch {
+      return fallback?.trim() || normalizedCode
+    }
+  }
+
+  const normalizedFallback = fallback?.trim()
+  if (normalizedFallback && normalizedFallback.toLowerCase() !== 'unknown') {
+    return normalizedFallback
+  }
+
+  return '未识别'
+}
+
+function needsChineseTranslation(text: string) {
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return false
+  }
+  return !/[\u3400-\u9fff]/.test(trimmed)
+}
+
+function isChineseLanguage(languageCode?: string) {
+  return (languageCode ?? '').trim().toLowerCase().startsWith('zh')
+}
+
+function resolveLanguageOption(code?: string, name?: string) {
+  const normalized = (code ?? '').trim().toLowerCase()
+  const exact = languageOptions.find((option) => option.code === normalized)
+  if (exact) {
+    return exact
+  }
+
+  const prefix = languageOptions.find((option) => normalized.startsWith(option.code))
+  if (prefix) {
+    return prefix
+  }
+
+  if (normalized && !isChineseLanguage(normalized)) {
+    return { code: normalized, name: name?.trim() || normalized }
+  }
+
+  return languageOptions[0]
+}
+
+function getOutboundDraft(chineseDraft: string, translatedText: string) {
+  return (translatedText.trim() || chineseDraft.trim())
+}
+
 function formatDateTime(value?: string) {
   if (!value) {
     return '暂无时间'
@@ -1143,6 +1736,10 @@ function getChatAvatarLabel(value?: string) {
   }
 
   return first
+}
+
+function getAttachmentActionLabel(action: AttachmentAction) {
+  return attachmentActions.find((item) => item.key === action)?.label ?? '附件'
 }
 
 function fallbackMessageCopy(messageType?: string) {

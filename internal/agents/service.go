@@ -75,10 +75,20 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 	if err := s.ensureAccountExists(ctx, accountID); err != nil {
 		return RuleView{}, err
 	}
+	accountIDs := normalizeAccountIDs(accountID, input.AccountIDs)
+	for _, boundAccountID := range accountIDs {
+		if err := s.ensureAccountExists(ctx, boundAccountID); err != nil {
+			return RuleView{}, err
+		}
+	}
 
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return RuleView{}, fmt.Errorf("name is required")
+	}
+	purpose := normalizeAgentPurpose(input.Purpose)
+	if purpose == "" {
+		return RuleView{}, fmt.Errorf("unsupported purpose %q", input.Purpose)
 	}
 
 	replyMode := normalizeReplyMode(input.ReplyMode)
@@ -99,6 +109,9 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 	providerConfig, err := normalizeProviderConfig(input.ProviderConfig)
 	if err != nil {
 		return RuleView{}, err
+	}
+	if purpose == AgentPurposeTranslation && normalizeProviderType(anyString(providerConfig["type"])) != "openai_compatible" {
+		return RuleView{}, fmt.Errorf("translation agent requires provider_config.type openai_compatible")
 	}
 
 	promptTemplate := strings.TrimSpace(input.PromptTemplate)
@@ -129,6 +142,8 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 		rule := AgentRule{
 			ID:                      ids.NewUUID(),
 			AccountID:               accountID,
+			AccountIDs:              accountIDs,
+			Purpose:                 purpose,
 			Name:                    name,
 			Enabled:                 enabled,
 			ScopeFilter:             scopeFilter,
@@ -168,6 +183,8 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 	rule := AgentRule{
 		ID:                      existing.ID,
 		AccountID:               accountID,
+		AccountIDs:              accountIDs,
+		Purpose:                 purpose,
 		Name:                    name,
 		Enabled:                 enabled,
 		ScopeFilter:             scopeFilter,
@@ -385,6 +402,41 @@ func normalizeReplyMode(value ReplyMode) ReplyMode {
 	default:
 		return ""
 	}
+}
+
+func normalizeAgentPurpose(value AgentPurpose) AgentPurpose {
+	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case "", string(AgentPurposeReply):
+		return AgentPurposeReply
+	case string(AgentPurposeTranslation):
+		return AgentPurposeTranslation
+	default:
+		return ""
+	}
+}
+
+func normalizeAccountIDs(primary string, values []string) []string {
+	result := make([]string, 0, len(values)+1)
+	seen := make(map[string]struct{}, len(values)+1)
+
+	add := func(value string) {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return
+		}
+		if _, exists := seen[trimmed]; exists {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+
+	add(primary)
+	for _, value := range values {
+		add(value)
+	}
+
+	return result
 }
 
 func normalizeRunStatus(value RunStatus) RunStatus {

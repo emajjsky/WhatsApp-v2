@@ -201,6 +201,7 @@ export interface LiveUpdate {
 
 export type AgentReplyMode = 'manual' | 'suggest' | 'auto_send'
 export type AgentMatchMode = 'any' | 'all'
+export type AgentPurpose = 'reply' | 'translation'
 export type AgentRunStatus =
   | 'queued'
   | 'generating'
@@ -236,6 +237,8 @@ export type AgentProviderConfig = Record<string, unknown>
 export interface AgentRuleView {
   id: string
   account_id: string
+  account_ids: string[]
+  purpose: AgentPurpose
   name: string
   enabled: boolean
   scope_filter: AgentScopeFilter
@@ -308,6 +311,8 @@ export interface AuditListResponse {
 export interface UpsertAgentRulePayload {
   id?: string
   account_id: string
+  account_ids?: string[]
+  purpose?: AgentPurpose
   name: string
   enabled: boolean
   scope_filter: AgentScopeFilter
@@ -334,6 +339,8 @@ export interface GenerateAgentRunPayload {
   chat_id: string
   rule_id?: string
   message_text?: string
+  context_enabled?: boolean
+  context_message_limit?: number
 }
 
 export interface AgentRunStreamHandlers {
@@ -341,6 +348,21 @@ export interface AgentRunStreamHandlers {
   onDelta?: (text: string) => void
   onComplete?: (run: AgentRunView) => void
   onError?: (message: string, run?: AgentRunView) => void
+}
+
+export interface TranslateTextPayload {
+  account_id: string
+  text: string
+  target_language: string
+  target_language_name?: string
+}
+
+export interface TranslationView {
+  source_language_code: string
+  source_language_name: string
+  target_language: string
+  target_language_name: string
+  translated_text: string
 }
 
 export interface CreateAccountPayload {
@@ -753,6 +775,13 @@ export async function streamGenerateAgentRun(
   if (streamError) {
     throw streamError
   }
+}
+
+export async function translateText(payload: TranslateTextPayload) {
+  return request<{ translation: TranslationView }>('/api/agent-translations', {
+    method: 'POST',
+    jsonBody: payload,
+  })
 }
 
 export async function sendAgentRun(runId: string, payload?: { message_text?: string }) {

@@ -13,6 +13,13 @@ const (
 	ReplyModeAutoSend ReplyMode = "auto_send"
 )
 
+type AgentPurpose string
+
+const (
+	AgentPurposeReply       AgentPurpose = "reply"
+	AgentPurposeTranslation AgentPurpose = "translation"
+)
+
 type MatchMode string
 
 const (
@@ -45,6 +52,8 @@ type KnowledgeBinding struct {
 type AgentRule struct {
 	ID                      string
 	AccountID               string
+	AccountIDs              []string
+	Purpose                 AgentPurpose
 	Name                    string
 	Enabled                 bool
 	ScopeFilter             ScopeFilter
@@ -63,6 +72,8 @@ type AgentRule struct {
 type RuleView struct {
 	ID                      string            `json:"id"`
 	AccountID               string            `json:"account_id"`
+	AccountIDs              []string          `json:"account_ids"`
+	Purpose                 AgentPurpose      `json:"purpose"`
 	Name                    string            `json:"name"`
 	Enabled                 bool              `json:"enabled"`
 	ScopeFilter             ScopeFilter       `json:"scope_filter"`
@@ -81,6 +92,8 @@ type RuleView struct {
 type UpsertRuleInput struct {
 	ID                      string            `json:"id,omitempty"`
 	AccountID               string            `json:"account_id"`
+	AccountIDs              []string          `json:"account_ids,omitempty"`
+	Purpose                 AgentPurpose      `json:"purpose,omitempty"`
 	Name                    string            `json:"name"`
 	Enabled                 bool              `json:"enabled"`
 	ScopeFilter             ScopeFilter       `json:"scope_filter"`
@@ -201,6 +214,8 @@ func mapRuleToView(rule AgentRule) RuleView {
 	view := RuleView{
 		ID:                      rule.ID,
 		AccountID:               rule.AccountID,
+		AccountIDs:              rule.AccountIDs,
+		Purpose:                 rule.Purpose,
 		Name:                    rule.Name,
 		Enabled:                 rule.Enabled,
 		ScopeFilter:             rule.ScopeFilter,
@@ -218,6 +233,9 @@ func mapRuleToView(rule AgentRule) RuleView {
 
 	if view.ScopeFilter.ChatIDs == nil {
 		view.ScopeFilter.ChatIDs = make([]string, 0)
+	}
+	if view.AccountIDs == nil {
+		view.AccountIDs = []string{view.AccountID}
 	}
 	if view.ScopeFilter.ChatTypes == nil {
 		view.ScopeFilter.ChatTypes = make([]string, 0)
