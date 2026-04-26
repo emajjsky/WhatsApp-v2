@@ -35,6 +35,7 @@
 
 html {
   font-family: var(--sans);
+  font-size: 14px;
   color: var(--text);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -63,7 +64,7 @@ button,
 input,
 select,
 textarea {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 button {
@@ -90,14 +91,14 @@ a {
   min-height: 100vh;
   height: 100vh;
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  gap: 18px;
-  padding: 18px;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
   overflow: hidden;
 }
 
 .app-shell-chat-mode {
-  grid-template-columns: 84px minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr);
   gap: 0;
   padding: 0;
   background: #efeae2;
@@ -106,10 +107,10 @@ a {
 .sidebar {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 16px;
-  min-height: calc(100vh - 36px);
+  gap: 12px;
+  min-height: calc(100vh - 24px);
   position: sticky;
-  top: 18px;
+  top: 12px;
   align-self: start;
 }
 
@@ -118,10 +119,10 @@ a {
   height: 100vh;
   position: static;
   top: auto;
-  padding: 14px 10px;
+  padding: 10px 8px;
   border-right: 1px solid rgba(17, 27, 33, 0.08);
   background: #f7f9fa;
-  gap: 12px;
+  gap: 10px;
 }
 
 .brand-card,
@@ -140,7 +141,7 @@ a {
 .sidebar-note,
 .panel,
 .empty-panel {
-  padding: 22px;
+  padding: 16px;
 }
 
 .brand-card {
@@ -148,13 +149,13 @@ a {
 }
 
 .brand-card-chat-mode {
-  padding: 12px 10px;
-  border-radius: 20px;
+  padding: 10px 8px;
+  border-radius: 16px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 250, 249, 0.92));
 }
 
 .brand-card-chat-mode h1 {
-  font-size: 22px;
+  font-size: 18px;
   margin-bottom: 0;
 }
 
@@ -174,18 +175,18 @@ a {
 }
 
 .brand-card h1 {
-  font-size: 34px;
-  margin-bottom: 10px;
+  font-size: 28px;
+  margin-bottom: 8px;
 }
 
 .panel h3,
 .empty-panel h3 {
-  font-size: clamp(22px, 2.1vw, 30px);
+  font-size: clamp(20px, 1.7vw, 26px);
 }
 
 .detail-card h4,
 .pairing-card h4 {
-  font-size: 22px;
+  font-size: 19px;
 }
 
 .brand-copy,
@@ -346,7 +347,7 @@ a {
 }
 
 .whatsapp-chat-page {
-  padding: 14px;
+  padding: 10px;
 }
 
 .page-exports {
@@ -789,8 +790,8 @@ a {
 
 .chat-frame {
   display: grid;
-  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr) minmax(280px, 340px);
-  gap: 16px;
+  grid-template-columns: minmax(280px, 330px) minmax(0, 1fr) minmax(250px, 300px);
+  gap: 10px;
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -798,7 +799,7 @@ a {
 }
 
 .whatsapp-chat-frame {
-  gap: 12px;
+  gap: 10px;
 }
 
 .chat-sidebar-panel,
@@ -834,11 +835,11 @@ a {
 }
 
 .whatsapp-chat-sidebar {
-  border-radius: 18px;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.94);
   border-color: rgba(17, 27, 33, 0.08);
   box-shadow: 0 8px 28px rgba(15, 20, 18, 0.06);
-  padding: 14px;
+  padding: 10px;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 12px;
@@ -848,19 +849,19 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .whatsapp-chat-sidebar-header h2 {
   margin: 0;
   font-family: var(--display);
-  font-size: 34px;
+  font-size: 26px;
   line-height: 1;
   letter-spacing: -0.04em;
 }
 
 .whatsapp-chat-sidebar-header p {
-  margin: 8px 0 0;
+  margin: 5px 0 0;
   color: var(--text-soft);
 }
 
@@ -872,13 +873,13 @@ a {
   background: #f0f2f5;
   border-color: transparent;
   border-radius: 999px;
-  padding: 13px 18px;
+  padding: 9px 14px;
 }
 
 .whatsapp-chat-filter-bar {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .whatsapp-chat-filter-bar .field span {
@@ -888,7 +889,7 @@ a {
 .whatsapp-chat-filter-bar .field select {
   background: #fff;
   border-radius: 999px;
-  padding: 11px 14px;
+  padding: 8px 12px;
 }
 
 .whatsapp-chat-list-scroll {
@@ -901,11 +902,11 @@ a {
 
 .whatsapp-chat-row {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
-  padding: 14px 12px;
-  border-radius: 18px;
+  padding: 10px;
+  border-radius: 14px;
   border-color: transparent;
   background: transparent;
   box-shadow: none;
@@ -922,8 +923,8 @@ a {
 }
 
 .whatsapp-chat-avatar {
-  width: 52px;
-  height: 52px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -931,7 +932,7 @@ a {
   background: linear-gradient(180deg, #d9fdd3, #e7fce4);
   color: #125c3b;
   font-weight: 800;
-  font-size: 20px;
+  font-size: 17px;
   letter-spacing: -0.03em;
 }
 
@@ -944,7 +945,7 @@ a {
 .whatsapp-chat-row-content {
   min-width: 0;
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .whatsapp-chat-row-header {
@@ -952,7 +953,7 @@ a {
 }
 
 .whatsapp-chat-row-header strong {
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -964,7 +965,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .whatsapp-chat-row-meta p {
@@ -1578,7 +1579,7 @@ a {
 
 .whatsapp-chat-main {
   padding: 0;
-  border-radius: 20px;
+  border-radius: 14px;
   background:
     linear-gradient(180deg, rgba(239, 234, 226, 0.96), rgba(239, 234, 226, 0.98));
   border-color: rgba(17, 27, 33, 0.08);
@@ -1588,7 +1589,7 @@ a {
 }
 
 .whatsapp-chat-stage-header {
-  padding: 14px 18px;
+  padding: 10px 14px;
   background: #f0f2f5;
   border-bottom: 1px solid rgba(17, 27, 33, 0.08);
   align-items: center;
@@ -1597,26 +1598,26 @@ a {
 .whatsapp-chat-contact {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .whatsapp-chat-contact h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   letter-spacing: -0.02em;
 }
 
 .whatsapp-chat-contact p {
   margin: 2px 0 0;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .whatsapp-chat-stage-meta {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  font-size: 13px;
+  gap: 8px;
+  font-size: 12px;
 }
 
 .whatsapp-history-toolbar {
@@ -1674,8 +1675,8 @@ a {
 }
 
 .whatsapp-chat-compose {
-  gap: 8px;
-  padding: 12px 14px 14px;
+  gap: 6px;
+  padding: 8px 10px 10px;
   border-top: 1px solid rgba(17, 27, 33, 0.08);
   background: rgba(240, 242, 245, 0.96);
 }
@@ -1683,10 +1684,10 @@ a {
 .whatsapp-chat-compose-shell {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  padding: 8px 10px;
-  border-radius: 22px;
+  padding: 6px 8px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 8px 20px rgba(15, 20, 18, 0.06);
 }
@@ -1714,10 +1715,10 @@ a {
 .whatsapp-attachment-menu {
   position: absolute;
   left: 0;
-  bottom: calc(100% + 12px);
+  bottom: calc(100% + 8px);
   z-index: 30;
-  width: 210px;
-  padding: 10px;
+  width: 178px;
+  padding: 8px;
   border: 1px solid rgba(17, 27, 33, 0.08);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.98);
@@ -1729,8 +1730,8 @@ a {
 .whatsapp-attachment-item {
   width: 100%;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
   border: none;
   border-radius: 10px;
@@ -1747,8 +1748,8 @@ a {
 }
 
 .attachment-icon {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1798,12 +1799,12 @@ a {
 }
 
 .whatsapp-chat-compose-box textarea {
-  min-height: 44px;
-  max-height: 108px;
-  border-radius: 18px;
+  min-height: 38px;
+  max-height: 92px;
+  border-radius: 16px;
   border: none;
   background: transparent;
-  padding: 10px 8px;
+  padding: 8px 6px;
   box-shadow: none;
 }
 
@@ -1863,11 +1864,11 @@ a {
 }
 
 .whatsapp-chat-assistant {
-  border-radius: 20px;
+  border-radius: 14px;
   background: linear-gradient(180deg, #fbfcfc, #f7f9f8);
   border-color: rgba(17, 27, 33, 0.08);
   box-shadow: 0 10px 28px rgba(15, 20, 18, 0.05);
-  padding: 12px;
+  padding: 10px;
 }
 
 .whatsapp-assistant-header {
@@ -2126,18 +2127,19 @@ a {
 }
 
 .whatsapp-message-card {
-  max-width: min(68%, 640px);
+  max-width: min(70%, 560px);
   border-radius: 12px;
   border-color: rgba(17, 27, 33, 0.06);
   background: #fff;
   box-shadow: 0 1px 0 rgba(17, 27, 33, 0.05);
-  padding: 12px 14px;
+  padding: 9px 11px;
 }
 
 .whatsapp-message-card.media-message {
-  max-width: min(62%, 420px);
-  padding: 6px;
-  overflow: hidden;
+  width: fit-content;
+  max-width: min(76%, 390px);
+  padding: 4px;
+  overflow: visible;
 }
 
 .whatsapp-message-card.media-message .message-meta {
@@ -2175,6 +2177,8 @@ a {
   display: grid;
   gap: 6px;
   margin: 0;
+  width: min(360px, calc(100vw - 96px));
+  max-width: 100%;
 }
 
 .media-chip {
@@ -2194,7 +2198,9 @@ a {
   border-radius: 10px;
   border: none;
   background: transparent;
-  display: grid;
+  display: block;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
 }
 
@@ -2205,9 +2211,10 @@ a {
 
 .media-preview-image,
 .media-preview-video {
-  width: min(100%, 408px);
+  width: 100%;
+  max-width: 360px;
   max-height: 320px;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: 10px;
   background: #efeae2;
   display: block;
@@ -2221,17 +2228,18 @@ a {
 }
 
 .media-preview-audio {
-  width: min(100%, 320px);
-  min-width: 260px;
+  width: min(100%, 300px);
+  min-width: min(240px, 100%);
 }
 
 .media-document-card {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 9px;
   align-items: center;
-  min-width: min(320px, 100%);
-  padding: 10px;
+  width: min(320px, calc(100vw - 96px));
+  max-width: 100%;
+  padding: 8px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.74);
   color: var(--text);
@@ -2252,8 +2260,8 @@ a {
 }
 
 .media-document-icon {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2619,9 +2627,1093 @@ a {
   border-color: var(--line);
 }
 
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+
+@media (min-width: 1101px) {
+  html {
+    font-size: 12px;
+  }
+
+  body,
+  button,
+  input,
+  select,
+  textarea {
+    font-size: 12px;
+  }
+
+  .app-shell {
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .app-shell-chat-mode {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .workspace {
+    height: calc(100vh - 16px);
+  }
+
+  .app-shell-chat-mode .workspace {
+    height: 100vh;
+    background:
+      linear-gradient(180deg, #f0f2f5 0, #f0f2f5 96px, #efeae2 96px, #efeae2 100%);
+  }
+
+  .sidebar {
+    gap: 8px;
+    min-height: calc(100vh - 16px);
+    top: 8px;
+  }
+
+  .sidebar-chat-mode {
+    padding: 8px 6px;
+    gap: 8px;
+  }
+
+  .brand-card,
+  .nav-list,
+  .sidebar-note,
+  .panel,
+  .empty-panel {
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .brand-card h1 {
+    font-size: 22px;
+    margin-bottom: 6px;
+  }
+
+  .brand-card-chat-mode h1 {
+    font-size: 14px;
+  }
+
+  .brand-copy,
+  .subtle-text,
+  .panel p,
+  .empty-panel p,
+  .helper-card p,
+  .chat-row p,
+  .selected-chat-card p,
+  .format-hint-card p {
+    line-height: 1.45;
+  }
+
+  .nav-list {
+    gap: 6px;
+  }
+
+  .nav-link {
+    gap: 2px;
+    padding: 9px 10px;
+    border-radius: 12px;
+  }
+
+  .nav-list-chat-mode .nav-link {
+    gap: 3px;
+    padding: 7px 4px;
+    border-radius: 11px;
+  }
+
+  .page-accounts,
+  .page-chats,
+  .page-exports,
+  .page-agents,
+  .page-top-grid,
+  .export-top-grid,
+  .agent-settings-panel,
+  .agent-provider-fields,
+  .form-grid,
+  .detail-stack,
+  .dropdown-stack {
+    gap: 10px;
+  }
+
+  .accounts-top-grid {
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  }
+
+  .account-detail-workbench {
+    grid-template-columns: minmax(330px, 0.9fr) minmax(280px, 1.1fr);
+    gap: 10px;
+  }
+
+  .export-top-grid {
+    grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.82fr);
+  }
+
+  .panel-heading {
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .page-accounts .panel h3,
+  .page-exports .panel h3,
+  .page-agents .panel h3,
+  .panel h3,
+  .empty-panel h3 {
+    font-size: clamp(18px, 1.35vw, 22px);
+  }
+
+  .eyebrow,
+  .field span,
+  .field-hint,
+  .status-badge,
+  .toolbar-chip,
+  .message-meta,
+  .whatsapp-message-foot {
+    font-size: 10px;
+  }
+
+  .field {
+    gap: 5px;
+  }
+
+  .field input,
+  .field select,
+  .field textarea,
+  .dropdown-trigger {
+    padding: 9px 11px;
+    border-radius: 11px;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .danger-button {
+    min-height: 32px;
+    padding: 7px 12px;
+  }
+
+  .warning-banner,
+  .success-banner,
+  .error-banner {
+    padding: 10px 12px;
+    border-radius: 12px;
+  }
+
+  .account-card-grid {
+    grid-auto-columns: minmax(220px, 260px);
+    gap: 10px;
+  }
+
+  .account-card {
+    min-height: 136px;
+    padding: 12px;
+  }
+
+  .chat-frame {
+    grid-template-columns: minmax(220px, 265px) minmax(0, 1fr) minmax(205px, 250px);
+    gap: 6px;
+  }
+
+  .whatsapp-chat-page {
+    padding: 6px;
+  }
+
+  .whatsapp-chat-sidebar {
+    gap: 7px;
+    padding: 7px;
+    border-radius: 11px;
+  }
+
+  .whatsapp-chat-sidebar-header h2 {
+    font-size: 21px;
+  }
+
+  .whatsapp-chat-sidebar-header p {
+    margin-top: 3px;
+  }
+
+  .whatsapp-chat-search-field input {
+    padding: 7px 10px;
+  }
+
+  .whatsapp-chat-filter-bar {
+    gap: 5px;
+  }
+
+  .whatsapp-chat-filter-bar .field select {
+    padding: 6px 8px;
+  }
+
+  .chat-list-scroll,
+  .assistant-panel-body,
+  .message-timeline,
+  .rule-list,
+  .agent-monitor-body,
+  .run-list,
+  .grouped-chat-scroll,
+  .page-agents {
+    padding-right: 0;
+    scrollbar-gutter: auto;
+  }
+
+  .chat-list-scroll,
+  .whatsapp-chat-list-scroll {
+    overflow-x: hidden;
+  }
+
+  .whatsapp-chat-list {
+    gap: 4px;
+  }
+
+  .whatsapp-chat-row {
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 7px;
+    padding: 7px;
+    border-radius: 10px;
+  }
+
+  .whatsapp-chat-avatar,
+  .whatsapp-chat-avatar.large {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+  }
+
+  .whatsapp-chat-row-header strong {
+    font-size: 12px;
+  }
+
+  .whatsapp-chat-row-content {
+    gap: 2px;
+  }
+
+  .whatsapp-chat-row-meta {
+    gap: 6px;
+  }
+
+  .whatsapp-chat-row-meta p,
+  .whatsapp-chat-row-header small,
+  .whatsapp-chat-contact p,
+  .whatsapp-chat-stage-meta {
+    font-size: 10px;
+  }
+
+  .whatsapp-chat-main,
+  .whatsapp-chat-assistant {
+    border-radius: 11px;
+  }
+
+  .whatsapp-chat-stage-header {
+    padding: 7px 10px;
+  }
+
+  .whatsapp-chat-contact {
+    gap: 7px;
+  }
+
+  .whatsapp-chat-contact h3 {
+    font-size: 13px;
+  }
+
+  .whatsapp-history-toolbar {
+    min-height: 34px;
+  }
+
+  .whatsapp-message-timeline {
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .message-card,
+  .whatsapp-message-card {
+    max-width: min(70%, 500px);
+    padding: 7px 9px;
+    border-radius: 10px;
+  }
+
+  .message-card p {
+    line-height: 1.45;
+  }
+
+  .whatsapp-message-card.media-message {
+    max-width: min(72%, 330px);
+    padding: 3px;
+  }
+
+  .media-block-list {
+    width: min(315px, calc(100vw - 90px));
+    gap: 4px;
+  }
+
+  .media-preview-image,
+  .media-preview-video {
+    max-width: 315px;
+    max-height: 250px;
+  }
+
+  .media-preview-audio {
+    width: min(100%, 260px);
+    min-width: min(210px, 100%);
+  }
+
+  .media-document-card {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 7px;
+    width: min(280px, calc(100vw - 90px));
+    padding: 7px;
+  }
+
+  .media-document-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .whatsapp-chat-compose {
+    gap: 4px;
+    padding: 6px 7px;
+  }
+
+  .whatsapp-chat-compose-shell {
+    gap: 5px;
+    padding: 4px 6px;
+    border-radius: 13px;
+  }
+
+  .whatsapp-compose-utility {
+    width: 30px;
+    height: 30px;
+  }
+
+  .whatsapp-chat-compose-box textarea {
+    min-height: 30px;
+    max-height: 70px;
+    padding: 5px;
+  }
+
+  .whatsapp-send-button {
+    min-width: 58px;
+    min-height: 30px;
+  }
+
+  .whatsapp-attachment-menu {
+    width: 150px;
+    padding: 6px;
+  }
+
+  .whatsapp-attachment-item {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 7px;
+    padding: 7px;
+  }
+
+  .attachment-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .whatsapp-chat-assistant {
+    padding: 7px;
+  }
+
+  .whatsapp-assistant-header,
+  .assistant-panel-body,
+  .assistant-card,
+  .assistant-chip-row,
+  .assistant-translation-panel {
+    gap: 7px;
+  }
+
+  .assistant-card {
+    padding: 9px;
+    border-radius: 10px;
+  }
+
+  .assistant-action-button {
+    min-height: 30px;
+    padding: 7px 9px;
+  }
+
+  .assistant-context-controls,
+  .assistant-translation-row {
+    grid-template-columns: minmax(0, 1fr) minmax(78px, 112px);
+    gap: 6px;
+  }
+
+  .assistant-draft-box {
+    min-height: 84px;
+    padding: 8px 9px;
+  }
+
+  .assistant-translated-draft {
+    min-height: 74px;
+  }
+
+  .agent-config-layout {
+    grid-template-columns: minmax(230px, 285px) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .agent-workbench {
+    grid-template-columns: minmax(220px, 270px) minmax(0, 1fr) minmax(240px, 295px);
+    gap: 10px;
+  }
+
+  .agent-overview-strip,
+  .agent-provider-tabs,
+  .export-form-grid {
+    gap: 8px;
+  }
+
+  .agent-overview-card {
+    padding: 10px 12px;
+    gap: 5px;
+  }
+
+  .agent-overview-card strong {
+    font-size: 20px;
+  }
+
+  .rule-card-button,
+  .mode-card,
+  .agent-provider-tab,
+  .dropdown-option {
+    padding: 10px;
+    border-radius: 11px;
+  }
+
+  .agent-provider-tab {
+    min-height: 56px;
+  }
+
+  .agent-provider-tab strong {
+    font-size: 13px;
+  }
+
+  .agent-provider-tab span {
+    font-size: 10px;
+  }
+
+  .rule-list,
+  .run-list,
+  .agent-monitor-body {
+    gap: 8px;
+  }
+
+  .export-builder-panel {
+    overflow: auto;
+  }
+
+  .export-jobs-panel-side {
+    gap: 9px;
+  }
+
+  .job-toolbar {
+    gap: 8px;
+  }
+
+  .job-list-header,
+  .job-list-row {
+    min-width: 0;
+  }
+
+  .job-list-header {
+    display: none;
+  }
+
+  .job-list-row {
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    grid-template-rows: repeat(3, auto);
+    gap: 2px 8px;
+    padding: 8px 10px;
+  }
+
+  .job-list-row > * {
+    min-width: 0;
+  }
+
+  .job-list-row > :nth-child(1) {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    align-self: center;
+  }
+
+  .job-list-row > :nth-child(2) {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .job-list-row > :nth-child(3) {
+    grid-column: 2;
+    grid-row: 2;
+    color: var(--text-soft);
+  }
+
+  .job-list-row > :nth-child(4) {
+    grid-column: 2;
+    grid-row: 3;
+    font-weight: 700;
+  }
+
+  .job-list-row > :nth-child(5),
+  .job-list-row > :nth-child(6),
+  .job-list-row > :nth-child(7) {
+    grid-column: 3;
+    justify-self: end;
+  }
+
+  .job-list-row > :nth-child(5) {
+    grid-row: 1;
+  }
+
+  .job-list-row > :nth-child(6) {
+    grid-row: 2;
+  }
+
+  .job-list-row > :nth-child(7) {
+    grid-row: 3;
+  }
+
+  .status-badge {
+    min-height: 22px;
+    padding: 3px 8px;
+  }
+
+  html {
+    font-size: 11px;
+  }
+
+  body,
+  button,
+  input,
+  select,
+  textarea {
+    font-size: 11px;
+  }
+
+  .app-shell {
+    grid-template-columns: 184px minmax(0, 1fr);
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .app-shell-chat-mode {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .workspace {
+    height: calc(100vh - 12px);
+  }
+
+  .sidebar {
+    gap: 6px;
+    min-height: calc(100vh - 12px);
+    top: 6px;
+  }
+
+  .sidebar-chat-mode {
+    gap: 5px;
+    padding: 6px 4px;
+  }
+
+  .brand-card,
+  .nav-list,
+  .sidebar-note,
+  .panel,
+  .empty-panel {
+    padding: 9px;
+    border-radius: 11px;
+  }
+
+  .brand-card h1 {
+    font-size: 20px;
+    margin-bottom: 4px;
+  }
+
+  .brand-copy,
+  .subtle-text,
+  .panel p,
+  .empty-panel p,
+  .helper-card p,
+  .chat-row p,
+  .selected-chat-card p,
+  .format-hint-card p,
+  .nav-hint {
+    line-height: 1.36;
+  }
+
+  .eyebrow {
+    margin-bottom: 5px;
+    font-size: 9px;
+  }
+
+  .nav-list {
+    gap: 5px;
+  }
+
+  .nav-link {
+    gap: 2px;
+    padding: 7px 8px;
+    border-radius: 10px;
+  }
+
+  .nav-list-chat-mode .nav-link {
+    padding: 6px 3px;
+    border-radius: 9px;
+  }
+
+  .nav-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 10px;
+    font-size: 11px;
+  }
+
+  .nav-title {
+    font-size: 14px;
+  }
+
+  .nav-hint {
+    font-size: 10px;
+  }
+
+  .step-list,
+  .plain-list {
+    line-height: 1.5;
+    padding-left: 14px;
+  }
+
+  .step-list li + li,
+  .plain-list li + li {
+    margin-top: 5px;
+  }
+
+  .page-accounts,
+  .page-chats,
+  .page-exports,
+  .page-agents,
+  .page-top-grid,
+  .export-top-grid,
+  .agent-settings-panel,
+  .agent-provider-fields,
+  .form-grid,
+  .detail-stack,
+  .dropdown-stack {
+    gap: 7px;
+  }
+
+  .panel-heading {
+    gap: 6px;
+    margin-bottom: 7px;
+  }
+
+  .page-accounts .panel h3,
+  .page-exports .panel h3,
+  .page-agents .panel h3,
+  .panel h3,
+  .empty-panel h3 {
+    font-size: clamp(16px, 1.05vw, 19px);
+  }
+
+  .field {
+    gap: 3px;
+  }
+
+  .field input,
+  .field select,
+  .field textarea,
+  .dropdown-trigger {
+    padding: 7px 9px;
+    border-radius: 9px;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .danger-button {
+    min-height: 28px;
+    padding: 5px 10px;
+    border-radius: 999px;
+  }
+
+  .warning-banner,
+  .success-banner,
+  .error-banner {
+    padding: 8px 10px;
+    border-radius: 10px;
+  }
+
+  .accounts-top-grid {
+    grid-template-columns: minmax(270px, 320px) minmax(0, 1fr);
+  }
+
+  .account-detail-workbench {
+    grid-template-columns: minmax(270px, 0.82fr) minmax(250px, 1.18fr);
+    gap: 7px;
+  }
+
+  .account-card-grid {
+    grid-auto-columns: minmax(190px, 225px);
+    gap: 7px;
+  }
+
+  .account-card {
+    min-height: 112px;
+    padding: 9px;
+    border-radius: 10px;
+  }
+
+  .export-top-grid {
+    grid-template-columns: minmax(0, 1.34fr) minmax(260px, 0.72fr);
+  }
+
+  .chat-frame {
+    grid-template-columns: minmax(188px, 228px) minmax(0, 1fr) minmax(180px, 220px);
+    gap: 4px;
+  }
+
+  .whatsapp-chat-page {
+    padding: 4px;
+  }
+
+  .whatsapp-chat-sidebar {
+    gap: 5px;
+    padding: 5px;
+    border-radius: 9px;
+  }
+
+  .whatsapp-chat-sidebar-header h2 {
+    font-size: 18px;
+  }
+
+  .whatsapp-chat-sidebar-header p {
+    margin-top: 2px;
+  }
+
+  .whatsapp-chat-search-field input {
+    padding: 6px 8px;
+  }
+
+  .whatsapp-chat-filter-bar {
+    gap: 4px;
+  }
+
+  .whatsapp-chat-filter-bar .field select {
+    padding: 5px 7px;
+  }
+
+  .whatsapp-chat-row {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 6px;
+    padding: 5px;
+    border-radius: 8px;
+  }
+
+  .whatsapp-chat-avatar,
+  .whatsapp-chat-avatar.large {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+
+  .whatsapp-chat-row-header strong {
+    font-size: 11px;
+  }
+
+  .whatsapp-chat-row-meta p,
+  .whatsapp-chat-row-header small,
+  .whatsapp-chat-contact p,
+  .whatsapp-chat-stage-meta,
+  .message-meta,
+  .whatsapp-message-foot {
+    font-size: 9px;
+  }
+
+  .whatsapp-chat-main,
+  .whatsapp-chat-assistant {
+    border-radius: 9px;
+  }
+
+  .whatsapp-chat-stage-header {
+    padding: 5px 8px;
+  }
+
+  .whatsapp-chat-contact {
+    gap: 6px;
+  }
+
+  .whatsapp-chat-contact h3 {
+    font-size: 12px;
+  }
+
+  .whatsapp-history-toolbar {
+    min-height: 28px;
+    padding: 4px 10px 0;
+  }
+
+  .whatsapp-message-timeline {
+    gap: 5px;
+    padding: 6px 8px;
+  }
+
+  .message-card,
+  .whatsapp-message-card {
+    max-width: min(70%, 440px);
+    padding: 6px 8px;
+    border-radius: 8px;
+  }
+
+  .message-card p,
+  .whatsapp-message-card p {
+    line-height: 1.36;
+  }
+
+  .whatsapp-message-card.media-message {
+    max-width: min(72%, 292px);
+    padding: 2px;
+  }
+
+  .media-block-list {
+    width: min(280px, calc(100vw - 82px));
+  }
+
+  .media-preview-image,
+  .media-preview-video {
+    max-width: 280px;
+    max-height: 220px;
+  }
+
+  .media-preview-audio {
+    width: min(100%, 230px);
+    min-width: min(190px, 100%);
+  }
+
+  .media-document-card {
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 6px;
+    width: min(250px, calc(100vw - 82px));
+    padding: 6px;
+  }
+
+  .media-document-icon {
+    width: 26px;
+    height: 26px;
+  }
+
+  .whatsapp-chat-compose {
+    gap: 3px;
+    padding: 4px 5px;
+  }
+
+  .whatsapp-chat-compose-shell {
+    gap: 4px;
+    padding: 3px 5px;
+    border-radius: 11px;
+  }
+
+  .whatsapp-compose-utility {
+    width: 26px;
+    height: 26px;
+  }
+
+  .whatsapp-chat-compose-box textarea {
+    min-height: 26px;
+    max-height: 60px;
+    padding: 4px;
+  }
+
+  .whatsapp-send-button {
+    min-width: 48px;
+    min-height: 26px;
+    padding-inline: 10px;
+  }
+
+  .whatsapp-attachment-menu {
+    width: 136px;
+    padding: 5px;
+  }
+
+  .whatsapp-attachment-item {
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .attachment-icon {
+    width: 18px;
+    height: 18px;
+  }
+
+  .whatsapp-chat-assistant {
+    padding: 5px;
+  }
+
+  .whatsapp-assistant-header {
+    gap: 6px;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+  }
+
+  .whatsapp-assistant-header h3 {
+    font-size: 14px;
+  }
+
+  .assistant-panel-body {
+    gap: 5px;
+  }
+
+  .assistant-card {
+    gap: 5px;
+    padding: 7px;
+    border-radius: 8px;
+  }
+
+  .assistant-section-label {
+    font-size: 9px;
+  }
+
+  .toolbar-chip {
+    min-height: 22px;
+    padding: 0 8px;
+    font-size: 9px;
+  }
+
+  .assistant-action-button {
+    min-height: 26px;
+    padding: 5px 8px;
+    font-size: 11px;
+  }
+
+  .assistant-context-controls,
+  .assistant-translation-row {
+    grid-template-columns: minmax(0, 1fr) minmax(66px, 88px);
+    gap: 5px;
+  }
+
+  .assistant-draft-box {
+    min-height: 68px;
+    padding: 6px 7px;
+    line-height: 1.42;
+  }
+
+  .assistant-translated-draft {
+    min-height: 58px;
+  }
+
+  .agent-page-header {
+    gap: 10px;
+    padding: 0;
+  }
+
+  .agent-page-header h2 {
+    font-size: 24px;
+    line-height: 1.08;
+  }
+
+  .agent-config-layout {
+    grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .agent-list-scroll {
+    gap: 6px;
+    padding-right: 0;
+  }
+
+  .agent-list-item {
+    min-height: 78px;
+    padding: 9px;
+    gap: 5px;
+    border-radius: 9px;
+  }
+
+  .agent-list-account,
+  .agent-list-meta {
+    font-size: 10px;
+  }
+
+  .agent-config-form {
+    gap: 8px;
+  }
+
+  .agent-provider-tabs,
+  .agent-overview-strip,
+  .export-form-grid {
+    gap: 6px;
+  }
+
+  .agent-provider-tab {
+    min-height: 46px;
+    padding: 8px;
+    gap: 3px;
+    border-radius: 9px;
+  }
+
+  .agent-provider-tab strong {
+    font-size: 12px;
+  }
+
+  .agent-provider-tab span {
+    font-size: 9px;
+  }
+
+  .agent-account-checklist {
+    min-height: 44px;
+    max-height: 96px;
+    gap: 5px;
+    padding: 7px;
+  }
+
+  .agent-account-option {
+    min-height: 26px;
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+
+  .agent-advanced-grid {
+    gap: 7px;
+  }
+
+  .agent-thinking-row {
+    min-height: 32px;
+    padding: 7px 9px;
+    font-size: 11px;
+  }
+
+  .agent-prompt-field textarea {
+    min-height: 140px;
+  }
+
+  .rule-card-button,
+  .mode-card,
+  .agent-provider-tab,
+  .dropdown-option {
+    padding: 8px;
+    border-radius: 9px;
+  }
+
+  .job-toolbar {
+    gap: 6px;
+  }
+
+  .job-list-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    gap: 1px 6px;
+    padding: 6px 8px;
+  }
+
+  .status-badge {
+    min-height: 18px;
+    padding: 2px 7px;
+    font-size: 9px;
+  }
+}
+
 @media (max-width: 1280px) {
   .chat-frame {
-    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    grid-template-columns: minmax(270px, 320px) minmax(0, 1fr);
     align-items: start;
   }
 

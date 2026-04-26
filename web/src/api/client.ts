@@ -164,6 +164,26 @@ export interface SendChatMessageResponse {
   sent_at: string
 }
 
+export type SendChatMediaType = 'image' | 'video' | 'audio' | 'document'
+
+export interface SendChatMediaPayload {
+  file: File
+  mediaType: SendChatMediaType
+  caption?: string
+}
+
+export interface SendChatMediaResponse {
+  chat_id: string
+  wa_chat_jid: string
+  wa_message_id: string
+  message_type: MessageType
+  media_type: SendChatMediaType
+  file_name?: string
+  mime_type?: string
+  caption?: string
+  sent_at: string
+}
+
 export type ExportFormat = 'json' | 'markdown' | 'html'
 export type ExportStatus = 'queued' | 'running' | 'completed' | 'failed'
 export type ExportScopeType = 'chat' | 'chat_batch'
@@ -546,6 +566,50 @@ export function subscribeLiveUpdates(
 
   return () => {
     eventSource.close()
+  }
+}
+
+export async function sendChatMedia(chatId: string, payload: SendChatMediaPayload) {
+  const controller = new AbortController()
+  const timeout = globalThis.setTimeout(() => controller.abort(), 75000)
+  const formData = new FormData()
+  formData.set('file', payload.file)
+  formData.set('media_type', payload.mediaType)
+  if (payload.file.type) {
+    formData.set('mime_type', payload.file.type)
+  }
+  if (payload.caption?.trim()) {
+    formData.set('caption', payload.caption.trim())
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/api/chats/${chatId}/messages`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      let message = '发送媒体失败'
+      try {
+        const errorPayload = (await response.json()) as { error?: string }
+        if (errorPayload.error) {
+          message = errorPayload.error
+        }
+      } catch {
+        message = response.statusText || message
+      }
+      throw new ApiError(response.status, message)
+    }
+
+    return (await response.json()) as SendChatMediaResponse
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('媒体发送超时，请稍后重试')
+    }
+    throw error
+  } finally {
+    globalThis.clearTimeout(timeout)
   }
 }
 

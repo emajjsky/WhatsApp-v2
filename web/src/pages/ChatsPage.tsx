@@ -13,6 +13,7 @@ import {
   listAccounts,
   listChats,
   sendAgentRun,
+  sendChatMedia,
   sendChatMessage,
   streamGenerateAgentRun,
   subscribeLiveUpdates,
@@ -26,6 +27,7 @@ import {
   type LiveUpdate,
   type MessageHistoryResponse,
   type MessageView,
+  type SendChatMediaType,
   type TranslationView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
@@ -62,10 +64,6 @@ type AttachmentAction =
   | 'media'
   | 'camera'
   | 'audio'
-  | 'contact'
-  | 'poll'
-  | 'event'
-  | 'sticker'
 
 const languageOptions = [
   { code: 'en', name: '英语' },
@@ -92,10 +90,6 @@ const attachmentActions: Array<{
   { key: 'media', label: '照片和视频', icon: '▧', tone: 'blue' },
   { key: 'camera', label: '相机', icon: '●', tone: 'pink' },
   { key: 'audio', label: '音频', icon: '♪', tone: 'orange' },
-  { key: 'contact', label: '联系人', icon: '●', tone: 'cyan' },
-  { key: 'poll', label: '投票', icon: '≡', tone: 'yellow' },
-  { key: 'event', label: '活动', icon: '□', tone: 'rose' },
-  { key: 'sticker', label: '新建贴图', icon: '+', tone: 'green' },
 ]
 
 const messageTranslationCacheStorageKey = 'whatsapp.messageTranslations.v1'
@@ -513,18 +507,54 @@ export function ChatsPage() {
       case 'audio':
         audioInputRef.current?.click()
         return
-      default:
-        setComposeNotice(`${getAttachmentActionLabel(action)}入口已就绪，发送能力还需要接后端媒体接口。`)
     }
   }
 
-  function handleAttachmentFiles(kind: AttachmentAction, files: FileList | null) {
-    const selected = files?.[0]
-    if (!selected) {
+  async function handleAttachmentFiles(kind: AttachmentAction, files: FileList | null) {
+    if (!selectedChatId || !history || !selectedChat) {
       return
     }
 
-    setComposeNotice(`${getAttachmentActionLabel(kind)}已选择：${selected.name}。媒体发送接口还没接入，当前先支持文本发送。`)
+    const selectedFiles = Array.from(files ?? [])
+    if (selectedFiles.length === 0) {
+      return
+    }
+    if (sending) {
+      return
+    }
+    if (!isChatSendable(history.chat.wa_chat_jid, history.chat.chat_type)) {
+      setError(getChatSendBlockedReason(history.chat.wa_chat_jid, history.chat.chat_type))
+      return
+    }
+
+    setSending(true)
+    setError(undefined)
+
+    const caption = kind === 'audio' ? '' : draftMessage.trim()
+
+    try {
+      for (const [index, file] of selectedFiles.entries()) {
+        setComposeNotice(`正在发送${getAttachmentActionLabel(kind)}：${file.name}`)
+        await sendChatMedia(selectedChatId, {
+          file,
+          mediaType: resolveAttachmentMediaType(kind, file),
+          caption: index === 0 ? caption : '',
+        })
+      }
+
+      if (caption) {
+        setDraftMessage('')
+      }
+      setComposeNotice(`${selectedFiles.length > 1 ? `${selectedFiles.length} 个文件` : selectedFiles[0].name}已发送。`)
+      pendingScrollModeRef.current = 'bottom'
+      keepTimelinePinnedRef.current = true
+      void loadHistory(selectedChatId, true)
+      void loadChatsList(true)
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : '发送媒体失败')
+    } finally {
+      setSending(false)
+    }
   }
 
   async function translateMessageToChinese(message: MessageView) {
@@ -963,7 +993,7 @@ export function ChatsPage() {
                       aria-haspopup="menu"
                       aria-expanded={attachmentMenuOpen}
                       onClick={() => setAttachmentMenuOpen((current) => !current)}
-                      disabled={!canSendInCurrentChat}
+                      disabled={!canSendInCurrentChat || sending}
                     >
                       +
                     </button>
@@ -992,7 +1022,7 @@ export function ChatsPage() {
                       className="visually-hidden"
                       type="file"
                       onChange={(event) => {
-                        handleAttachmentFiles('document', event.currentTarget.files)
+                        void handleAttachmentFiles('document', event.currentTarget.files)
                         event.currentTarget.value = ''
                       }}
                     />
@@ -1003,7 +1033,7 @@ export function ChatsPage() {
                       accept="image/*,video/*"
                       multiple
                       onChange={(event) => {
-                        handleAttachmentFiles('media', event.currentTarget.files)
+                        void handleAttachmentFiles('media', event.currentTarget.files)
                         event.currentTarget.value = ''
                       }}
                     />
@@ -1014,7 +1044,7 @@ export function ChatsPage() {
                       accept="image/*"
                       capture="environment"
                       onChange={(event) => {
-                        handleAttachmentFiles('camera', event.currentTarget.files)
+                        void handleAttachmentFiles('camera', event.currentTarget.files)
                         event.currentTarget.value = ''
                       }}
                     />
@@ -1024,7 +1054,7 @@ export function ChatsPage() {
                       type="file"
                       accept="audio/*"
                       onChange={(event) => {
-                        handleAttachmentFiles('audio', event.currentTarget.files)
+                        void handleAttachmentFiles('audio', event.currentTarget.files)
                         event.currentTarget.value = ''
                       }}
                     />
@@ -1740,6 +1770,32 @@ function getChatAvatarLabel(value?: string) {
 
 function getAttachmentActionLabel(action: AttachmentAction) {
   return attachmentActions.find((item) => item.key === action)?.label ?? '附件'
+}
+
+function resolveAttachmentMediaType(kind: AttachmentAction, file: File): SendChatMediaType {
+  const mimeType = file.type.toLowerCase()
+  if (kind === 'document') {
+    return 'document'
+  }
+  if (kind === 'audio' || mimeType.startsWith('audio/')) {
+    return 'audio'
+  }
+  if (kind === 'camera' || mimeType.startsWith('image/')) {
+    return 'image'
+  }
+  if (mimeType.startsWith('video/')) {
+    return 'video'
+  }
+
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  if (extension && ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif'].includes(extension)) {
+    return 'image'
+  }
+  if (extension && ['mp4', 'mov', 'm4v', 'webm', 'mkv'].includes(extension)) {
+    return 'video'
+  }
+
+  return 'document'
 }
 
 function fallbackMessageCopy(messageType?: string) {

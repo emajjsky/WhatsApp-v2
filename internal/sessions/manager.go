@@ -56,8 +56,20 @@ type SendResult struct {
 	SentAt      time.Time
 }
 
-type messageSender interface {
+type SendMediaInput struct {
+	MediaType ingest.MediaType
+	FileName  string
+	MIMEType  string
+	Caption   string
+	Data      []byte
+}
+
+type textSender interface {
 	SendText(ctx context.Context, accountID, chatJID, text string) (SendResult, error)
+}
+
+type mediaSender interface {
+	SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error)
 }
 
 type Manager struct {
@@ -366,13 +378,117 @@ func (c *PlaceholderConnector) SendText(_ context.Context, accountID, chatJID, t
 	}, nil
 }
 
+func (c *PlaceholderConnector) SendMedia(_ context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error) {
+	trimmedChat := strings.TrimSpace(chatJID)
+	if trimmedChat == "" {
+		return SendResult{}, fmt.Errorf("chat_jid is required")
+	}
+
+	mediaType, messageType, err := normalizeOutgoingMediaType(input.MediaType)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if len(input.Data) == 0 {
+		return SendResult{}, fmt.Errorf("media payload is empty")
+	}
+
+	c.mu.RLock()
+	snapshot, ok := c.sessions[accountID]
+	c.mu.RUnlock()
+	if !ok {
+		return SendResult{}, ErrSessionNotFound
+	}
+	if snapshot.Status != "connected" {
+		return SendResult{}, fmt.Errorf("session is not connected")
+	}
+
+	messageID, err := randomToken(8)
+	if err != nil {
+		return SendResult{}, err
+	}
+
+	now := c.now()
+	waMessageID := strings.ToUpper(messageID)
+	mimeType := normalizedMIMEType(input.MIMEType, input.Data)
+	fileName := strings.TrimSpace(input.FileName)
+	caption := strings.TrimSpace(input.Caption)
+
+	storageKey, checksum, resolvedName, err := storeMediaFile(accountID, waMessageID, mediaType, stringPointer(mimeType), nil, input.Data)
+	displayName := fileName
+	if displayName == "" {
+		displayName = resolvedName
+	}
+	media := ingest.MediaInput{
+		MediaType:      mediaType,
+		MIMEType:       stringPointer(mimeType),
+		FileName:       stringPointer(displayName),
+		ByteSize:       int64Pointer(int64(len(input.Data))),
+		DownloadStatus: ingest.DownloadStatusReady,
+	}
+	if err != nil {
+		c.logger.Warn("failed to persist placeholder media attachment", "account_id", accountID, "message_id", waMessageID, "media_type", mediaType, "error", err)
+		media.DownloadStatus = ingest.DownloadStatusFailed
+	} else {
+		media.StorageKey = &storageKey
+		media.SHA256 = &checksum
+	}
+
+	var textContent *string
+	if caption != "" && mediaType != ingest.MediaTypeAudio {
+		textContent = stringPointer(caption)
+	}
+
+	c.emit(Event{
+		Type:      EventTypeMessageReceived,
+		AccountID: accountID,
+		EmittedAt: now,
+		Message: &MessageEnvelope{
+			Chat: ingest.ChatSnapshot{
+				AccountID:     accountID,
+				WAChatJID:     trimmedChat,
+				ChatType:      ingest.ChatTypeDirect,
+				LastMessageAt: &now,
+			},
+			Message: ingest.MessageInput{
+				AccountID:   accountID,
+				WAMessageID: waMessageID,
+				SenderJID:   "me@wa",
+				FromMe:      true,
+				MessageType: messageType,
+				TextContent: textContent,
+				SentAt:      now,
+			},
+			Media: []ingest.MediaInput{media},
+			Payload: map[string]any{
+				"source":     "placeholder-connector",
+				"media_type": mediaType,
+				"file_name":  displayName,
+			},
+		},
+	})
+
+	return SendResult{
+		WAMessageID: waMessageID,
+		SentAt:      now,
+	}, nil
+}
+
 func (m *Manager) SendText(ctx context.Context, accountID, chatJID, text string) (SendResult, error) {
-	sender, ok := m.connector.(messageSender)
+	sender, ok := m.connector.(textSender)
 	if !ok {
 		return SendResult{}, fmt.Errorf("session connector does not support sending messages")
 	}
 
 	return sender.SendText(ctx, accountID, chatJID, text)
+}
+
+func (m *Manager) SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error) {
+	sender, ok := m.connector.(mediaSender)
+	if !ok {
+		return SendResult{}, fmt.Errorf("session connector does not support sending media messages")
+	}
+
+	return sender.SendMedia(ctx, accountID, chatJID, input)
 }
 
 func (c *PlaceholderConnector) SetEventHandler(handler func(Event)) {

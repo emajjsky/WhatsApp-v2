@@ -384,6 +384,129 @@ func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, t
 	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
 }
 
+func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error) {
+	trimmedChat := strings.TrimSpace(chatJID)
+	if trimmedChat == "" {
+		return SendResult{}, fmt.Errorf("chat_jid is required")
+	}
+	mediaType, messageType, err := normalizeOutgoingMediaType(input.MediaType)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if len(input.Data) == 0 {
+		return SendResult{}, fmt.Errorf("media payload is empty")
+	}
+
+	session, err := c.ensureSession(ctx, accountID)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if !session.client.IsConnected() || !session.client.IsLoggedIn() {
+		return SendResult{}, fmt.Errorf("whatsapp session is not connected")
+	}
+
+	targetJID, err := waTypes.ParseJID(trimmedChat)
+	if err != nil {
+		return SendResult{}, fmt.Errorf("parse chat jid %q: %w", trimmedChat, err)
+	}
+	targetJID = targetJID.ToNonAD()
+
+	waMediaType, err := whatsmeowMediaType(mediaType)
+	if err != nil {
+		return SendResult{}, err
+	}
+
+	mimeType := normalizedMIMEType(input.MIMEType, input.Data)
+	fileName := strings.TrimSpace(input.FileName)
+	caption := strings.TrimSpace(input.Caption)
+
+	upload, err := session.client.Upload(ctx, input.Data, waMediaType)
+	if err != nil {
+		return SendResult{}, fmt.Errorf("upload whatsapp media: %w", err)
+	}
+
+	outboundMessage := buildMediaMessage(mediaType, mimeType, fileName, caption, upload)
+	resp, err := session.client.SendMessage(ctx, targetJID, outboundMessage)
+	if err != nil {
+		return SendResult{}, fmt.Errorf("send whatsapp media message: %w", err)
+	}
+
+	sentAt := resp.Timestamp
+	if sentAt.IsZero() {
+		sentAt = c.now()
+	}
+
+	senderJID := resp.Sender.ToNonAD()
+	if senderJID.IsEmpty() && session.client.Store != nil && session.client.Store.ID != nil {
+		senderJID = session.client.Store.ID.ToNonAD()
+	}
+
+	messageID := string(resp.ID)
+	media := ingest.MediaInput{
+		MediaType:      mediaType,
+		MIMEType:       stringPointer(mimeType),
+		FileName:       stringPointer(fileName),
+		ByteSize:       int64Pointer(int64(len(input.Data))),
+		DownloadStatus: ingest.DownloadStatusReady,
+	}
+
+	storageKey, checksum, resolvedName, err := storeMediaFile(accountID, messageID, mediaType, stringPointer(mimeType), nil, input.Data)
+	if err != nil {
+		c.logger.Warn("failed to persist outbound media attachment", "account_id", accountID, "message_id", messageID, "media_type", mediaType, "error", err)
+		media.DownloadStatus = ingest.DownloadStatusFailed
+	} else {
+		media.StorageKey = &storageKey
+		media.SHA256 = &checksum
+		if media.FileName == nil {
+			media.FileName = stringPointer(resolvedName)
+		}
+	}
+
+	var textContent *string
+	if caption != "" && mediaType != ingest.MediaTypeAudio {
+		textContent = stringPointer(caption)
+	}
+
+	envelope := &MessageEnvelope{
+		Chat: ingest.ChatSnapshot{
+			AccountID:     accountID,
+			WAChatJID:     targetJID.String(),
+			ChatType:      mapChatType(targetJID),
+			LastMessageAt: &sentAt,
+		},
+		Contact: nil,
+		Message: ingest.MessageInput{
+			AccountID:   accountID,
+			WAMessageID: messageID,
+			SenderJID:   senderJID.String(),
+			FromMe:      true,
+			MessageType: messageType,
+			TextContent: textContent,
+			SentAt:      sentAt,
+		},
+		Media: []ingest.MediaInput{media},
+		Payload: map[string]any{
+			"source":      "whatsmeow",
+			"direction":   "outbound",
+			"chat_jid":    targetJID.String(),
+			"message_id":  messageID,
+			"media_type":  mediaType,
+			"mime_type":   mimeType,
+			"file_name":   media.FileName,
+			"sent_at_utc": sentAt,
+		},
+	}
+
+	c.emit(Event{
+		Type:      EventTypeMessageReceived,
+		AccountID: accountID,
+		EmittedAt: sentAt,
+		Message:   envelope,
+	})
+
+	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
+}
+
 func (c *WhatsmeowConnector) ListSnapshots(_ context.Context) ([]SessionSnapshot, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -1081,6 +1204,117 @@ func (c *WhatsmeowConnector) downloadAndStoreMedia(
 	item.FileName = &resolvedName
 	item.DownloadStatus = ingest.DownloadStatusReady
 	return item
+}
+
+func normalizeOutgoingMediaType(mediaType ingest.MediaType) (ingest.MediaType, ingest.MessageType, error) {
+	switch ingest.MediaType(strings.ToLower(strings.TrimSpace(string(mediaType)))) {
+	case ingest.MediaTypeImage:
+		return ingest.MediaTypeImage, ingest.MessageTypeImage, nil
+	case ingest.MediaTypeVideo:
+		return ingest.MediaTypeVideo, ingest.MessageTypeVideo, nil
+	case ingest.MediaTypeAudio:
+		return ingest.MediaTypeAudio, ingest.MessageTypeAudio, nil
+	case ingest.MediaTypeDocument, "", ingest.MediaTypeOther:
+		return ingest.MediaTypeDocument, ingest.MessageTypeDocument, nil
+	default:
+		return "", "", fmt.Errorf("unsupported media_type %q", mediaType)
+	}
+}
+
+func whatsmeowMediaType(mediaType ingest.MediaType) (whatsmeow.MediaType, error) {
+	switch mediaType {
+	case ingest.MediaTypeImage:
+		return whatsmeow.MediaImage, nil
+	case ingest.MediaTypeVideo:
+		return whatsmeow.MediaVideo, nil
+	case ingest.MediaTypeAudio:
+		return whatsmeow.MediaAudio, nil
+	case ingest.MediaTypeDocument:
+		return whatsmeow.MediaDocument, nil
+	default:
+		return "", fmt.Errorf("unsupported media_type %q", mediaType)
+	}
+}
+
+func buildMediaMessage(mediaType ingest.MediaType, mimeType, fileName, caption string, upload whatsmeow.UploadResponse) *waProto.Message {
+	fileLength := upload.FileLength
+	baseURL := upload.URL
+	directPath := upload.DirectPath
+
+	switch mediaType {
+	case ingest.MediaTypeImage:
+		image := &waProto.ImageMessage{
+			URL:           &baseURL,
+			DirectPath:    &directPath,
+			MediaKey:      upload.MediaKey,
+			Mimetype:      proto.String(mimeType),
+			FileSHA256:    upload.FileSHA256,
+			FileEncSHA256: upload.FileEncSHA256,
+			FileLength:    &fileLength,
+		}
+		if strings.TrimSpace(caption) != "" {
+			image.Caption = proto.String(strings.TrimSpace(caption))
+		}
+		return &waProto.Message{ImageMessage: image}
+	case ingest.MediaTypeVideo:
+		video := &waProto.VideoMessage{
+			URL:           &baseURL,
+			DirectPath:    &directPath,
+			MediaKey:      upload.MediaKey,
+			Mimetype:      proto.String(mimeType),
+			FileSHA256:    upload.FileSHA256,
+			FileEncSHA256: upload.FileEncSHA256,
+			FileLength:    &fileLength,
+		}
+		if strings.TrimSpace(caption) != "" {
+			video.Caption = proto.String(strings.TrimSpace(caption))
+		}
+		return &waProto.Message{VideoMessage: video}
+	case ingest.MediaTypeAudio:
+		return &waProto.Message{
+			AudioMessage: &waProto.AudioMessage{
+				URL:           &baseURL,
+				DirectPath:    &directPath,
+				MediaKey:      upload.MediaKey,
+				Mimetype:      proto.String(mimeType),
+				FileSHA256:    upload.FileSHA256,
+				FileEncSHA256: upload.FileEncSHA256,
+				FileLength:    &fileLength,
+				PTT:           proto.Bool(false),
+			},
+		}
+	default:
+		resolvedName := strings.TrimSpace(fileName)
+		if resolvedName == "" {
+			resolvedName = "document"
+		}
+		document := &waProto.DocumentMessage{
+			URL:           &baseURL,
+			DirectPath:    &directPath,
+			MediaKey:      upload.MediaKey,
+			Mimetype:      proto.String(mimeType),
+			FileSHA256:    upload.FileSHA256,
+			FileEncSHA256: upload.FileEncSHA256,
+			FileLength:    &fileLength,
+			FileName:      proto.String(resolvedName),
+			Title:         proto.String(resolvedName),
+		}
+		if strings.TrimSpace(caption) != "" {
+			document.Caption = proto.String(strings.TrimSpace(caption))
+		}
+		return &waProto.Message{DocumentMessage: document}
+	}
+}
+
+func normalizedMIMEType(value string, data []byte) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed != "" {
+		return trimmed
+	}
+	if len(data) > 0 {
+		return http.DetectContentType(data)
+	}
+	return "application/octet-stream"
 }
 
 func extractReplyToMessageID(message *waProto.Message) *string {
