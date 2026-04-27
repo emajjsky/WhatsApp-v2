@@ -393,6 +393,7 @@ export interface CreateAccountPayload {
 
 interface RequestOptions extends RequestInit {
   jsonBody?: unknown
+  timeoutMs?: number
 }
 
 export class ApiError extends Error {
@@ -407,34 +408,53 @@ export class ApiError extends Error {
 const baseUrl = import.meta.env.VITE_API_BASE_URL?.trim() ?? ''
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-    body: options.jsonBody !== undefined ? JSON.stringify(options.jsonBody) : options.body,
-  })
+  const { jsonBody, timeoutMs, ...fetchOptions } = options
+  const timeoutController = timeoutMs ? new AbortController() : undefined
+  const timeoutHandle = timeoutController
+    ? window.setTimeout(() => timeoutController.abort(), timeoutMs)
+    : undefined
 
-  if (!response.ok) {
-    let message = '请求失败'
-    try {
-      const payload = (await response.json()) as { error?: string }
-      if (payload.error) {
-        message = payload.error
+  try {
+    const response = await fetch(`${baseUrl}${path}`, {
+      ...fetchOptions,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(fetchOptions.headers ?? {}),
+      },
+      body: jsonBody !== undefined ? JSON.stringify(jsonBody) : fetchOptions.body,
+      signal: timeoutController?.signal ?? fetchOptions.signal,
+    })
+
+    if (!response.ok) {
+      let message = '请求失败'
+      try {
+        const payload = (await response.json()) as { error?: string }
+        if (payload.error) {
+          message = payload.error
+        }
+      } catch {
+        message = response.statusText || message
       }
-    } catch {
-      message = response.statusText || message
+
+      throw new ApiError(response.status, message)
     }
 
-    throw new ApiError(response.status, message)
-  }
+    if (response.status === 204) {
+      return undefined as T
+    }
 
-  if (response.status === 204) {
-    return undefined as T
-  }
+    return (await response.json()) as T
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('请求超时，请稍后重试')
+    }
 
-  return (await response.json()) as T
+    throw error
+  } finally {
+    if (timeoutHandle !== undefined) {
+      window.clearTimeout(timeoutHandle)
+    }
+  }
 }
 
 export async function getHealth() {
@@ -466,6 +486,7 @@ export async function startPairing(accountId: string, method: PairingMethod) {
 export async function logoutAccount(accountId: string) {
   return request<{ account: AccountView }>(`/api/accounts/${accountId}/logout`, {
     method: 'POST',
+    timeoutMs: 15000,
   })
 }
 

@@ -203,9 +203,9 @@ func (c *WhatsmeowConnector) Restore(ctx context.Context, accountID string) erro
 }
 
 func (c *WhatsmeowConnector) Status(ctx context.Context, accountID string) (SessionSnapshot, error) {
-	session, found := c.getSession(accountID)
+	session, current, found := c.getSessionState(accountID)
 	if found {
-		return session.snapshot, nil
+		return c.reconcileSessionSnapshot(accountID, session, current), nil
 	}
 
 	deviceID, err := c.loadDeviceBinding(ctx, accountID)
@@ -240,7 +240,13 @@ func (c *WhatsmeowConnector) Logout(ctx context.Context, accountID string) error
 		var errEnsure error
 		session, errEnsure = c.ensureSession(ctx, accountID)
 		if errEnsure != nil {
-			return errEnsure
+			c.logger.Warn(
+				"failed to restore whatsapp session for logout; clearing local binding",
+				"account_id", accountID,
+				"error", errEnsure,
+			)
+			c.deleteDeviceBinding(ctx, accountID)
+			return nil
 		}
 	}
 
@@ -282,14 +288,7 @@ func (c *WhatsmeowConnector) Logout(ctx context.Context, accountID string) error
 		}
 	}
 
-	if c.bindingStore != nil {
-		bindingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logoutRequestTimeout)
-		err := c.bindingStore.Delete(bindingCtx, accountID)
-		cancel()
-		if err != nil {
-			c.logger.Warn("failed to delete session binding", "account_id", accountID, "error", err)
-		}
-	}
+	c.deleteDeviceBinding(ctx, accountID)
 
 	snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
 		snapshot.Status = "logged_out"
@@ -760,8 +759,10 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 		c.emitSnapshot(snapshot)
 		c.refreshKnownMetadataAsync(accountID)
 	case *waEvents.Disconnected:
+		session, _ := c.getSession(accountID)
+		hasDevice := sessionHasDevice(session)
 		snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
-			if c.hasPersistedDevice(accountID) {
+			if hasDevice {
 				snapshot.Status = "reconnecting"
 			} else {
 				snapshot.Status = "disconnected"
@@ -1479,7 +1480,7 @@ func (c *WhatsmeowConnector) persistDeviceBinding(ctx context.Context, accountID
 	}
 
 	session, found := c.getSession(accountID)
-	if !found || session.client.Store == nil || session.client.Store.ID == nil {
+	if !found || !sessionHasDevice(session) {
 		return
 	}
 
@@ -1489,9 +1490,82 @@ func (c *WhatsmeowConnector) persistDeviceBinding(ctx context.Context, accountID
 	}
 }
 
-func (c *WhatsmeowConnector) hasPersistedDevice(accountID string) bool {
-	session, found := c.getSession(accountID)
-	return found && session.client.Store != nil && session.client.Store.ID != nil
+func (c *WhatsmeowConnector) reconcileSessionSnapshot(accountID string, session *whatsmeowSession, current SessionSnapshot) SessionSnapshot {
+	if session == nil || session.client == nil {
+		return current
+	}
+
+	if session.client.IsConnected() && session.client.IsLoggedIn() {
+		if current.Status == "connected" {
+			return current
+		}
+
+		now := c.now()
+		snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
+			snapshot.Status = "connected"
+			snapshot.Pairing = nil
+			snapshot.LastError = ""
+			if snapshot.ConnectedAt == nil {
+				snapshot.ConnectedAt = &now
+			}
+			snapshot.UpdatedAt = now
+			return snapshot
+		})
+		c.emitSnapshot(snapshot)
+		return snapshot
+	}
+
+	switch current.Status {
+	case "connected":
+		nextStatus := "disconnected"
+		if sessionHasDevice(session) {
+			nextStatus = "reconnecting"
+		}
+
+		snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
+			snapshot.Status = nextStatus
+			snapshot.Pairing = nil
+			snapshot.UpdatedAt = c.now()
+			return snapshot
+		})
+		c.emitSnapshot(snapshot)
+		return snapshot
+	case "reconnecting":
+		if sessionHasDevice(session) {
+			return current
+		}
+
+		snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
+			snapshot.Status = "disconnected"
+			snapshot.Pairing = nil
+			snapshot.UpdatedAt = c.now()
+			return snapshot
+		})
+		c.emitSnapshot(snapshot)
+		return snapshot
+	default:
+		return current
+	}
+}
+
+func (c *WhatsmeowConnector) deleteDeviceBinding(ctx context.Context, accountID string) {
+	if c.bindingStore == nil {
+		return
+	}
+
+	bindingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logoutRequestTimeout)
+	defer cancel()
+
+	if err := c.bindingStore.Delete(bindingCtx, accountID); err != nil {
+		c.logger.Warn("failed to delete session binding", "account_id", accountID, "error", err)
+	}
+}
+
+func sessionHasDevice(session *whatsmeowSession) bool {
+	return session != nil &&
+		session.client != nil &&
+		session.client.Store != nil &&
+		session.client.Store.ID != nil
 }
 
 func (c *WhatsmeowConnector) activateCatchUpWindow(accountID string, connectedAt time.Time) {
@@ -1584,6 +1658,18 @@ func (c *WhatsmeowConnector) getSession(accountID string) (*whatsmeowSession, bo
 
 	session, ok := c.sessions[accountID]
 	return session, ok
+}
+
+func (c *WhatsmeowConnector) getSessionState(accountID string) (*whatsmeowSession, SessionSnapshot, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	session, ok := c.sessions[accountID]
+	if !ok {
+		return nil, SessionSnapshot{}, false
+	}
+
+	return session, session.snapshot, true
 }
 
 func (c *WhatsmeowConnector) removeSession(accountID string) {

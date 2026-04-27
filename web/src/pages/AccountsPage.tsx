@@ -24,12 +24,17 @@ export function AccountsPage() {
   const [selectedAccountId, setSelectedAccountId] = useState<string>()
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const [busyAccountId, setBusyAccountId] = useState<string>()
+  const [busyAction, setBusyAction] = useState<{
+    accountId: string
+    method: PairingMethod | 'logout' | 'delete'
+  }>()
   const [error, setError] = useState<string>()
   const [form, setForm] = useState(initialForm)
   const [qrDataUrl, setQrDataUrl] = useState<string>()
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) ?? accounts[0]
+  const selectedBusyAction = busyAction && busyAction.accountId === selectedAccount?.id ? busyAction.method : undefined
+  const isSelectedAccountBusy = selectedBusyAction !== undefined
 
   const loadAccounts = useCallback(async (preferredAccountId?: string, background = false) => {
     if (!background) {
@@ -138,7 +143,7 @@ export function AccountsPage() {
   }
 
   async function runAccountAction(accountId: string, method: PairingMethod | 'logout' | 'delete') {
-    setBusyAccountId(accountId)
+    setBusyAction({ accountId, method })
     setError(undefined)
 
     try {
@@ -168,7 +173,7 @@ export function AccountsPage() {
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : '执行账号动作失败')
     } finally {
-      setBusyAccountId(undefined)
+      setBusyAction(undefined)
     }
   }
 
@@ -273,34 +278,34 @@ export function AccountsPage() {
                   <button
                     className="primary-button"
                     type="button"
-                    disabled={busyAccountId === selectedAccount.id}
+                    disabled={isSelectedAccountBusy}
                     onClick={() => void runAccountAction(selectedAccount.id, 'qr')}
                   >
-                    {busyAccountId === selectedAccount.id ? '处理中...' : '二维码配对'}
+                    {selectedBusyAction === 'qr' ? '生成中...' : '二维码配对'}
                   </button>
                   <button
                     className="secondary-button"
                     type="button"
-                    disabled={busyAccountId === selectedAccount.id}
+                    disabled={isSelectedAccountBusy}
                     onClick={() => void runAccountAction(selectedAccount.id, 'pairing_code')}
                   >
-                    生成配对码
+                    {selectedBusyAction === 'pairing_code' ? '生成中...' : '生成配对码'}
                   </button>
                   <button
                     className="secondary-button"
                     type="button"
-                    disabled={busyAccountId === selectedAccount.id}
+                    disabled={isSelectedAccountBusy}
                     onClick={() => void runAccountAction(selectedAccount.id, 'logout')}
                   >
-                    退出登录
+                    {selectedBusyAction === 'logout' ? '退出中...' : '退出登录'}
                   </button>
                   <button
                     className="danger-button"
                     type="button"
-                    disabled={busyAccountId === selectedAccount.id}
+                    disabled={isSelectedAccountBusy}
                     onClick={() => void runAccountAction(selectedAccount.id, 'delete')}
                   >
-                    删除账号
+                    {selectedBusyAction === 'delete' ? '删除中...' : '删除账号'}
                   </button>
                 </div>
               </div>
