@@ -18,6 +18,7 @@ import (
 	"time"
 
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
+	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	waTypes "go.mau.fi/whatsmeow/types"
@@ -997,12 +998,21 @@ func (c *WhatsmeowConnector) handleHistorySync(accountID string, event *waEvents
 			c.logger.Warn("failed to parse history sync chat jid", "account_id", accountID, "jid", chatJIDText, "error", err)
 			continue
 		}
+		chatJID = chatJID.ToNonAD()
 
 		meta := &historyChatMeta{
 			Title:            firstNonEmptyStringPointer(conversation.GetDisplayName(), conversation.GetName()),
 			Archived:         conversation.GetArchived(),
 			ParticipantCount: intPointer(len(conversation.GetParticipant())),
 		}
+
+		chat := mapHistoryConversationChat(accountID, chatJID, conversation, meta)
+		c.emit(Event{
+			Type:      EventTypeChatSnapshot,
+			AccountID: accountID,
+			EmittedAt: c.now(),
+			Chat:      &chat,
+		})
 
 		for _, historyMessage := range conversation.GetMessages() {
 			webMessage := historyMessage.GetMessage()
@@ -1032,6 +1042,52 @@ func (c *WhatsmeowConnector) handleHistorySync(accountID string, event *waEvents
 	}
 
 	return nil
+}
+
+func mapHistoryConversationChat(accountID string, chatJID waTypes.JID, conversation *waHistorySync.Conversation, meta *historyChatMeta) ingest.ChatSnapshot {
+	chat := ingest.ChatSnapshot{
+		AccountID:     accountID,
+		WAChatJID:     chatJID.String(),
+		ChatType:      mapChatType(chatJID),
+		LastMessageAt: historyConversationLastMessageAt(conversation),
+		MutedUntil:    historyConversationMutedUntil(conversation),
+	}
+
+	if meta != nil {
+		chat.Title = meta.Title
+		chat.Archived = meta.Archived
+		chat.ParticipantCount = meta.ParticipantCount
+	}
+
+	return chat
+}
+
+func historyConversationLastMessageAt(conversation *waHistorySync.Conversation) *time.Time {
+	if conversation == nil {
+		return nil
+	}
+	if timestamp := conversation.GetLastMsgTimestamp(); timestamp > 0 {
+		return unixSecondsPointer(timestamp)
+	}
+	if timestamp := conversation.GetConversationTimestamp(); timestamp > 0 {
+		return unixSecondsPointer(timestamp)
+	}
+	return nil
+}
+
+func historyConversationMutedUntil(conversation *waHistorySync.Conversation) *time.Time {
+	if conversation == nil {
+		return nil
+	}
+	if timestamp := conversation.GetMuteEndTime(); timestamp > 0 {
+		return unixSecondsPointer(timestamp)
+	}
+	return nil
+}
+
+func unixSecondsPointer(timestamp uint64) *time.Time {
+	value := time.Unix(int64(timestamp), 0).UTC()
+	return &value
 }
 
 func (c *WhatsmeowConnector) mapIncomingMessage(accountID string, client *whatsmeow.Client, event *waEvents.Message, meta *historyChatMeta) (*MessageEnvelope, error) {

@@ -100,13 +100,20 @@ func NewService(repository *Repository, sender messageSender) (*Service, error) 
 	return &Service{repository: repository, sender: sender}, nil
 }
 
+const (
+	defaultChatListLimit    = 24
+	maxChatListLimit        = 5000
+	defaultMessageListLimit = 50
+	maxMessageListLimit     = 100
+)
+
 func (s *Service) ListChats(ctx context.Context, input ListChatsInput) (ListChatsResult, error) {
 	limit := input.Limit
 	if limit <= 0 {
-		limit = 24
+		limit = defaultChatListLimit
 	}
-	if limit > 100 {
-		limit = 100
+	if limit > maxChatListLimit {
+		limit = maxChatListLimit
 	}
 
 	offset := input.Offset
@@ -146,10 +153,10 @@ func (s *Service) GetMessages(ctx context.Context, input GetMessagesInput) (Mess
 
 	limit := input.Limit
 	if limit <= 0 {
-		limit = 50
+		limit = defaultMessageListLimit
 	}
-	if limit > 100 {
-		limit = 100
+	if limit > maxMessageListLimit {
+		limit = maxMessageListLimit
 	}
 
 	header, err := s.repository.GetChatHeader(ctx, chatID)

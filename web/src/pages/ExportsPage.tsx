@@ -39,6 +39,7 @@ const initialForm = {
 }
 
 type DropdownKey = 'accounts' | 'chats' | null
+const exportChatListLimit = 5000
 
 export function ExportsPage() {
   const [accounts, setAccounts] = useState<AccountView[]>([])
@@ -64,7 +65,7 @@ export function ExportsPage() {
     try {
       const [accountsResponse, chatsResponse, jobsResponse] = await Promise.all([
         listAccounts(),
-        listChats({ limit: 2000 }),
+        listChats({ limit: exportChatListLimit }),
         listExportJobs(),
       ])
 

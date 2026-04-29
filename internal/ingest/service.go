@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 type PersistResult struct {
@@ -10,6 +11,10 @@ type PersistResult struct {
 	ContactID  *string
 	MessageID  string
 	MediaCount int
+}
+
+type ChatPersistResult struct {
+	ChatID string
 }
 
 type Service struct {
@@ -66,4 +71,23 @@ func (s *Service) PersistEvent(ctx context.Context, event RawEvent) (PersistResu
 		MessageID:  messageID,
 		MediaCount: len(normalized.Media),
 	}, nil
+}
+
+func (s *Service) PersistChat(ctx context.Context, chat ChatSnapshot) (ChatPersistResult, error) {
+	if strings.TrimSpace(chat.AccountID) == "" {
+		return ChatPersistResult{}, fmt.Errorf("account_id is required")
+	}
+	if strings.TrimSpace(chat.WAChatJID) == "" {
+		return ChatPersistResult{}, fmt.Errorf("chat.wa_chat_jid is required")
+	}
+	if chat.ChatType == "" {
+		chat.ChatType = ChatTypeDirect
+	}
+
+	chatID, err := s.repository.UpsertChat(ctx, chat)
+	if err != nil {
+		return ChatPersistResult{}, err
+	}
+
+	return ChatPersistResult{ChatID: chatID}, nil
 }

@@ -15,29 +15,32 @@ type EventType string
 
 const (
 	EventTypeSessionSnapshot EventType = "session.snapshot"
+	EventTypeChatSnapshot    EventType = "chat.snapshot"
 	EventTypeMessageReceived EventType = "message.received"
 )
 
 type Event struct {
-	Type      EventType        `json:"type"`
-	AccountID string           `json:"account_id"`
-	Snapshot  *SessionSnapshot `json:"snapshot,omitempty"`
-	Message   *MessageEnvelope `json:"message,omitempty"`
-	EmittedAt time.Time        `json:"emitted_at"`
+	Type      EventType            `json:"type"`
+	AccountID string               `json:"account_id"`
+	Snapshot  *SessionSnapshot     `json:"snapshot,omitempty"`
+	Chat      *ingest.ChatSnapshot `json:"chat,omitempty"`
+	Message   *MessageEnvelope     `json:"message,omitempty"`
+	EmittedAt time.Time            `json:"emitted_at"`
 }
 
 type MessageEnvelope struct {
-	Chat    ingest.ChatSnapshot    `json:"chat"`
+	Chat    ingest.ChatSnapshot     `json:"chat"`
 	Contact *ingest.ContactSnapshot `json:"contact,omitempty"`
-	Message ingest.MessageInput    `json:"message"`
-	Media   []ingest.MediaInput    `json:"media,omitempty"`
-	Payload map[string]any         `json:"payload,omitempty"`
+	Message ingest.MessageInput     `json:"message"`
+	Media   []ingest.MediaInput     `json:"media,omitempty"`
+	Payload map[string]any          `json:"payload,omitempty"`
 }
 
 type LiveUpdateType string
 
 const (
 	LiveUpdateSessionChanged LiveUpdateType = "session_changed"
+	LiveUpdateChatStored     LiveUpdateType = "chat_stored"
 	LiveUpdateMessageStored  LiveUpdateType = "message_stored"
 )
 
@@ -52,6 +55,7 @@ type LiveUpdate struct {
 }
 
 type IngestSink interface {
+	PersistChat(ctx context.Context, chat ingest.ChatSnapshot) (ingest.ChatPersistResult, error)
 	PersistEvent(ctx context.Context, event ingest.RawEvent) (ingest.PersistResult, error)
 }
 
@@ -89,6 +93,8 @@ func (b *EventBridge) Handle(ctx context.Context, event Event) error {
 	switch event.Type {
 	case EventTypeSessionSnapshot:
 		return b.handleSessionSnapshot(ctx, event)
+	case EventTypeChatSnapshot:
+		return b.handleChatSnapshot(ctx, event)
 	case EventTypeMessageReceived:
 		return b.handleMessageReceived(ctx, event)
 	default:
@@ -141,6 +147,33 @@ func (b *EventBridge) handleSessionSnapshot(ctx context.Context, event Event) er
 		Status:     event.Snapshot.Status,
 		OccurredAt: event.EmittedAt,
 		Summary:    fmt.Sprintf("Session status changed to %s", event.Snapshot.Status),
+	})
+
+	return nil
+}
+
+func (b *EventBridge) handleChatSnapshot(ctx context.Context, event Event) error {
+	if event.Chat == nil {
+		return fmt.Errorf("chat snapshot event requires chat payload")
+	}
+	if b.ingestSink == nil {
+		return fmt.Errorf("chat event bridge requires an ingest sink")
+	}
+
+	chat := *event.Chat
+	chat.AccountID = event.AccountID
+
+	result, err := b.ingestSink.PersistChat(ctx, chat)
+	if err != nil {
+		return fmt.Errorf("persist chat snapshot for %q: %w", event.AccountID, err)
+	}
+
+	b.publish(LiveUpdate{
+		Type:       LiveUpdateChatStored,
+		AccountID:  event.AccountID,
+		ChatID:     result.ChatID,
+		OccurredAt: event.EmittedAt,
+		Summary:    "Chat metadata stored",
 	})
 
 	return nil

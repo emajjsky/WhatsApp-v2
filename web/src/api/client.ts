@@ -207,7 +207,7 @@ export interface ExportJobView {
   completed_at?: string
 }
 
-export type LiveUpdateType = 'session_changed' | 'message_stored'
+export type LiveUpdateType = 'session_changed' | 'chat_stored' | 'message_stored'
 
 export interface LiveUpdate {
   type: LiveUpdateType

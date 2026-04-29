@@ -83,7 +83,12 @@ DO UPDATE SET
     participant_count = COALESCE(EXCLUDED.participant_count, chats.participant_count),
     archived = EXCLUDED.archived,
     muted_until = COALESCE(EXCLUDED.muted_until, chats.muted_until),
-    last_message_at = COALESCE(EXCLUDED.last_message_at, chats.last_message_at),
+    last_message_at = CASE
+        WHEN chats.last_message_at IS NULL THEN EXCLUDED.last_message_at
+        WHEN EXCLUDED.last_message_at IS NULL THEN chats.last_message_at
+        WHEN EXCLUDED.last_message_at > chats.last_message_at THEN EXCLUDED.last_message_at
+        ELSE chats.last_message_at
+    END,
     updated_at = NOW()
 RETURNING id`
 
