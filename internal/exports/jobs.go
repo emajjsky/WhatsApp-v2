@@ -243,6 +243,26 @@ func (s *Service) GetJob(ctx context.Context, jobID string) (JobView, error) {
 	return mapJobToView(job), nil
 }
 
+func (s *Service) DeleteJob(ctx context.Context, jobID string) (JobView, error) {
+	trimmedID := strings.TrimSpace(jobID)
+	job, err := s.repository.GetByID(ctx, trimmedID)
+	if err != nil {
+		return JobView{}, mapRepositoryError(trimmedID, err)
+	}
+
+	if err := s.repository.Delete(ctx, job.ID); err != nil {
+		return JobView{}, mapRepositoryError(trimmedID, err)
+	}
+
+	if job.ArtifactPath != nil && strings.TrimSpace(*job.ArtifactPath) != "" {
+		if err := os.Remove(filepath.Clean(*job.ArtifactPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.logger.Warn("failed to remove export artifact after job deletion", "job_id", job.ID, "artifact_path", *job.ArtifactPath, "error", err)
+		}
+	}
+
+	return mapJobToView(job), nil
+}
+
 func (s *Service) ArtifactFilePath(ctx context.Context, jobID string) (string, error) {
 	job, err := s.repository.GetByID(ctx, strings.TrimSpace(jobID))
 	if err != nil {

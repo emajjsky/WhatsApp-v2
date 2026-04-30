@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createExportJob,
+  deleteExportJob,
   downloadExportArchive,
   downloadExportArtifact,
   listAccounts,
@@ -25,17 +26,20 @@ const datePresetOptions = [
   { key: 'yesterday', label: '昨天' },
   { key: 'last7', label: '近 7 天' },
   { key: 'last30', label: '近 30 天' },
-  { key: 'clear', label: '全部时间' },
+  { key: 'reset', label: '重置今天' },
 ] as const
 
-const initialForm = {
-  accountIds: [] as string[],
-  chatIds: [] as string[],
-  chatQuery: '',
-  format: 'markdown' as ExportFormat,
-  includeMedia: true,
-  dateFrom: '',
-  dateTo: '',
+function createInitialForm() {
+  const today = formatDateInput(new Date())
+  return {
+    accountIds: [] as string[],
+    chatIds: [] as string[],
+    chatQuery: '',
+    format: 'markdown' as ExportFormat,
+    includeMedia: true,
+    dateFrom: today,
+    dateTo: today,
+  }
 }
 
 type DropdownKey = 'accounts' | 'chats' | null
@@ -46,17 +50,22 @@ export function ExportsPage() {
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [jobs, setJobs] = useState<ExportJobView[]>([])
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([])
-  const [form, setForm] = useState(initialForm)
+  const [form, setForm] = useState(createInitialForm)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [downloadingJobId, setDownloadingJobId] = useState<string>()
+  const [deletingJobId, setDeletingJobId] = useState<string>()
   const [bulkDownloading, setBulkDownloading] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<DropdownKey>(null)
   const [error, setError] = useState<string>()
   const [success, setSuccess] = useState<string>()
   const dropdownRootRef = useRef<HTMLDivElement>(null)
+  const selectedExportAccountId = form.accountIds[0] ?? ''
 
   const loadData = useCallback(async (background = false) => {
+    const selectedAccountID = selectedExportAccountId
+
     if (!background) {
       setLoading(true)
       setError(undefined)
@@ -65,7 +74,9 @@ export function ExportsPage() {
     try {
       const [accountsResponse, chatsResponse, jobsResponse] = await Promise.all([
         listAccounts(),
-        listChats({ limit: exportChatListLimit }),
+        selectedAccountID
+          ? listChats({ accountId: selectedAccountID, limit: exportChatListLimit })
+          : Promise.resolve({ chats: [], total: 0, limit: exportChatListLimit, offset: 0 }),
         listExportJobs(),
       ])
 
@@ -73,23 +84,26 @@ export function ExportsPage() {
       setChats(chatsResponse.chats)
       setJobs(jobsResponse.jobs)
       setSelectedJobIds((current) =>
-        current.filter((jobID) =>
-          jobsResponse.jobs.some((job) => job.id === jobID && job.status === 'completed'),
-        ),
+        current.filter((jobID) => jobsResponse.jobs.some((job) => job.id === jobID)),
       )
       setForm((current) => {
-        const validAccountIDs = current.accountIds.filter((accountID) =>
-          accountsResponse.accounts.some((account) => account.id === accountID),
-        )
+        const validAccountIDs = current.accountIds
+          .filter((accountID) => accountsResponse.accounts.some((account) => account.id === accountID))
+          .slice(0, 1)
+        const nextAccountIDs = validAccountIDs.length
+          ? validAccountIDs
+          : accountsResponse.accounts[0]
+            ? [accountsResponse.accounts[0].id]
+            : []
         const validChatIDs = current.chatIds.filter((chatID) =>
           chatsResponse.chats.some(
-            (chat) => chat.id === chatID && validAccountIDs.includes(chat.account_id),
+            (chat) => chat.id === chatID && nextAccountIDs.includes(chat.account_id),
           ),
         )
 
         return {
           ...current,
-          accountIds: validAccountIDs,
+          accountIds: nextAccountIDs,
           chatIds: validChatIDs,
         }
       })
@@ -102,7 +116,7 @@ export function ExportsPage() {
         setLoading(false)
       }
     }
-  }, [])
+  }, [selectedExportAccountId])
 
   useEffect(() => {
     void loadData()
@@ -166,15 +180,15 @@ export function ExportsPage() {
 
   const selectedChats = chats.filter((chat) => form.chatIds.includes(chat.id))
   const completedJobs = jobs.filter((job) => job.status === 'completed')
-  const allCompletedSelected =
-    completedJobs.length > 0 && completedJobs.every((job) => selectedJobIds.includes(job.id))
+  const completedSelectedJobIds = selectedJobIds.filter((jobID) =>
+    completedJobs.some((job) => job.id === jobID),
+  )
+  const allJobsSelected = jobs.length > 0 && jobs.every((job) => selectedJobIds.includes(job.id))
 
   function toggleAccount(accountID: string) {
     setSuccess(undefined)
     setForm((current) => {
-      const nextAccountIDs = current.accountIds.includes(accountID)
-        ? current.accountIds.filter((item) => item !== accountID)
-        : [...current.accountIds, accountID]
+      const nextAccountIDs = current.accountIds[0] === accountID ? [] : [accountID]
 
       return {
         ...current,
@@ -214,13 +228,13 @@ export function ExportsPage() {
     )
   }
 
-  function toggleAllCompletedJobs() {
-    if (allCompletedSelected) {
+  function toggleAllJobs() {
+    if (allJobsSelected) {
       setSelectedJobIds([])
       return
     }
 
-    setSelectedJobIds(completedJobs.map((job) => job.id))
+    setSelectedJobIds(jobs.map((job) => job.id))
   }
 
   function applyDatePreset(preset: (typeof datePresetOptions)[number]['key']) {
@@ -258,8 +272,8 @@ export function ExportsPage() {
         }))
         return
       }
-      case 'clear':
-        setForm((current) => ({ ...current, dateFrom: '', dateTo: '' }))
+      case 'reset':
+        setForm((current) => ({ ...current, dateFrom: end, dateTo: end }))
         return
       default:
         return
@@ -281,7 +295,7 @@ export function ExportsPage() {
   }
 
   async function handleBulkDownload() {
-    if (selectedJobIds.length === 0) {
+    if (completedSelectedJobIds.length === 0) {
       setError('请先勾选要下载的导出记录')
       return
     }
@@ -291,13 +305,60 @@ export function ExportsPage() {
     setSuccess(undefined)
 
     try {
-      const { blob, filename } = await downloadExportArchive(selectedJobIds)
+      const { blob, filename } = await downloadExportArchive(completedSelectedJobIds)
       saveBlobDownload(blob, filename)
-      setSuccess(`已打包 ${selectedJobIds.length} 条导出记录，下载的是一个 ZIP 整包。`)
+      setSuccess(`已打包 ${completedSelectedJobIds.length} 条导出记录。`)
     } catch (downloadError) {
       setError(downloadError instanceof Error ? downloadError.message : '批量下载失败')
     } finally {
       setBulkDownloading(false)
+    }
+  }
+
+  async function handleDeleteJob(jobId: string) {
+    setDeletingJobId(jobId)
+    setError(undefined)
+    setSuccess(undefined)
+
+    try {
+      await deleteExportJob(jobId)
+      setSelectedJobIds((current) => current.filter((item) => item !== jobId))
+      await loadData(true)
+      setSuccess('导出记录已删除。')
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : '删除导出记录失败')
+    } finally {
+      setDeletingJobId(undefined)
+    }
+  }
+
+  async function handleBulkDeleteJobs() {
+    if (selectedJobIds.length === 0) {
+      setError('请先勾选要删除的导出记录')
+      return
+    }
+
+    setBulkDeleting(true)
+    setError(undefined)
+    setSuccess(undefined)
+
+    try {
+      const results = await Promise.allSettled(selectedJobIds.map((jobId) => deleteExportJob(jobId)))
+      const successCount = results.filter((result) => result.status === 'fulfilled').length
+      const failedResults = results.filter((result) => result.status === 'rejected')
+
+      setSelectedJobIds([])
+      await loadData(true)
+
+      if (failedResults.length > 0) {
+        const firstError = failedResults[0].reason
+        setError(firstError instanceof Error ? firstError.message : '部分导出记录删除失败')
+      }
+      if (successCount > 0) {
+        setSuccess(`已删除 ${successCount} 条导出记录。`)
+      }
+    } finally {
+      setBulkDeleting(false)
     }
   }
 
@@ -312,6 +373,10 @@ export function ExportsPage() {
     }
     if (form.chatIds.length === 0) {
       setError('请至少选择一个联系人或群聊')
+      return
+    }
+    if (!form.dateFrom || !form.dateTo) {
+      setError('请先选择导出日期范围')
       return
     }
     if (form.dateFrom && form.dateTo && form.dateFrom > form.dateTo) {
@@ -409,7 +474,8 @@ export function ExportsPage() {
                       {accounts.map((account) => (
                         <label key={account.id} className="dropdown-option">
                           <input
-                            type="checkbox"
+                            type="radio"
+                            name="export-account"
                             checked={form.accountIds.includes(account.id)}
                             onChange={() => toggleAccount(account.id)}
                           />
@@ -496,7 +562,7 @@ export function ExportsPage() {
                     ) : (
                       <EmptyPanel
                         title="没有匹配的会话"
-                        description="换个关键词，或者先多选几个账号。这里只显示当前已选账号下的联系人和群聊。"
+                        description="换个关键词，或者切换账号。这里只显示当前账号下的联系人和群聊。"
                       />
                     )}
                   </div>
@@ -618,15 +684,15 @@ export function ExportsPage() {
             <label className="job-bulk-check">
               <input
                 type="checkbox"
-                checked={allCompletedSelected}
-                disabled={completedJobs.length === 0}
-                onChange={toggleAllCompletedJobs}
+                checked={allJobsSelected}
+                disabled={jobs.length === 0}
+                onChange={toggleAllJobs}
               />
-              <span>全选已完成</span>
+              <span>全选记录</span>
             </label>
 
             <span className="subtle-text">
-              已勾选 {selectedJobIds.length} / 可下载 {completedJobs.length}
+              已勾选 {selectedJobIds.length} / 可下载 {completedSelectedJobIds.length}
             </span>
 
             <div className="dropdown-action-row">
@@ -641,10 +707,18 @@ export function ExportsPage() {
               <button
                 className="primary-button"
                 type="button"
-                disabled={selectedJobIds.length === 0 || bulkDownloading}
+                disabled={completedSelectedJobIds.length === 0 || bulkDownloading}
                 onClick={() => void handleBulkDownload()}
               >
-                {bulkDownloading ? '正在打包下载...' : `批量下载已选 (${selectedJobIds.length})`}
+                {bulkDownloading ? '正在打包下载...' : `批量下载已选 (${completedSelectedJobIds.length})`}
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={selectedJobIds.length === 0 || bulkDeleting}
+                onClick={() => void handleBulkDeleteJobs()}
+              >
+                {bulkDeleting ? '删除中...' : `删除已选 (${selectedJobIds.length})`}
               </button>
             </div>
           </div>
@@ -663,15 +737,12 @@ export function ExportsPage() {
 
               <div className="job-list-scroll">
                 {jobs.map((job) => {
-                  const selectable = job.status === 'completed'
-
                   return (
                     <div key={job.id} className="job-list-row">
                       <span className="job-checkbox-cell">
                         <input
                           type="checkbox"
                           checked={selectedJobIds.includes(job.id)}
-                          disabled={!selectable}
                           onChange={() => toggleJobSelection(job.id)}
                         />
                       </span>
@@ -695,6 +766,14 @@ export function ExportsPage() {
                         ) : (
                           <span className="subtle-text">{job.error_message ?? '等待产物'}</span>
                         )}
+                        <button
+                          className="danger-button"
+                          type="button"
+                          disabled={deletingJobId === job.id}
+                          onClick={() => void handleDeleteJob(job.id)}
+                        >
+                          {deletingJobId === job.id ? '删除中...' : '删除'}
+                        </button>
                       </span>
                     </div>
                   )

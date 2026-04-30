@@ -167,6 +167,11 @@ export function ChatsPage() {
     try {
       const response = await listAccounts()
       setAccounts(response.accounts)
+      setSelectedAccountId((current) =>
+        response.accounts.some((account) => account.id === current)
+          ? current
+          : response.accounts[0]?.id ?? '',
+      )
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载账号失败')
     }
@@ -180,11 +185,17 @@ export function ChatsPage() {
       }
 
       try {
+        if (!selectedAccountId) {
+          setChats([])
+          setSelectedChatId(undefined)
+          return
+        }
+
         const response = await listChats({
-          accountId: selectedAccountId || undefined,
+          accountId: selectedAccountId,
           query: deferredSearch.trim() || undefined,
           chatType: selectedChatType,
-          limit: 400,
+          limit: 2000,
         })
 
         setChats(response.chats)
@@ -846,8 +857,13 @@ export function ChatsPage() {
           <div className="whatsapp-chat-filter-bar">
             <label className="field compact-field">
               <span>账号</span>
-              <select value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)}>
-                <option value="">全部账号</option>
+              <select
+                value={selectedAccountId}
+                onChange={(event) => {
+                  setSelectedAccountId(event.target.value)
+                  setSelectedChatId(undefined)
+                }}
+              >
                 {accounts.map((account) => (
                   <option key={account.id} value={account.id}>
                     {account.display_name}
@@ -1578,7 +1594,7 @@ function getMessageTranslationKey(message: MessageView, rawText?: string) {
 
 function canOfferMessageTranslation(message: MessageView) {
   const text = message.text_content?.trim()
-  return Boolean(text && !message.from_me && needsChineseTranslation(text))
+  return Boolean(text && needsChineseTranslation(text))
 }
 
 function isMessageTranslationLocked(state?: TranslationState) {

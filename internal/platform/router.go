@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"whatsapp-agent-platform/internal/accounts"
-	"whatsapp-agent-platform/internal/audit"
 	"whatsapp-agent-platform/internal/agents"
+	"whatsapp-agent-platform/internal/audit"
 	"whatsapp-agent-platform/internal/chats"
 	"whatsapp-agent-platform/internal/config"
 	"whatsapp-agent-platform/internal/exports"
 	"whatsapp-agent-platform/internal/health"
+	"whatsapp-agent-platform/internal/scripts"
 )
 
 type RouteDependencies struct {
@@ -20,6 +21,7 @@ type RouteDependencies struct {
 	ChatHandler    *chats.Handler
 	ExportHandler  *exports.Handler
 	AgentHandler   *agents.Handler
+	ScriptHandler  *scripts.Handler
 	LiveHandler    interface{ RegisterRoutes(mux *http.ServeMux) }
 	HealthService  *health.Service
 }
@@ -41,6 +43,9 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config, _ *slog.Logger, deps 
 	}
 	if deps.AgentHandler != nil {
 		deps.AgentHandler.RegisterRoutes(mux)
+	}
+	if deps.ScriptHandler != nil {
+		deps.ScriptHandler.RegisterRoutes(mux)
 	}
 	if deps.LiveHandler != nil {
 		deps.LiveHandler.RegisterRoutes(mux)

@@ -4,7 +4,8 @@ const navItems = [
   { to: '/accounts', label: '账号接入', hint: '创建账号、查看配对状态、管理登录会话' },
   { to: '/chats', label: '对话查看', hint: '按账号和会话筛选，固定窗口浏览消息时间线' },
   { to: '/agents', label: '智能回复', hint: '创建 Agent，接入大模型、Coze、n8n 或 Webhook' },
-  { to: '/exports', label: '导出中心', hint: '多选账号与会话，拆分生成独立导出文件' },
+  { to: '/exports', label: '导出中心', hint: '按单账号多选会话，拆分生成独立导出文件' },
+  { to: '/scripts', label: '剧本', hint: '上传话术、产品知识和流程内容' },
 ]
 
 export function AppShell() {

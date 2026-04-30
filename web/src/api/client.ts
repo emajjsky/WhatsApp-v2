@@ -207,6 +207,15 @@ export interface ExportJobView {
   completed_at?: string
 }
 
+export interface ScriptDocumentView {
+  id: string
+  title: string
+  file_name: string
+  content_type: string
+  byte_size: number
+  created_at: string
+}
+
 export type LiveUpdateType = 'session_changed' | 'chat_stored' | 'message_stored'
 
 export interface LiveUpdate {
@@ -409,6 +418,7 @@ const baseUrl = import.meta.env.VITE_API_BASE_URL?.trim() ?? ''
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { jsonBody, timeoutMs, ...fetchOptions } = options
+  const hasFormDataBody = fetchOptions.body instanceof FormData
   const timeoutController = timeoutMs ? new AbortController() : undefined
   const timeoutHandle = timeoutController
     ? window.setTimeout(() => timeoutController.abort(), timeoutMs)
@@ -417,10 +427,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       ...fetchOptions,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(fetchOptions.headers ?? {}),
-      },
+      headers: hasFormDataBody
+        ? fetchOptions.headers
+        : {
+            'Content-Type': 'application/json',
+            ...(fetchOptions.headers ?? {}),
+          },
       body: jsonBody !== undefined ? JSON.stringify(jsonBody) : fetchOptions.body,
       signal: timeoutController?.signal ?? fetchOptions.signal,
     })
@@ -656,6 +668,10 @@ export async function createExportJob(payload: {
   })
 }
 
+export async function deleteExportJob(jobId: string) {
+  return request<void>(`/api/exports/${jobId}`, { method: 'DELETE' })
+}
+
 export function getExportArtifactUrl(jobId: string) {
   return `${baseUrl}/api/exports/${jobId}/artifact`
 }
@@ -672,6 +688,32 @@ export async function downloadExportArchive(jobIds: string[]) {
     jsonBody: { job_ids: jobIds },
     fallbackFilename: 'whatsapp-exports.zip',
   })
+}
+
+export async function listScripts() {
+  return request<{ scripts: ScriptDocumentView[] }>('/api/scripts')
+}
+
+export async function uploadScript(payload: { title?: string; file?: File; content?: string }) {
+  const formData = new FormData()
+  if (payload.title) {
+    formData.set('title', payload.title)
+  }
+  if (payload.file) {
+    formData.set('file', payload.file)
+  }
+  if (payload.content) {
+    formData.set('content', payload.content)
+  }
+
+  return request<{ script: ScriptDocumentView }>('/api/scripts', {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export async function deleteScript(scriptId: string) {
+  return request<void>(`/api/scripts/${scriptId}`, { method: 'DELETE' })
 }
 
 export async function listAgentRules(params?: { accountId?: string; enabled?: boolean }) {

@@ -216,6 +216,21 @@ ORDER BY created_at DESC`
 	return items, nil
 }
 
+func (r *Repository) Delete(ctx context.Context, id string) error {
+	const query = `DELETE FROM export_jobs WHERE id = $1`
+
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("delete export job %q: %w", id, err)
+	}
+
+	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
 func (r *Repository) MarkRunning(ctx context.Context, id string, startedAt time.Time) error {
 	const query = `
 UPDATE export_jobs

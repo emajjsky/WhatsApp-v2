@@ -949,22 +949,31 @@ a {
 }
 
 .whatsapp-chat-row-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px;
   align-items: center;
+  gap: 8px;
 }
 
 .whatsapp-chat-row-header strong {
   font-size: 14px;
   font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .whatsapp-chat-row-header small {
   color: var(--text-soft);
+  text-align: right;
+  white-space: nowrap;
 }
 
 .whatsapp-chat-row-meta {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
 }
 
@@ -975,6 +984,12 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-soft);
+}
+
+.whatsapp-chat-row-meta .status-badge {
+  width: 58px;
+  justify-self: end;
+  padding-inline: 0;
 }
 
 .chat-list {
@@ -994,6 +1009,36 @@ a {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+}
+
+.chat-row.whatsapp-chat-row {
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+}
+
+.chat-row-header.whatsapp-chat-row-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px;
+  align-items: center;
+}
+
+.chat-row-meta.whatsapp-chat-row-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 58px;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-row-meta.whatsapp-chat-row-meta p {
+  min-width: 0;
+}
+
+.chat-row-meta.whatsapp-chat-row-meta .status-badge {
+  width: 58px;
+  justify-self: end;
+  flex: 0 0 58px;
+  padding-inline: 0;
 }
 
 .two-column-grid {
@@ -2439,6 +2484,82 @@ a {
   gap: 14px;
 }
 
+.scripts-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(420px, 0.95fr) minmax(360px, 1.05fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.scripts-upload-panel,
+.scripts-list-panel {
+  min-height: 0;
+}
+
+.script-upload-drop {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px dashed rgba(28, 115, 98, 0.36);
+  background: rgba(237, 247, 242, 0.7);
+  color: var(--text);
+}
+
+.script-upload-drop input {
+  width: 100%;
+}
+
+.script-upload-drop strong {
+  font-family: var(--display);
+  font-size: 17px;
+}
+
+.script-upload-drop span,
+.script-card span,
+.script-card-meta {
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.script-content-field textarea {
+  min-height: 220px;
+}
+
+.script-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+  padding-right: 6px;
+  align-content: start;
+}
+
+.script-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.script-card strong {
+  display: block;
+  font-family: var(--display);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.script-card-meta {
+  display: grid;
+  justify-items: end;
+  font-size: 12px;
+}
+
 .job-toolbar {
   display: flex;
   align-items: center;
@@ -2469,7 +2590,7 @@ a {
 .job-list-header,
 .job-list-row {
   display: grid;
-  grid-template-columns: 52px 118px 132px minmax(190px, 1fr) 88px 96px 116px;
+  grid-template-columns: 52px 118px 132px minmax(190px, 1fr) 88px 96px 168px;
   gap: 12px;
   align-items: center;
   padding: 14px 16px;
@@ -2505,6 +2626,8 @@ a {
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .job-checkbox-cell {
@@ -2730,8 +2853,10 @@ a {
   .page-accounts,
   .page-chats,
   .page-exports,
+  .page-scripts,
   .page-agents,
   .page-top-grid,
+  .scripts-layout,
   .export-top-grid,
   .agent-settings-panel,
   .agent-provider-fields,
@@ -3811,6 +3936,7 @@ a {
   .page-accounts,
   .page-chats,
   .page-exports,
+  .page-scripts,
   .page-agents {
     height: auto;
     min-height: auto;
@@ -3819,6 +3945,7 @@ a {
 
   .accounts-top-grid,
   .export-top-grid,
+  .scripts-layout,
   .chat-frame,
   .export-form-grid,
   .chat-filter-grid,
@@ -3874,6 +4001,15 @@ a {
   .whatsapp-compose-meta {
     display: grid;
     justify-content: stretch;
+  }
+
+  .whatsapp-chat-row-header {
+    grid-template-columns: minmax(0, 1fr) 74px;
+  }
+
+  .whatsapp-chat-row-meta {
+    grid-template-columns: minmax(0, 1fr) 58px;
+    align-items: center;
   }
 
   .agent-editor-form,
@@ -3994,6 +4130,15 @@ a {
 
   .whatsapp-chat-row {
     grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .whatsapp-chat-row-header {
+    grid-template-columns: minmax(0, 1fr) 74px;
+  }
+
+  .whatsapp-chat-row-meta {
+    grid-template-columns: minmax(0, 1fr) 58px;
+    align-items: center;
   }
 
   .whatsapp-chat-avatar {

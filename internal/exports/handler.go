@@ -176,7 +176,7 @@ func (h *Handler) handleExportArchive(w http.ResponseWriter, r *http.Request) {
 		TargetID:   strings.Join(normalizeIDList(input.JobIDs), ","),
 		Outcome:    audit.OutcomeSuccess,
 		Detail: map[string]any{
-			"job_ids":       normalizeIDList(input.JobIDs),
+			"job_ids":        normalizeIDList(input.JobIDs),
 			"artifact_count": len(artifacts),
 		},
 	})
@@ -201,6 +201,27 @@ func (h *Handler) handleExportByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"job": job})
+	case r.Method == http.MethodDelete && len(parts) == 1:
+		job, err := h.service.DeleteJob(r.Context(), jobID)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		h.recordAudit(r.Context(), r, audit.RecordInput{
+			ActorType:  audit.ActorTypeUser,
+			ActorID:    audit.RequestActorID(r),
+			Action:     "export.job.delete",
+			TargetType: "export_job",
+			TargetID:   job.ID,
+			Outcome:    audit.OutcomeSuccess,
+			Detail: map[string]any{
+				"account_ids": job.AccountIDs,
+				"chat_ids":    job.ChatIDs,
+				"status":      job.Status,
+			},
+		})
+
+		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[1] == "artifact":
 		filePath, err := h.service.ArtifactFilePath(r.Context(), jobID)
 		if err != nil {
