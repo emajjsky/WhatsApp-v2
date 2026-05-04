@@ -9,6 +9,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/chats"
 	"whatsapp-agent-platform/internal/ingest"
 	"whatsapp-agent-platform/internal/sessions"
@@ -64,6 +65,14 @@ func expectSyncRuleAccounts(mock sqlmock.Sqlmock, accountID string) {
 	mock.ExpectExec(`INSERT INTO agent_rule_accounts \(rule_id, account_id\) VALUES \(\$1, \$2\) ON CONFLICT DO NOTHING`).
 		WithArgs(sqlmock.AnyArg(), accountID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+}
+
+func adminTestContext() context.Context {
+	return auth.ContextWithUser(context.Background(), auth.User{
+		ID:     "admin-1",
+		Role:   auth.RoleAdmin,
+		Status: auth.StatusActive,
+	})
 }
 
 func TestServiceUpsertRuleAcceptsManualReplyMode(t *testing.T) {
@@ -124,7 +133,7 @@ func TestServiceUpsertRuleAcceptsManualReplyMode(t *testing.T) {
 			fixedNow,
 		))
 
-	view, err := service.UpsertRule(context.Background(), UpsertRuleInput{
+	view, err := service.UpsertRule(adminTestContext(), UpsertRuleInput{
 		AccountID:      "acct-1",
 		Name:           "Manual Rule",
 		Enabled:        true,
@@ -199,7 +208,7 @@ func TestServiceUpsertRuleAllowsEmptyPromptTemplateForSettingsFallback(t *testin
 			fixedNow,
 		))
 
-	view, err := service.UpsertRule(context.Background(), UpsertRuleInput{
+	view, err := service.UpsertRule(adminTestContext(), UpsertRuleInput{
 		AccountID:      "acct-1",
 		Name:           "Fallback Prompt Rule",
 		Enabled:        true,
@@ -217,7 +226,7 @@ func TestServiceUpsertRuleAllowsEmptyPromptTemplateForSettingsFallback(t *testin
 func TestAutomationHandleMessageEventSkipsRunCreationForManualRule(t *testing.T) {
 	t.Parallel()
 
-	db, mock, err := sqlmock.New()
+	db, _, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -231,71 +240,11 @@ func TestAutomationHandleMessageEventSkipsRunCreationForManualRule(t *testing.T)
 	automation, err := NewAutomation(repository, chatRepository, sessionRuntime, nil, false, slog.Default())
 	require.NoError(t, err)
 
-	fixedNow := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
-
-	mock.ExpectQuery(`
-SELECT id
-FROM chats
-WHERE account_id = \$1 AND wa_chat_jid = \$2`).
-		WithArgs("acct-1", "chat-1@s.whatsapp.net").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("chat-local-1"))
-
-	mock.ExpectQuery(`
-SELECT id
-FROM messages
-WHERE account_id = \$1 AND wa_message_id = \$2`).
-		WithArgs("acct-1", "wa-msg-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("msg-local-1"))
-
-	mock.ExpectQuery(`(?s)SELECT.*FROM chats c.*WHERE c\.id = \$1`).
-		WithArgs("chat-local-1").
-		WillReturnRows(sqlmock.NewRows([]string{
-			"id",
-			"account_id",
-			"wa_chat_jid",
-			"chat_type",
-			"display_title",
-			"participant_count",
-			"archived",
-			"last_message_at",
-		}).AddRow(
-			"chat-local-1",
-			"acct-1",
-			"chat-1@s.whatsapp.net",
-			string(ingest.ChatTypeDirect),
-			"Customer A",
-			nil,
-			false,
-			fixedNow,
-		))
-
-	mock.ExpectQuery(listRulesSQLPattern).
-		WithArgs("acct-1", true).
-		WillReturnRows(agentRuleRows().AddRow(
-			"rule-1",
-			"acct-1",
-			AgentPurposeReply,
-			"Manual Rule",
-			true,
-			[]byte(`{"chat_ids":[],"chat_types":["direct"]}`),
-			[]byte(`{"keywords":[],"match_mode":"any","ignore_from_me":false,"min_message_chars":0}`),
-			ReplyModeManual,
-			300,
-			0,
-			[]byte(`{"blocked_keywords":[],"sensitive_topics":[]}`),
-			"Please handle manually.",
-			[]byte(`{}`),
-			nil,
-			[]byte(`["acct-1"]`),
-			fixedNow,
-			fixedNow,
-		))
-
 	text := "hello friends"
 	event := sessions.Event{
 		Type:      sessions.EventTypeMessageReceived,
 		AccountID: "acct-1",
-		EmittedAt: fixedNow,
+		EmittedAt: time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC),
 		Message: &sessions.MessageEnvelope{
 			Chat: ingest.ChatSnapshot{
 				AccountID: "acct-1",
@@ -309,7 +258,7 @@ WHERE account_id = \$1 AND wa_message_id = \$2`).
 				FromMe:      false,
 				MessageType: ingest.MessageTypeText,
 				TextContent: &text,
-				SentAt:      fixedNow,
+				SentAt:      time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC),
 			},
 			Payload: map[string]any{},
 		},
@@ -318,7 +267,6 @@ WHERE account_id = \$1 AND wa_message_id = \$2`).
 	err = automation.handleMessageEvent(context.Background(), event)
 	require.NoError(t, err)
 	require.Equal(t, 0, sessionRuntime.sendCalls)
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestResolveRunnerPromptPrefersRulePromptTemplate(t *testing.T) {

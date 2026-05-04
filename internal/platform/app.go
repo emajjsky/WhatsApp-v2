@@ -11,6 +11,7 @@ import (
 	"whatsapp-agent-platform/internal/accounts"
 	"whatsapp-agent-platform/internal/agents"
 	"whatsapp-agent-platform/internal/audit"
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/chats"
 	"whatsapp-agent-platform/internal/config"
 	"whatsapp-agent-platform/internal/exports"
@@ -46,6 +47,8 @@ func New(cfg config.Config) (*App, error) {
 		eventBridge     *sessions.EventBridge
 		deps            RouteDependencies
 		agentAutomation *agents.Automation
+		authService     *auth.Service
+		bootstrapAdmin  auth.User
 	)
 
 	if cfg.Database.DSN != "" {
@@ -60,6 +63,37 @@ func New(cfg config.Config) (*App, error) {
 				_ = database.Close()
 				return nil, err
 			}
+		}
+
+		authRepo, err := auth.NewRepository(database.DB())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+		authService, err = auth.NewService(authRepo, auth.ServiceConfig{
+			CookieName:             cfg.Auth.CookieName,
+			SessionTTL:             cfg.Auth.SessionTTL,
+			RegistrationEnabled:    cfg.Auth.RegistrationEnabled,
+			BootstrapAdminEmail:    cfg.Auth.BootstrapAdminEmail,
+			BootstrapAdminPassword: cfg.Auth.BootstrapAdminPassword,
+			BootstrapAdminName:     cfg.Auth.BootstrapAdminName,
+			SecureCookie:           cfg.Auth.SecureCookie,
+		}, logger)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+		bootstrapAdmin, err = authService.Bootstrap(context.Background())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+		logger.Info("auth bootstrap completed", "admin_email", bootstrapAdmin.Email)
+
+		authHandler, err := auth.NewHandler(authService)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
 		}
 
 		accountRepo, err := accounts.NewRepository(database.DB())
@@ -210,7 +244,7 @@ func New(cfg config.Config) (*App, error) {
 		exportHandler.SetAuditRecorder(auditService)
 		agentHandler.SetAuditRecorder(auditService)
 
-		liveHandler, err := sessions.NewLiveHandler(eventBridge)
+		liveHandler, err := sessions.NewLiveHandler(eventBridge, accountAccessChecker{repository: accountRepo})
 		if err != nil {
 			_ = database.Close()
 			return nil, err
@@ -228,6 +262,8 @@ func New(cfg config.Config) (*App, error) {
 		}
 
 		deps.AccountHandler = accountHandler
+		deps.AuthHandler = authHandler
+		deps.AuthService = authService
 		deps.AuditHandler = auditHandler
 		deps.ChatHandler = chatHandler
 		deps.ExportHandler = exportHandler
@@ -244,6 +280,14 @@ func New(cfg config.Config) (*App, error) {
 		}
 		return nil, err
 	}
+	if bootstrapAdmin.ID != "" {
+		if err := scriptService.AssignOrphanDocuments(context.Background(), bootstrapAdmin.ID); err != nil {
+			if database != nil {
+				_ = database.Close()
+			}
+			return nil, err
+		}
+	}
 	scriptHandler, err := scripts.NewHandler(scriptService)
 	if err != nil {
 		if database != nil {
@@ -254,6 +298,9 @@ func New(cfg config.Config) (*App, error) {
 	deps.ScriptHandler = scriptHandler
 
 	deps.HealthService = health.NewService(cfg, databaseSQL(database), sessionManager)
+	if authService != nil {
+		deps.AuthService = authService
+	}
 
 	router := NewRouter(cfg, logger, deps)
 	httpServer := NewHTTPServer(cfg, router, logger)
@@ -295,6 +342,19 @@ func (l accountPhoneLookup) LookupPhone(ctx context.Context, accountID string) (
 	}
 
 	return account.PhoneNumber, nil
+}
+
+type accountAccessChecker struct {
+	repository *accounts.Repository
+}
+
+func (c accountAccessChecker) CanAccessAccount(ctx context.Context, accountID string) bool {
+	if c.repository == nil {
+		return false
+	}
+
+	_, err := c.repository.GetByID(ctx, accountID)
+	return err == nil
 }
 
 func (a *App) Run(ctx context.Context) error {

@@ -110,6 +110,29 @@ LOG_FORMAT=text
 WHATSAPP_PROXY_URL=
 ```
 
+### 登录与管理员
+
+服务器/SaaS 模式已经内置注册登录和管理员后台：
+
+- 第一次启动会自动创建管理员账号。
+- 默认管理员：`admin@example.com`
+- 默认密码：`admin123456`
+- 生产环境必须在 `.env` 里修改默认密码。
+
+推荐配置：
+
+```env
+AUTH_COOKIE_NAME=wa_session
+AUTH_SESSION_TTL=168h
+AUTH_REGISTRATION_ENABLED=false
+AUTH_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+AUTH_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
+AUTH_BOOTSTRAP_ADMIN_NAME=Administrator
+AUTH_SECURE_COOKIE=false
+```
+
+如果使用 HTTPS 部署，把 `AUTH_SECURE_COOKIE=true`。公开注册默认关闭，管理员可以在“系统管理”里创建普通用户、禁用用户、重置密码，并配置全局回复 Agent / 翻译 Agent。
+
 ## 启动方式
 
 ### Windows

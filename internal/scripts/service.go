@@ -12,11 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/support/ids"
 )
 
 type Document struct {
 	ID          string    `json:"id"`
+	UserID      string    `json:"user_id,omitempty"`
 	Title       string    `json:"title"`
 	FileName    string    `json:"file_name"`
 	ContentType string    `json:"content_type"`
@@ -66,7 +68,11 @@ func (s *Service) List(ctx context.Context) ([]Document, error) {
 	}
 
 	result := make([]Document, 0, len(items))
+	currentUser, hasUser := auth.CurrentUser(ctx)
 	for _, item := range items {
+		if hasUser && !currentUser.IsAdmin() && item.UserID != currentUser.ID {
+			continue
+		}
 		result = append(result, item.Document)
 	}
 	sort.Slice(result, func(left, right int) bool {
@@ -101,6 +107,10 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Document, erro
 
 	now := time.Now().UTC()
 	id := ids.NewUUID()
+	ownerID := ""
+	if currentUser, ok := auth.CurrentUser(ctx); ok {
+		ownerID = currentUser.ID
+	}
 	storageName := id + filepath.Ext(fileName)
 	if storageName == id {
 		storageName += ".txt"
@@ -125,6 +135,7 @@ func (s *Service) Upload(ctx context.Context, input UploadInput) (Document, erro
 	item := storedDocument{
 		Document: Document{
 			ID:          id,
+			UserID:      ownerID,
 			Title:       title,
 			FileName:    fileName,
 			ContentType: contentType,
@@ -159,8 +170,12 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 
 	next := make([]storedDocument, 0, len(items))
 	var removed *storedDocument
+	currentUser, hasUser := auth.CurrentUser(ctx)
 	for _, item := range items {
 		if item.ID == trimmedID {
+			if hasUser && !currentUser.IsAdmin() && item.UserID != currentUser.ID {
+				return fmt.Errorf("script not found: %s", trimmedID)
+			}
 			copyItem := item
 			removed = &copyItem
 			continue
@@ -181,6 +196,34 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+func (s *Service) AssignOrphanDocuments(ctx context.Context, userID string) error {
+	trimmedUserID := strings.TrimSpace(userID)
+	if trimmedUserID == "" {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	items, err := s.readIndex(ctx)
+	if err != nil {
+		return err
+	}
+
+	changed := false
+	for index := range items {
+		if strings.TrimSpace(items[index].UserID) == "" {
+			items[index].UserID = trimmedUserID
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+
+	return s.writeIndex(ctx, items)
 }
 
 func (s *Service) readIndex(_ context.Context) ([]storedDocument, error) {

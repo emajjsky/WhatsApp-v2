@@ -16,6 +16,7 @@ type Config struct {
 	Environment  string
 	HTTP         HTTPConfig
 	Database     DatabaseConfig
+	Auth         AuthConfig
 	Logging      LoggingConfig
 	Integrations IntegrationConfig
 }
@@ -39,6 +40,16 @@ type DatabaseConfig struct {
 	DSN           string
 	AutoMigrate   bool
 	MigrationsDir string
+}
+
+type AuthConfig struct {
+	CookieName             string
+	SessionTTL             time.Duration
+	RegistrationEnabled    bool
+	BootstrapAdminEmail    string
+	BootstrapAdminPassword string
+	BootstrapAdminName     string
+	SecureCookie           bool
 }
 
 type IntegrationConfig struct {
@@ -66,6 +77,15 @@ func Load() (Config, error) {
 			DSN:           strings.TrimSpace(os.Getenv("DB_DSN")),
 			AutoMigrate:   boolEnv("DB_AUTO_MIGRATE", true),
 			MigrationsDir: stringEnv("DB_MIGRATIONS_DIR", "deploy/migrations"),
+		},
+		Auth: AuthConfig{
+			CookieName:             stringEnv("AUTH_COOKIE_NAME", "wa_session"),
+			SessionTTL:             durationEnv("AUTH_SESSION_TTL", 7*24*time.Hour),
+			RegistrationEnabled:    boolEnv("AUTH_REGISTRATION_ENABLED", true),
+			BootstrapAdminEmail:    stringEnv("AUTH_BOOTSTRAP_ADMIN_EMAIL", "admin@example.com"),
+			BootstrapAdminPassword: stringEnv("AUTH_BOOTSTRAP_ADMIN_PASSWORD", "admin123456"),
+			BootstrapAdminName:     stringEnv("AUTH_BOOTSTRAP_ADMIN_NAME", "Administrator"),
+			SecureCookie:           boolEnv("AUTH_SECURE_COOKIE", false),
 		},
 		Logging: LoggingConfig{
 			Level:  stringEnv("LOG_LEVEL", "info"),
@@ -167,6 +187,18 @@ func (c Config) Validate() error {
 	}
 	if c.Database.AutoMigrate && strings.TrimSpace(c.Database.MigrationsDir) == "" {
 		return fmt.Errorf("DB_MIGRATIONS_DIR must not be empty when DB_AUTO_MIGRATE is enabled")
+	}
+	if strings.TrimSpace(c.Auth.CookieName) == "" {
+		return fmt.Errorf("AUTH_COOKIE_NAME must not be empty")
+	}
+	if c.Auth.SessionTTL <= 0 {
+		return fmt.Errorf("AUTH_SESSION_TTL must be greater than zero")
+	}
+	if strings.TrimSpace(c.Auth.BootstrapAdminEmail) == "" {
+		return fmt.Errorf("AUTH_BOOTSTRAP_ADMIN_EMAIL must not be empty")
+	}
+	if strings.TrimSpace(c.Auth.BootstrapAdminPassword) == "" {
+		return fmt.Errorf("AUTH_BOOTSTRAP_ADMIN_PASSWORD must not be empty")
 	}
 	if c.Integrations.AgentRunnerBaseURL != "" {
 		parsed, err := url.Parse(c.Integrations.AgentRunnerBaseURL)

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/ingest"
 	"whatsapp-agent-platform/internal/storage"
 )
@@ -125,7 +126,7 @@ WHERE account_id = $1 AND wa_message_id = $2`
 }
 
 func (r *Repository) ListChats(ctx context.Context, filters ChatListFilters) ([]ChatSummary, int, error) {
-	whereClause, args := buildChatListWhere(filters)
+	whereClause, args := buildChatListWhere(ctx, filters)
 
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM chats c WHERE %s`, whereClause)
 
@@ -258,7 +259,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 }
 
 func (r *Repository) GetChatHeader(ctx context.Context, chatID string) (ChatHeader, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     c.id,
     c.account_id,
@@ -302,7 +303,11 @@ LEFT JOIN whatsmeow_lid_map lidmap
 LEFT JOIN whatsmeow_contacts wmpn
     ON wmpn.our_jid = sc.device_id
    AND wmpn.their_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
-WHERE c.id = $1`
+WHERE c.id = $1%s`
+
+	scopeClause, scopeArgs := accountScopeCondition(ctx, "c.account_id", 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{chatID}, scopeArgs...)
 
 	var (
 		header           ChatHeader
@@ -311,7 +316,7 @@ WHERE c.id = $1`
 		lastMessageAt    sql.NullTime
 	)
 
-	if err := r.db.QueryRowContext(ctx, query, chatID).Scan(
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&header.ID,
 		&header.AccountID,
 		&header.WAChatJID,
@@ -343,7 +348,7 @@ func (r *Repository) ListChatHeadersByIDs(ctx context.Context, chatIDs []string)
 		placeholders = append(placeholders, fmt.Sprintf("$%d", index+1))
 	}
 
-	query := fmt.Sprintf(`
+	baseQuery := fmt.Sprintf(`
 SELECT
     c.id,
     c.account_id,
@@ -387,7 +392,11 @@ LEFT JOIN whatsmeow_lid_map lidmap
 LEFT JOIN whatsmeow_contacts wmpn
     ON wmpn.our_jid = sc.device_id
    AND wmpn.their_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
-WHERE c.id IN (%s)`, strings.Join(placeholders, ", "))
+WHERE c.id IN (%s)%%s`, strings.Join(placeholders, ", "))
+
+	scopeClause, scopeArgs := accountScopeCondition(ctx, "c.account_id", len(args)+1)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args = append(args, scopeArgs...)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -457,6 +466,10 @@ func (r *Repository) ListMessages(ctx context.Context, filters MessageListFilter
 	if filters.DateTo != nil {
 		args = append(args, *filters.DateTo)
 		conditions = append(conditions, fmt.Sprintf("m.sent_at < $%d", len(args)))
+	}
+	if scopeCondition, scopeArgs := messageAccountScopeCondition(ctx, len(args)+1); scopeCondition != "" {
+		conditions = append(conditions, scopeCondition)
+		args = append(args, scopeArgs...)
 	}
 
 	limitIndex := len(args) + 1
@@ -658,7 +671,7 @@ ORDER BY created_at ASC`, strings.Join(placeholders, ", "))
 }
 
 func (r *Repository) GetMediaByID(ctx context.Context, mediaID string) (MediaAttachment, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     id,
     message_id,
@@ -669,8 +682,12 @@ SELECT
     sha256,
     storage_key,
     download_status
-FROM media_assets
-WHERE id = $1`
+FROM media_assets ma
+WHERE ma.id = $1%s`
+
+	scopeClause, scopeArgs := mediaAccountScopeCondition(ctx, 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{mediaID}, scopeArgs...)
 
 	var (
 		item       MediaAttachment
@@ -682,7 +699,7 @@ WHERE id = $1`
 		status     sql.NullString
 	)
 
-	if err := r.db.QueryRowContext(ctx, query, mediaID).Scan(
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&item.ID,
 		&item.MessageID,
 		&item.MediaType,
@@ -721,7 +738,7 @@ func ResolveStoragePath(storageKey string) (string, error) {
 	return "", fmt.Errorf("storage key must stay inside data/")
 }
 
-func buildChatListWhere(filters ChatListFilters) (string, []any) {
+func buildChatListWhere(ctx context.Context, filters ChatListFilters) (string, []any) {
 	conditions := []string{"1 = 1"}
 	args := make([]any, 0, 3)
 
@@ -749,8 +766,69 @@ func buildChatListWhere(filters ChatListFilters) (string, []any) {
     )
 )`, index, index, index))
 	}
+	if scopeCondition, scopeArgs := chatAccountScopeCondition(ctx, len(args)+1); scopeCondition != "" {
+		conditions = append(conditions, scopeCondition)
+		args = append(args, scopeArgs...)
+	}
 
 	return strings.Join(conditions, " AND "), args
+}
+
+func chatAccountScopeCondition(ctx context.Context, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(`EXISTS (
+    SELECT 1
+    FROM accounts account_scope
+    WHERE account_scope.id = c.account_id
+      AND account_scope.user_id = $%d
+)`, startIndex), []any{currentUser.ID}
+}
+
+func accountScopeCondition(ctx context.Context, accountColumn string, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(` AND EXISTS (
+    SELECT 1
+    FROM accounts account_scope
+    WHERE account_scope.id = %s
+      AND account_scope.user_id = $%d
+)`, accountColumn, startIndex), []any{currentUser.ID}
+}
+
+func messageAccountScopeCondition(ctx context.Context, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(`EXISTS (
+    SELECT 1
+    FROM accounts account_scope
+    WHERE account_scope.id = m.account_id
+      AND account_scope.user_id = $%d
+)`, startIndex), []any{currentUser.ID}
+}
+
+func mediaAccountScopeCondition(ctx context.Context, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(` AND EXISTS (
+    SELECT 1
+    FROM messages media_message
+    JOIN accounts account_scope ON account_scope.id = media_message.account_id
+    WHERE media_message.id = ma.message_id
+      AND account_scope.user_id = $%d
+)`, startIndex), []any{currentUser.ID}
 }
 
 func extractMessageIDs(messages []MessageView) []string {

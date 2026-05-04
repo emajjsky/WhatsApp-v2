@@ -128,25 +128,19 @@ class OpenAICompatibleConfig:
 def _load_config(config: Mapping[str, Any] | None) -> OpenAICompatibleConfig:
     cfg = config or {}
 
-    base_url = _optional_str(cfg.get("base_url")) or os.getenv("OPENAI_COMPAT_BASE_URL", "").strip()
-    api_key = _optional_str(cfg.get("api_key")) or os.getenv("OPENAI_COMPAT_API_KEY", "").strip()
-    model = _optional_str(cfg.get("model")) or os.getenv("OPENAI_COMPAT_MODEL", "").strip() or "gpt-4o-mini"
+    base_url = _optional_str(cfg.get("base_url"))
+    api_key = _optional_str(cfg.get("api_key"))
+    model = _optional_str(cfg.get("model"))
 
     temperature = _optional_float(cfg.get("temperature"))
-    if temperature is None:
-        temperature = _optional_float(os.getenv("OPENAI_COMPAT_TEMPERATURE"))
     if temperature is None:
         temperature = 0.2
 
     max_tokens = _optional_int(cfg.get("max_tokens"))
     if max_tokens is None:
-        max_tokens = _optional_int(os.getenv("OPENAI_COMPAT_MAX_TOKENS"))
-    if max_tokens is None:
         max_tokens = 320
 
     timeout_seconds = _optional_float(cfg.get("timeout_seconds"))
-    if timeout_seconds is None:
-        timeout_seconds = _optional_float(os.getenv("OPENAI_COMPAT_TIMEOUT_SECONDS"))
     if timeout_seconds is None:
         timeout_seconds = 25.0
 
@@ -158,9 +152,11 @@ def _load_config(config: Mapping[str, Any] | None) -> OpenAICompatibleConfig:
     base_url = _normalize_base_url(base_url)
 
     if not base_url:
-        raise ProviderError("openai_compatible provider requires OPENAI_COMPAT_BASE_URL")
+        raise ProviderError("openai_compatible provider requires base_url")
     if not api_key:
-        raise ProviderError("openai_compatible provider requires OPENAI_COMPAT_API_KEY")
+        raise ProviderError("openai_compatible provider requires api_key")
+    if not model:
+        raise ProviderError("openai_compatible provider requires model")
 
     return OpenAICompatibleConfig(
         base_url=base_url,

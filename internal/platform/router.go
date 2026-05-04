@@ -8,6 +8,7 @@ import (
 	"whatsapp-agent-platform/internal/accounts"
 	"whatsapp-agent-platform/internal/agents"
 	"whatsapp-agent-platform/internal/audit"
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/chats"
 	"whatsapp-agent-platform/internal/config"
 	"whatsapp-agent-platform/internal/exports"
@@ -17,6 +18,8 @@ import (
 
 type RouteDependencies struct {
 	AccountHandler *accounts.Handler
+	AuthHandler    *auth.Handler
+	AuthService    *auth.Service
 	AuditHandler   *audit.Handler
 	ChatHandler    *chats.Handler
 	ExportHandler  *exports.Handler
@@ -29,6 +32,9 @@ type RouteDependencies struct {
 func registerRoutes(mux *http.ServeMux, cfg config.Config, _ *slog.Logger, deps RouteDependencies) {
 	registerBaseRoutes(mux, cfg)
 
+	if deps.AuthHandler != nil {
+		deps.AuthHandler.RegisterRoutes(mux)
+	}
 	if deps.AccountHandler != nil {
 		deps.AccountHandler.RegisterRoutes(mux)
 	}

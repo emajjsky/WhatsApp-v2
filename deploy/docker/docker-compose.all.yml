@@ -54,6 +54,13 @@ services:
       DB_DSN: postgres://postgres:postgres@postgres:5432/whatsapp_agent_platform?sslmode=disable
       DB_AUTO_MIGRATE: "true"
       DB_MIGRATIONS_DIR: deploy/migrations
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-wa_session}
+      AUTH_SESSION_TTL: ${AUTH_SESSION_TTL:-168h}
+      AUTH_REGISTRATION_ENABLED: ${AUTH_REGISTRATION_ENABLED:-true}
+      AUTH_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-admin123456}
+      AUTH_BOOTSTRAP_ADMIN_NAME: ${AUTH_BOOTSTRAP_ADMIN_NAME:-Administrator}
+      AUTH_SECURE_COOKIE: ${AUTH_SECURE_COOKIE:-false}
       AGENT_RUNNER_BASE_URL: http://agent-runner:8090
     ports:
       - "8080:8080"

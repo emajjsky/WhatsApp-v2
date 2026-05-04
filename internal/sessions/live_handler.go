@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,16 +12,21 @@ type liveUpdateSubscriber interface {
 	Subscribe(buffer int) (<-chan LiveUpdate, func())
 }
 
-type LiveHandler struct {
-	subscriber liveUpdateSubscriber
+type accountAccessChecker interface {
+	CanAccessAccount(ctx context.Context, accountID string) bool
 }
 
-func NewLiveHandler(subscriber liveUpdateSubscriber) (*LiveHandler, error) {
+type LiveHandler struct {
+	subscriber liveUpdateSubscriber
+	access     accountAccessChecker
+}
+
+func NewLiveHandler(subscriber liveUpdateSubscriber, access accountAccessChecker) (*LiveHandler, error) {
 	if subscriber == nil {
 		return nil, fmt.Errorf("live handler requires a subscriber")
 	}
 
-	return &LiveHandler{subscriber: subscriber}, nil
+	return &LiveHandler{subscriber: subscriber, access: access}, nil
 }
 
 func (h *LiveHandler) RegisterRoutes(mux *http.ServeMux) {
@@ -60,6 +66,9 @@ func (h *LiveHandler) handleStream(w http.ResponseWriter, r *http.Request) {
 		case update, ok := <-updates:
 			if !ok {
 				return
+			}
+			if h.access != nil && !h.access.CanAccessAccount(r.Context(), update.AccountID) {
+				continue
 			}
 
 			payload, err := json.Marshal(update)

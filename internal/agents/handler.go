@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"whatsapp-agent-platform/internal/audit"
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/httpx"
 )
 
@@ -44,6 +45,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agents/settings", h.handleSettings)
 	mux.HandleFunc("/api/agents/rules", h.handleRules)
 	mux.HandleFunc("/api/agents/rules/", h.handleRuleByID)
+	mux.HandleFunc("/api/admin/agent-configs", h.handleSystemConfigs)
+	mux.HandleFunc("/api/admin/agent-configs/", h.handleSystemConfigByID)
+	mux.HandleFunc("/api/agent-configs", h.handleAvailableSystemConfigs)
 	mux.HandleFunc("/api/agent-runs", h.handleRuns)
 	mux.HandleFunc("/api/agent-runs/generate", h.handleGenerateRun)
 	mux.HandleFunc("/api/agent-runs/generate/stream", h.handleGenerateRunStream)
@@ -63,6 +67,10 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"settings": settings})
 	case http.MethodPost:
+		if _, err := auth.RequireAdmin(r.Context()); err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
 		var input UpsertSettingsInput
 		if err := httpx.DecodeJSON(r, &input); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, err.Error())
@@ -111,6 +119,10 @@ func (h *Handler) handleRules(w http.ResponseWriter, r *http.Request) {
 
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"rules": items})
 	case http.MethodPost:
+		if _, err := auth.RequireAdmin(r.Context()); err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
 		var input UpsertRuleInput
 		if err := httpx.DecodeJSON(r, &input); err != nil {
 			httpx.WriteError(w, http.StatusBadRequest, err.Error())
@@ -166,6 +178,10 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if _, err := auth.RequireAdmin(r.Context()); err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
 		rule, err := h.service.DeleteRule(r.Context(), ruleID)
 		if err != nil {
 			h.writeServiceError(w, err)
@@ -190,6 +206,10 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) != 2 || r.Method != http.MethodPost {
 		http.NotFound(w, r)
+		return
+	}
+	if _, err := auth.RequireAdmin(r.Context()); err != nil {
+		h.writeServiceError(w, err)
 		return
 	}
 
@@ -229,6 +249,73 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rule": rule})
 }
 
+func (h *Handler) handleSystemConfigs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		items, err := h.service.ListSystemConfigs(r.Context())
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"configs": items})
+	case http.MethodPost:
+		var input UpsertSystemConfigInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		config, err := h.service.UpsertSystemConfig(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"config": config})
+	default:
+		httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (h *Handler) handleSystemConfigByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin/agent-configs/")
+	id := strings.Trim(path, "/")
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodDelete {
+		httpx.WriteMethodNotAllowed(w, http.MethodDelete)
+		return
+	}
+
+	if err := h.service.DeleteSystemConfig(r.Context(), id); err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleAvailableSystemConfigs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+
+	items, err := h.service.ListAvailableSystemConfigs(
+		r.Context(),
+		AgentPurpose(strings.TrimSpace(r.URL.Query().Get("purpose"))),
+	)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"configs": items})
+}
+
 func (h *Handler) handleRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpx.WriteMethodNotAllowed(w, http.MethodGet)
@@ -262,6 +349,7 @@ func (h *Handler) handleGenerateRun(w http.ResponseWriter, r *http.Request) {
 
 	var payload struct {
 		ChatID              string  `json:"chat_id"`
+		AgentID             string  `json:"agent_id,omitempty"`
 		RuleID              string  `json:"rule_id,omitempty"`
 		MessageText         *string `json:"message_text,omitempty"`
 		ContextEnabled      *bool   `json:"context_enabled,omitempty"`
@@ -274,6 +362,7 @@ func (h *Handler) handleGenerateRun(w http.ResponseWriter, r *http.Request) {
 
 	run, err := h.automation.GenerateRun(r.Context(), GenerateRunInput{
 		ChatID:              payload.ChatID,
+		AgentID:             payload.AgentID,
 		RuleID:              payload.RuleID,
 		MessageText:         payload.MessageText,
 		ContextEnabled:      optionalBoolValue(payload.ContextEnabled, true),
@@ -314,6 +403,7 @@ func (h *Handler) handleTranslateText(w http.ResponseWriter, r *http.Request) {
 
 	var payload struct {
 		AccountID          string `json:"account_id"`
+		AgentID            string `json:"agent_id,omitempty"`
 		Text               string `json:"text"`
 		TargetLanguage     string `json:"target_language"`
 		TargetLanguageName string `json:"target_language_name,omitempty"`
@@ -325,6 +415,7 @@ func (h *Handler) handleTranslateText(w http.ResponseWriter, r *http.Request) {
 
 	translation, err := h.automation.TranslateText(r.Context(), TranslateTextInput{
 		AccountID:          payload.AccountID,
+		AgentID:            payload.AgentID,
 		Text:               payload.Text,
 		TargetLanguage:     payload.TargetLanguage,
 		TargetLanguageName: payload.TargetLanguageName,
@@ -349,6 +440,7 @@ func (h *Handler) handleGenerateRunStream(w http.ResponseWriter, r *http.Request
 
 	var payload struct {
 		ChatID              string  `json:"chat_id"`
+		AgentID             string  `json:"agent_id,omitempty"`
 		RuleID              string  `json:"rule_id,omitempty"`
 		MessageText         *string `json:"message_text,omitempty"`
 		ContextEnabled      *bool   `json:"context_enabled,omitempty"`
@@ -369,6 +461,7 @@ func (h *Handler) handleGenerateRunStream(w http.ResponseWriter, r *http.Request
 		r.Context(),
 		GenerateRunInput{
 			ChatID:              payload.ChatID,
+			AgentID:             payload.AgentID,
 			RuleID:              payload.RuleID,
 			MessageText:         payload.MessageText,
 			ContextEnabled:      optionalBoolValue(payload.ContextEnabled, true),
@@ -466,6 +559,10 @@ func (h *Handler) handleRunByID(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, auth.ErrUnauthenticated):
+		httpx.WriteError(w, http.StatusUnauthorized, err.Error())
+	case errors.Is(err, auth.ErrForbidden):
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrRuleNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrSettingsNotFound):

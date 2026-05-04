@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/storage"
 )
 
 type Account struct {
 	ID            string
+	UserID        string
 	DisplayName   string
 	PhoneNumber   *string
 	Status        string
@@ -36,17 +39,26 @@ func (r *Repository) Create(ctx context.Context, account Account) error {
 	const query = `
 INSERT INTO accounts (
     id,
+    user_id,
     display_name,
     phone_number,
     status,
     platform_label,
     last_seen_at
-) VALUES ($1, $2, $3, $4, $5, $6)`
+) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+
+	userID := strings.TrimSpace(account.UserID)
+	if userID == "" {
+		if currentUser, ok := auth.CurrentUser(ctx); ok {
+			userID = currentUser.ID
+		}
+	}
 
 	if _, err := r.db.ExecContext(
 		ctx,
 		query,
 		account.ID,
+		nullableTrimmedString(userID),
 		account.DisplayName,
 		account.PhoneNumber,
 		account.Status,
@@ -60,9 +72,10 @@ INSERT INTO accounts (
 }
 
 func (r *Repository) GetByID(ctx context.Context, id string) (Account, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     id,
+    user_id,
     display_name,
     phone_number,
     status,
@@ -71,17 +84,23 @@ SELECT
     created_at,
     updated_at
 FROM accounts
-WHERE id = $1`
+WHERE id = $1%s`
+
+	scopeClause, scopeArgs := accountRowScope(ctx, 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{id}, scopeArgs...)
 
 	var (
 		account       Account
+		userID        sql.NullString
 		phoneNumber   sql.NullString
 		platformLabel sql.NullString
 		lastSeenAt    sql.NullTime
 	)
 
-	if err := r.db.QueryRowContext(ctx, query, id).Scan(
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&account.ID,
+		&userID,
 		&account.DisplayName,
 		&phoneNumber,
 		&account.Status,
@@ -93,6 +112,7 @@ WHERE id = $1`
 		return Account{}, fmt.Errorf("get account %q: %w", id, err)
 	}
 
+	account.UserID = userID.String
 	account.PhoneNumber = nullableString(phoneNumber)
 	account.PlatformLabel = nullableString(platformLabel)
 	account.LastSeenAt = nullableTime(lastSeenAt)
@@ -101,9 +121,10 @@ WHERE id = $1`
 }
 
 func (r *Repository) List(ctx context.Context) ([]Account, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     id,
+    user_id,
     display_name,
     phone_number,
     status,
@@ -112,9 +133,13 @@ SELECT
     created_at,
     updated_at
 FROM accounts
+WHERE 1 = 1%s
 ORDER BY created_at DESC`
 
-	rows, err := r.db.QueryContext(ctx, query)
+	scopeClause, scopeArgs := accountRowScope(ctx, 1)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+
+	rows, err := r.db.QueryContext(ctx, query, scopeArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
@@ -124,6 +149,7 @@ ORDER BY created_at DESC`
 	for rows.Next() {
 		var (
 			account       Account
+			userID        sql.NullString
 			phoneNumber   sql.NullString
 			platformLabel sql.NullString
 			lastSeenAt    sql.NullTime
@@ -131,6 +157,7 @@ ORDER BY created_at DESC`
 
 		if err := rows.Scan(
 			&account.ID,
+			&userID,
 			&account.DisplayName,
 			&phoneNumber,
 			&account.Status,
@@ -142,6 +169,7 @@ ORDER BY created_at DESC`
 			return nil, fmt.Errorf("scan account row: %w", err)
 		}
 
+		account.UserID = userID.String
 		account.PhoneNumber = nullableString(phoneNumber)
 		account.PlatformLabel = nullableString(platformLabel)
 		account.LastSeenAt = nullableTime(lastSeenAt)
@@ -157,15 +185,19 @@ ORDER BY created_at DESC`
 }
 
 func (r *Repository) UpdateStatus(ctx context.Context, id, status string, lastSeenAt *time.Time) error {
-	const query = `
+	const baseQuery = `
 UPDATE accounts
 SET
     status = $2,
     last_seen_at = $3,
     updated_at = NOW()
-WHERE id = $1`
+WHERE id = $1%s`
 
-	if _, err := r.db.ExecContext(ctx, query, id, status, lastSeenAt); err != nil {
+	scopeClause, scopeArgs := accountRowScope(ctx, 4)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{id, status, lastSeenAt}, scopeArgs...)
+
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("update account %q status: %w", id, err)
 	}
 
@@ -173,9 +205,12 @@ WHERE id = $1`
 }
 
 func (r *Repository) Delete(ctx context.Context, id string) error {
-	const query = `DELETE FROM accounts WHERE id = $1`
+	const baseQuery = `DELETE FROM accounts WHERE id = $1%s`
+	scopeClause, scopeArgs := accountRowScope(ctx, 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{id}, scopeArgs...)
 
-	result, err := r.db.ExecContext(ctx, query, id)
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("delete account %q: %w", id, err)
 	}
@@ -189,6 +224,24 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+func accountRowScope(ctx context.Context, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(" AND user_id = $%d", startIndex), []any{currentUser.ID}
+}
+
+func nullableTrimmedString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+
+	return &trimmed
 }
 
 func nullableString(value sql.NullString) *string {

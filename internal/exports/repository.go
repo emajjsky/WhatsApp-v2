@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/storage"
 )
 
@@ -68,7 +70,7 @@ INSERT INTO export_jobs (
 }
 
 func (r *Repository) GetByID(ctx context.Context, id string) (ExportJob, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     id,
     account_id,
@@ -87,7 +89,11 @@ SELECT
     started_at,
     completed_at
 FROM export_jobs
-WHERE id = $1`
+WHERE id = $1%s`
+
+	scopeClause, scopeArgs := exportAccountScope(ctx, "account_id", 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{id}, scopeArgs...)
 
 	var (
 		job          ExportJob
@@ -101,7 +107,7 @@ WHERE id = $1`
 		completedAt  sql.NullTime
 	)
 
-	if err := r.db.QueryRowContext(ctx, query, id).Scan(
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&job.ID,
 		&job.AccountID,
 		&job.ChatID,
@@ -135,7 +141,7 @@ WHERE id = $1`
 }
 
 func (r *Repository) List(ctx context.Context) ([]ExportJob, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     id,
     account_id,
@@ -154,9 +160,13 @@ SELECT
     started_at,
     completed_at
 FROM export_jobs
+WHERE 1 = 1%s
 ORDER BY created_at DESC`
 
-	rows, err := r.db.QueryContext(ctx, query)
+	scopeClause, scopeArgs := exportAccountScope(ctx, "account_id", 1)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+
+	rows, err := r.db.QueryContext(ctx, query, scopeArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("list export jobs: %w", err)
 	}
@@ -217,9 +227,12 @@ ORDER BY created_at DESC`
 }
 
 func (r *Repository) Delete(ctx context.Context, id string) error {
-	const query = `DELETE FROM export_jobs WHERE id = $1`
+	const baseQuery = `DELETE FROM export_jobs WHERE id = $1%s`
+	scopeClause, scopeArgs := exportAccountScope(ctx, "account_id", 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{id}, scopeArgs...)
 
-	result, err := r.db.ExecContext(ctx, query, id)
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("delete export job %q: %w", id, err)
 	}
@@ -229,6 +242,25 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+func exportAccountScope(ctx context.Context, accountColumn string, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(` AND EXISTS (
+    SELECT 1
+    FROM accounts account_scope
+    WHERE account_scope.id = export_jobs.%s
+      AND account_scope.user_id = $%d
+) AND NOT EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements_text(COALESCE(export_jobs.account_ids_json, jsonb_build_array(export_jobs.%s::text))) AS scoped_account(account_id)
+    LEFT JOIN accounts account_scope_all ON account_scope_all.id = scoped_account.account_id::uuid
+    WHERE account_scope_all.user_id IS DISTINCT FROM $%d
+)`, strings.TrimSpace(accountColumn), startIndex, strings.TrimSpace(accountColumn), startIndex), []any{currentUser.ID}
 }
 
 func (r *Repository) MarkRunning(ctx context.Context, id string, startedAt time.Time) error {

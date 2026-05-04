@@ -9,8 +9,8 @@ import {
 import {
   getChatMessages,
   getMediaAssetUrl,
-  listAgentRules,
   listAccounts,
+  listAvailableSystemAgentConfigs,
   listChats,
   sendAgentRun,
   sendChatMedia,
@@ -19,7 +19,6 @@ import {
   subscribeLiveUpdates,
   translateText,
   type AccountView,
-  type AgentRuleView,
   type AgentRunView,
   type ChatHeader,
   type ChatSummary,
@@ -28,6 +27,7 @@ import {
   type MessageHistoryResponse,
   type MessageView,
   type SendChatMediaType,
+  type SystemAgentConfigView,
   type TranslationView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
@@ -124,8 +124,6 @@ export function ChatsPage() {
   const [error, setError] = useState<string>()
   const [composeNotice, setComposeNotice] = useState<string>()
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
-  const [assistantRules, setAssistantRules] = useState<AgentRuleView[]>([])
-  const [assistantRuleId, setAssistantRuleId] = useState('')
   const [assistantRun, setAssistantRun] = useState<AgentRunView>()
   const [assistantDraft, setAssistantDraft] = useState('')
   const [messageTranslations, setMessageTranslations] =
@@ -136,6 +134,10 @@ export function ChatsPage() {
   const [draftTranslationBusy, setDraftTranslationBusy] = useState(false)
   const [assistantContextEnabled, setAssistantContextEnabled] = useState(true)
   const [assistantContextLimit, setAssistantContextLimit] = useState(12)
+  const [replyAgents, setReplyAgents] = useState<SystemAgentConfigView[]>([])
+  const [translationAgents, setTranslationAgents] = useState<SystemAgentConfigView[]>([])
+  const [selectedReplyAgentId, setSelectedReplyAgentId] = useState('')
+  const [agentConfigsLoading, setAgentConfigsLoading] = useState(true)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [assistantSending, setAssistantSending] = useState(false)
   const [assistantNotice, setAssistantNotice] = useState<string>()
@@ -174,6 +176,27 @@ export function ChatsPage() {
       )
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载账号失败')
+    }
+  }, [])
+
+  const loadAvailableAgentConfigs = useCallback(async () => {
+    setAgentConfigsLoading(true)
+    try {
+      const [replyResponse, translationResponse] = await Promise.all([
+        listAvailableSystemAgentConfigs({ purpose: 'reply' }),
+        listAvailableSystemAgentConfigs({ purpose: 'translation' }),
+      ])
+      setReplyAgents(replyResponse.configs)
+      setTranslationAgents(translationResponse.configs)
+      setSelectedReplyAgentId((current) =>
+        replyResponse.configs.some((config) => config.id === current)
+          ? current
+          : replyResponse.configs[0]?.id ?? '',
+      )
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载智能体配置失败')
+    } finally {
+      setAgentConfigsLoading(false)
     }
   }, [])
 
@@ -273,11 +296,13 @@ export function ChatsPage() {
     }
   }, [])
 
-  const historyAccountId = history?.chat.account_id ?? ''
-
   useEffect(() => {
     void loadAccountsList()
   }, [loadAccountsList])
+
+  useEffect(() => {
+    void loadAvailableAgentConfigs()
+  }, [loadAvailableAgentConfigs])
 
   useEffect(() => {
     void loadChatsList()
@@ -323,38 +348,6 @@ export function ChatsPage() {
     }
     assistantDraftRef.current.scrollTop = assistantDraftRef.current.scrollHeight
   }, [assistantBusy, assistantDraft])
-
-  useEffect(() => {
-    if (!historyAccountId) {
-      setAssistantRules([])
-      setAssistantRuleId('')
-      return
-    }
-
-    let cancelled = false
-
-    async function loadAssistantRules() {
-      try {
-        const response = await listAgentRules({ accountId: historyAccountId })
-        if (cancelled) {
-          return
-        }
-
-        setAssistantRules(response.rules)
-      } catch (loadError) {
-        if (!cancelled) {
-          setAssistantRules([])
-          setError(loadError instanceof Error ? loadError.message : '加载 Agent 失败')
-        }
-      }
-    }
-
-    void loadAssistantRules()
-
-    return () => {
-      cancelled = true
-    }
-  }, [historyAccountId])
 
   useEffect(() => {
     const timeline = timelineRef.current
@@ -575,6 +568,13 @@ export function ChatsPage() {
     if (!text || !accountID || !translationKey) {
       return
     }
+    if (translationAgents.length === 0) {
+      setMessageTranslations((current) => ({
+        ...current,
+        [translationKey]: { error: '管理员后台还没有启用翻译智能体' },
+      }))
+      return
+    }
     if (
       pendingMessageTranslationKeysRef.current.has(translationKey) ||
       isMessageTranslationLocked(messageTranslations[translationKey])
@@ -629,6 +629,10 @@ export function ChatsPage() {
     if (!history || !assistantDraft.trim() || draftTranslationBusy) {
       return
     }
+    if (translationAgents.length === 0) {
+      setAssistantNotice('管理员后台还没有启用翻译智能体')
+      return
+    }
 
     const option = resolveLanguageOption(draftTargetLanguage, draftTargetLanguageName)
     setDraftTranslationBusy(true)
@@ -663,10 +667,15 @@ export function ChatsPage() {
     setTranslatedDraft('')
 
     try {
+      if (!selectedReplyAgentId) {
+        setAssistantNotice('请先选择回复智能体')
+        return
+      }
+
       await streamGenerateAgentRun(
         {
           chat_id: selectedChatId,
-          rule_id: effectiveAssistantRuleId || undefined,
+          agent_id: selectedReplyAgentId,
           context_enabled: assistantContextEnabled,
           context_message_limit: assistantContextLimit,
         },
@@ -808,19 +817,16 @@ export function ChatsPage() {
     })
   }
 
+  const selectedReplyAgent = replyAgents.find((item) => item.id === selectedReplyAgentId)
+  const activeTranslationAgent = translationAgents[0]
   const selectedChat = chats.find((item) => item.id === selectedChatId)
-  const compatibleAssistantRules =
-    history && selectedChat
-      ? assistantRules.filter((rule) => isRuleUsableInChat(rule, history.chat))
-      : []
-  const effectiveAssistantRuleId = compatibleAssistantRules.some((rule) => rule.id === assistantRuleId)
-    ? assistantRuleId
-    : compatibleAssistantRules[0]?.id ?? ''
-  const selectedAssistantRule = compatibleAssistantRules.find(
-    (rule) => rule.id === effectiveAssistantRuleId,
-  )
+  const hasSystemAssistantFallback = Boolean(history && selectedChat)
   const canGenerateAssistantDraft = Boolean(
-    selectedChatId && history && compatibleAssistantRules.length > 0 && !assistantBusy,
+    selectedChatId &&
+      history &&
+      hasSystemAssistantFallback &&
+      selectedReplyAgentId &&
+      !assistantBusy,
   )
   const canUseAssistantDraft = Boolean(
     assistantRun?.status === 'ready_for_review' && assistantDraft.trim(),
@@ -983,7 +989,7 @@ export function ChatsPage() {
 
                       {renderMessageTranslation(
                         messageTranslations[getMessageTranslationKey(message)],
-                        canOfferMessageTranslation(message)
+                        canOfferMessageTranslation(message) && translationAgents.length > 0
                           ? () => void translateMessageToChinese(message)
                           : undefined,
                       )}
@@ -1132,31 +1138,42 @@ export function ChatsPage() {
                 <strong>{getChatDisplayName(history.chat)}</strong>
                 <p>{history.chat.wa_chat_jid}</p>
                 <div className="assistant-chip-row">
-                  <span className="toolbar-chip active">
-                    {selectedAssistantRule ? getAgentProviderLabel(selectedAssistantRule) : '未选择'}
+                  <span className="toolbar-chip active">管理员后台智能体</span>
+                  <span className="toolbar-chip">{selectedReplyAgent?.name || '未选择回复智能体'}</span>
+                  <span className="toolbar-chip">
+                    {activeTranslationAgent ? `翻译：${activeTranslationAgent.name}` : '未启用翻译智能体'}
                   </span>
-                  <span className="toolbar-chip">{compatibleAssistantRules.length} 个 Agent</span>
                 </div>
               </section>
 
               <section className="assistant-card">
                 <span className="assistant-section-label">Agent 回复</span>
-                {compatibleAssistantRules.length > 0 ? (
-                  <label className="field compact-field assistant-rule-field">
-                    <span>选择 Agent</span>
+                {agentConfigsLoading ? (
+                  <div className="warning-banner">正在加载管理员后台智能体配置...</div>
+                ) : replyAgents.length ? (
+                  <label className="field assistant-agent-field">
+                    <span>回复智能体</span>
                     <select
-                      value={effectiveAssistantRuleId}
-                      onChange={(event) => setAssistantRuleId(event.target.value)}
+                      value={selectedReplyAgentId}
+                      onChange={(event) => {
+                        setSelectedReplyAgentId(event.target.value)
+                        setAssistantRun(undefined)
+                        setAssistantDraft('')
+                        setTranslatedDraft('')
+                      }}
+                      disabled={assistantBusy}
                     >
-                      {compatibleAssistantRules.map((rule) => (
-                        <option key={rule.id} value={rule.id}>
-                          {rule.name} · {getAgentProviderLabel(rule)}
+                      {replyAgents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name}
                         </option>
                       ))}
                     </select>
                   </label>
                 ) : (
-                  <div className="warning-banner">当前会话没有可用 Agent，请先到智能回复页配置 API。</div>
+                  <div className="warning-banner">
+                    管理员后台还没有启用回复智能体，当前不能生成回复建议。
+                  </div>
                 )}
 
                 <div className="assistant-context-controls">
@@ -1212,6 +1229,11 @@ export function ChatsPage() {
                   rows={7}
                 />
                 <div className="assistant-translation-panel">
+                  <div className="assistant-chip-row">
+                    <span className="toolbar-chip active">
+                      {activeTranslationAgent ? `当前翻译：${activeTranslationAgent.name}` : '未启用翻译智能体'}
+                    </span>
+                  </div>
                   <div className="assistant-translation-row">
                     <label className="field compact-field">
                       <span>译文语种</span>
@@ -1235,7 +1257,7 @@ export function ChatsPage() {
                       className="secondary-button assistant-action-button"
                       type="button"
                       onClick={() => void translateDraftToTarget()}
-                      disabled={!assistantDraft.trim() || draftTranslationBusy}
+                      disabled={!assistantDraft.trim() || translationAgents.length === 0 || draftTranslationBusy}
                     >
                       {draftTranslationBusy ? '翻译中...' : '翻译草稿'}
                     </button>
@@ -1274,18 +1296,6 @@ export function ChatsPage() {
                 </div>
               </section>
 
-              <section className="assistant-card assistant-legacy-actions">
-                <span className="assistant-section-label">快捷操作</span>
-                <button className="secondary-button assistant-action-button" type="button" disabled>
-                  生成回复建议
-                </button>
-                <button className="secondary-button assistant-action-button" type="button" disabled>
-                  切换 Agent
-                </button>
-                <button className="secondary-button assistant-action-button" type="button" disabled>
-                  写回输入框
-                </button>
-              </section>
             </div>
           ) : (
             <EmptyPanel title="先选一个会话" description="右侧助手会基于当前聊天上下文工作。" />
@@ -1425,50 +1435,6 @@ function choosePreferredChatId(chats: ChatSummary[], current?: string) {
 
   const firstSendable = chats.find((chat) => isChatSendable(chat.wa_chat_jid, chat.chat_type))
   return firstSendable?.id ?? chats[0]?.id
-}
-
-function isRuleUsableInChat(rule: AgentRuleView, chat: ChatHeader) {
-  if (rule.purpose === 'translation') {
-    return false
-  }
-  if (rule.reply_mode === 'manual') {
-    return false
-  }
-
-  const boundAccountIds = rule.account_ids ?? [rule.account_id]
-  if (!boundAccountIds.includes(chat.account_id)) {
-    return false
-  }
-
-  const scopedChatIds = rule.scope_filter.chat_ids ?? []
-  if (scopedChatIds.length > 0 && !scopedChatIds.includes(chat.id)) {
-    return false
-  }
-
-  const scopedChatTypes = rule.scope_filter.chat_types ?? []
-  if (scopedChatTypes.length > 0 && !scopedChatTypes.includes(chat.chat_type)) {
-    return false
-  }
-
-  return true
-}
-
-function getAgentProviderLabel(agent: AgentRuleView) {
-  const type = String(agent.provider_config?.type ?? '').trim().toLowerCase()
-  switch (type) {
-    case 'coze':
-      return 'Coze'
-    case 'n8n':
-      return 'n8n'
-    case 'webhook':
-      return 'Webhook'
-    case 'openai':
-    case 'openai_compatible':
-    case 'openai-compatible':
-      return '大模型 API'
-    default:
-      return 'Agent'
-  }
 }
 
 function getChatDisplayName(chat: ChatDisplaySource) {

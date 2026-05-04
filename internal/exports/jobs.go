@@ -181,6 +181,11 @@ func (s *Service) CreateJob(ctx context.Context, input CreateJobInput) (JobView,
 		return JobView{}, fmt.Errorf("account_ids is required")
 	}
 
+	headerAccounts := uniqueAccountIDs(headers)
+	if len(accountIDs) != len(headerAccounts) || !sameStringSet(accountIDs, headerAccounts) {
+		return JobView{}, fmt.Errorf("selected accounts must match selected chats")
+	}
+
 	validAccounts := make(map[string]struct{}, len(accountIDs))
 	for _, accountID := range accountIDs {
 		validAccounts[accountID] = struct{}{}
@@ -581,6 +586,26 @@ func uniqueAccountIDs(headers []chats.ChatHeader) []string {
 	}
 
 	return accountIDs
+}
+
+func sameStringSet(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+
+	seen := make(map[string]int, len(left))
+	for _, value := range left {
+		seen[strings.TrimSpace(value)]++
+	}
+	for _, value := range right {
+		trimmed := strings.TrimSpace(value)
+		if seen[trimmed] == 0 {
+			return false
+		}
+		seen[trimmed]--
+	}
+
+	return true
 }
 
 func resolveChatTitle(header chats.ChatHeader) string {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"whatsapp-agent-platform/internal/accounts"
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/ingest"
 	"whatsapp-agent-platform/internal/support/ids"
 )
@@ -52,7 +53,7 @@ func (s *Service) ListRules(ctx context.Context, filters RuleListFilters) ([]Rul
 
 	views := make([]RuleView, 0, len(items))
 	for _, item := range items {
-		views = append(views, mapRuleToView(item))
+		views = append(views, mapRuleToViewForContext(ctx, item))
 	}
 
 	return views, nil
@@ -64,10 +65,14 @@ func (s *Service) GetRule(ctx context.Context, ruleID string) (RuleView, error) 
 		return RuleView{}, mapRuleError(ruleID, err)
 	}
 
-	return mapRuleToView(rule), nil
+	return mapRuleToViewForContext(ctx, rule), nil
 }
 
 func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleView, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return RuleView{}, err
+	}
+
 	accountID := strings.TrimSpace(input.AccountID)
 	if accountID == "" {
 		return RuleView{}, fmt.Errorf("account_id is required")
@@ -213,6 +218,10 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 }
 
 func (s *Service) SetRuleEnabled(ctx context.Context, ruleID string, enabled bool) (RuleView, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return RuleView{}, err
+	}
+
 	rule, err := s.repository.GetRuleByID(ctx, strings.TrimSpace(ruleID))
 	if err != nil {
 		return RuleView{}, mapRuleError(ruleID, err)
@@ -240,6 +249,10 @@ func (s *Service) SetRuleEnabled(ctx context.Context, ruleID string, enabled boo
 }
 
 func (s *Service) DeleteRule(ctx context.Context, ruleID string) (RuleView, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return RuleView{}, err
+	}
+
 	rule, err := s.repository.GetRuleByID(ctx, strings.TrimSpace(ruleID))
 	if err != nil {
 		return RuleView{}, mapRuleError(ruleID, err)
@@ -253,6 +266,10 @@ func (s *Service) DeleteRule(ctx context.Context, ruleID string) (RuleView, erro
 }
 
 func (s *Service) GetSettings(ctx context.Context, accountID string) (SettingsView, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return SettingsView{}, err
+	}
+
 	trimmedAccountID := strings.TrimSpace(accountID)
 	if trimmedAccountID == "" {
 		return SettingsView{}, fmt.Errorf("account_id is required")
@@ -267,6 +284,10 @@ func (s *Service) GetSettings(ctx context.Context, accountID string) (SettingsVi
 }
 
 func (s *Service) UpsertSettings(ctx context.Context, input UpsertSettingsInput) (SettingsView, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return SettingsView{}, err
+	}
+
 	accountID := strings.TrimSpace(input.AccountID)
 	if accountID == "" {
 		return SettingsView{}, fmt.Errorf("account_id is required")
@@ -319,6 +340,131 @@ func (s *Service) UpsertSettings(ctx context.Context, input UpsertSettingsInput)
 	}
 
 	return mapSettingsToView(stored), nil
+}
+
+func mapRuleToViewForContext(ctx context.Context, rule AgentRule) RuleView {
+	view := mapRuleToView(rule)
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return view
+	}
+
+	view.ProviderConfig = publicProviderConfig(view.ProviderConfig)
+	view.PromptTemplate = ""
+	view.KnowledgeBinding = nil
+	return view
+}
+
+func publicProviderConfig(config map[string]any) map[string]any {
+	result := make(map[string]any)
+	for _, key := range []string{"type", "model", "enable_thinking"} {
+		if value, ok := config[key]; ok {
+			result[key] = value
+		}
+	}
+
+	return result
+}
+
+func (s *Service) ListSystemConfigs(ctx context.Context) ([]SystemAgentConfig, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
+
+	items, err := s.repository.ListSystemConfigs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (s *Service) ListAvailableSystemConfigs(ctx context.Context, purpose AgentPurpose) ([]SystemAgentConfig, error) {
+	if _, err := auth.RequireUser(ctx); err != nil {
+		return nil, err
+	}
+
+	normalizedPurpose := normalizeAgentPurpose(purpose)
+	if purpose != "" && normalizedPurpose == "" {
+		return nil, fmt.Errorf("unsupported purpose %q", purpose)
+	}
+
+	items, err := s.repository.ListEnabledSystemConfigs(ctx, normalizedPurpose)
+	if err != nil {
+		return nil, err
+	}
+	if normalizedPurpose == AgentPurposeTranslation && len(items) > 1 {
+		items = items[:1]
+	}
+
+	for index := range items {
+		items[index].ProviderConfig = publicProviderConfig(items[index].ProviderConfig)
+		items[index].PromptTemplate = ""
+	}
+
+	return items, nil
+}
+
+func (s *Service) UpsertSystemConfig(ctx context.Context, input UpsertSystemConfigInput) (SystemAgentConfig, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return SystemAgentConfig{}, err
+	}
+
+	purpose := normalizeAgentPurpose(input.Purpose)
+	if purpose == "" {
+		return SystemAgentConfig{}, fmt.Errorf("unsupported purpose %q", input.Purpose)
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return SystemAgentConfig{}, fmt.Errorf("agent name is required")
+	}
+
+	providerConfig, err := normalizeProviderConfig(input.ProviderConfig)
+	if err != nil {
+		return SystemAgentConfig{}, err
+	}
+	if input.Enabled && normalizeProviderType(anyString(providerConfig["type"])) == "" {
+		return SystemAgentConfig{}, fmt.Errorf("provider_config.type is required when config is enabled")
+	}
+	if purpose == AgentPurposeTranslation && input.Enabled && normalizeProviderType(anyString(providerConfig["type"])) != "openai_compatible" {
+		return SystemAgentConfig{}, fmt.Errorf("translation config requires provider_config.type openai_compatible")
+	}
+
+	config := SystemAgentConfig{
+		ID:             strings.TrimSpace(input.ID),
+		Name:           name,
+		Purpose:        purpose,
+		Enabled:        input.Enabled,
+		ProviderConfig: providerConfig,
+		PromptTemplate: strings.TrimSpace(input.PromptTemplate),
+	}
+	if config.ID == "" {
+		config.ID = ids.NewUUID()
+	}
+
+	if err := s.repository.UpsertSystemConfig(ctx, config); err != nil {
+		return SystemAgentConfig{}, err
+	}
+	if purpose == AgentPurposeTranslation && config.Enabled {
+		if err := s.repository.DisableOtherSystemConfigs(ctx, purpose, config.ID); err != nil {
+			return SystemAgentConfig{}, err
+		}
+	}
+
+	return s.repository.GetSystemConfigByID(ctx, config.ID, purpose)
+}
+
+func (s *Service) DeleteSystemConfig(ctx context.Context, id string) error {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return err
+	}
+
+	trimmedID := strings.TrimSpace(id)
+	if trimmedID == "" {
+		return fmt.Errorf("agent id is required")
+	}
+
+	return s.repository.DeleteSystemConfig(ctx, trimmedID)
 }
 
 func (s *Service) ListRuns(ctx context.Context, filters RunListFilters) (RunListResult, error) {

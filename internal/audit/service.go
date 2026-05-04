@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/support/ids"
 )
 
@@ -251,6 +252,10 @@ LIMIT $%d OFFSET $%d`,
 func RequestActorID(r *http.Request) *string {
 	if r == nil {
 		return nil
+	}
+
+	if user, ok := auth.CurrentUser(r.Context()); ok {
+		return &user.ID
 	}
 
 	for _, header := range []string{"X-Actor-ID", "X-User-ID"} {

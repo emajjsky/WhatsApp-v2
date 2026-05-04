@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/storage"
 )
 
@@ -164,7 +165,7 @@ WHERE id = $1`
 }
 
 func (r *Repository) GetRuleByID(ctx context.Context, id string) (AgentRule, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     ar.id,
     ar.account_id,
@@ -191,6 +192,10 @@ LEFT JOIN LATERAL (
 ) AS accounts ON TRUE
 WHERE ar.id = $1`
 
+	scopeClause, scopeArgs := agentAccountScope(ctx, "ar.account_id", 2)
+	query := baseQuery + scopeClause
+	args := append([]any{id}, scopeArgs...)
+
 	var (
 		rule             AgentRule
 		scopeFilter      []byte
@@ -201,7 +206,7 @@ WHERE ar.id = $1`
 		accountIDs       []byte
 	)
 
-	if err := r.db.QueryRowContext(ctx, query, id).Scan(
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&rule.ID,
 		&rule.AccountID,
 		&rule.Purpose,
@@ -231,7 +236,7 @@ WHERE ar.id = $1`
 }
 
 func (r *Repository) ListRules(ctx context.Context, filters RuleListFilters) ([]AgentRule, error) {
-	whereClause, args := buildRuleWhere(filters)
+	whereClause, args := buildRuleWhere(ctx, filters)
 
 	query := fmt.Sprintf(`
 SELECT
@@ -335,14 +340,18 @@ func (r *Repository) FindRuleByPurposeAndAccount(ctx context.Context, purpose Ag
 }
 
 func (r *Repository) SetRuleEnabled(ctx context.Context, id string, enabled bool) error {
-	const query = `
+	const baseQuery = `
 UPDATE agent_rules
 SET
     enabled = $2,
     updated_at = NOW()
-WHERE id = $1`
+WHERE id = $1%s`
 
-	result, err := r.db.ExecContext(ctx, query, id, enabled)
+	scopeClause, scopeArgs := agentAccountScope(ctx, "account_id", 3)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{id, enabled}, scopeArgs...)
+
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("update agent rule %q enabled state: %w", id, err)
 	}
@@ -351,9 +360,12 @@ WHERE id = $1`
 }
 
 func (r *Repository) DeleteRule(ctx context.Context, id string) error {
-	const query = `DELETE FROM agent_rules WHERE id = $1`
+	const baseQuery = `DELETE FROM agent_rules WHERE id = $1%s`
+	scopeClause, scopeArgs := agentAccountScope(ctx, "account_id", 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{id}, scopeArgs...)
 
-	result, err := r.db.ExecContext(ctx, query, id)
+	result, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("delete agent rule %q: %w", id, err)
 	}
@@ -397,7 +409,7 @@ SET
 }
 
 func (r *Repository) GetSettings(ctx context.Context, accountID string) (AgentSettings, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     account_id,
     provider,
@@ -408,10 +420,14 @@ SELECT
     created_at,
     updated_at
 FROM agent_settings
-WHERE account_id = $1`
+WHERE account_id = $1%s`
+
+	scopeClause, scopeArgs := agentAccountScope(ctx, "account_id", 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{accountID}, scopeArgs...)
 
 	var settings AgentSettings
-	if err := r.db.QueryRowContext(ctx, query, accountID).Scan(
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&settings.AccountID,
 		&settings.Provider,
 		&settings.Model,
@@ -425,6 +441,182 @@ WHERE account_id = $1`
 	}
 
 	return settings, nil
+}
+
+func (r *Repository) ListSystemConfigs(ctx context.Context) ([]SystemAgentConfig, error) {
+	const query = `
+SELECT
+    id,
+    name,
+    purpose,
+    enabled,
+    provider_config,
+    prompt_template,
+    created_at,
+    updated_at
+FROM system_agents
+ORDER BY purpose ASC, name ASC, created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list system agent configs: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]SystemAgentConfig, 0)
+	for rows.Next() {
+		item, err := scanSystemConfig(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate system agent configs: %w", err)
+	}
+
+	return items, nil
+}
+
+func (r *Repository) ListEnabledSystemConfigs(ctx context.Context, purpose AgentPurpose) ([]SystemAgentConfig, error) {
+	const query = `
+SELECT
+    id,
+    name,
+    purpose,
+    enabled,
+    provider_config,
+    prompt_template,
+    created_at,
+    updated_at
+FROM system_agents
+WHERE enabled = TRUE
+  AND ($1 = '' OR purpose = $1)
+ORDER BY purpose ASC, name ASC, created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, strings.TrimSpace(string(purpose)))
+	if err != nil {
+		return nil, fmt.Errorf("list enabled system agent configs: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]SystemAgentConfig, 0)
+	for rows.Next() {
+		item, err := scanSystemConfig(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate enabled system agent configs: %w", err)
+	}
+
+	return items, nil
+}
+
+func (r *Repository) GetSystemConfig(ctx context.Context, purpose AgentPurpose) (SystemAgentConfig, error) {
+	const query = `
+SELECT
+    id,
+    name,
+    purpose,
+    enabled,
+    provider_config,
+    prompt_template,
+    created_at,
+    updated_at
+FROM system_agents
+WHERE purpose = $1
+  AND enabled = TRUE
+ORDER BY name ASC, created_at DESC
+LIMIT 1`
+
+	return scanSystemConfig(r.db.QueryRowContext(ctx, query, purpose))
+}
+
+func (r *Repository) GetSystemConfigByID(ctx context.Context, id string, purpose AgentPurpose) (SystemAgentConfig, error) {
+	const query = `
+SELECT
+    id,
+    name,
+    purpose,
+    enabled,
+    provider_config,
+    prompt_template,
+    created_at,
+    updated_at
+FROM system_agents
+WHERE id = $1
+  AND ($2 = '' OR purpose = $2)`
+
+	return scanSystemConfig(r.db.QueryRowContext(ctx, query, strings.TrimSpace(id), strings.TrimSpace(string(purpose))))
+}
+
+func (r *Repository) UpsertSystemConfig(ctx context.Context, config SystemAgentConfig) error {
+	providerConfig, err := mustMarshalJSON(defaultJSONMap(config.ProviderConfig))
+	if err != nil {
+		return err
+	}
+
+	const query = `
+INSERT INTO system_agents (
+    id,
+    name,
+    purpose,
+    enabled,
+    provider_config,
+    prompt_template
+) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    purpose = EXCLUDED.purpose,
+    enabled = EXCLUDED.enabled,
+    provider_config = EXCLUDED.provider_config,
+    prompt_template = EXCLUDED.prompt_template,
+    updated_at = NOW()`
+
+	if _, err := r.db.ExecContext(
+		ctx,
+		query,
+		config.ID,
+		config.Name,
+		config.Purpose,
+		config.Enabled,
+		providerConfig,
+		config.PromptTemplate,
+	); err != nil {
+		return fmt.Errorf("upsert system agent config %q: %w", config.ID, err)
+	}
+
+	return nil
+}
+
+func (r *Repository) DisableOtherSystemConfigs(ctx context.Context, purpose AgentPurpose, activeID string) error {
+	const query = `
+UPDATE system_agents
+SET
+    enabled = FALSE,
+    updated_at = NOW()
+WHERE purpose = $1
+  AND id <> $2
+  AND enabled = TRUE`
+
+	if _, err := r.db.ExecContext(ctx, query, purpose, strings.TrimSpace(activeID)); err != nil {
+		return fmt.Errorf("disable other %s system agent configs: %w", purpose, err)
+	}
+
+	return nil
+}
+
+func (r *Repository) DeleteSystemConfig(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM system_agents WHERE id = $1`, strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("delete system agent config %q: %w", id, err)
+	}
+
+	return ensureAffected(result, id)
 }
 
 func (r *Repository) CreateRun(ctx context.Context, run AgentRun) error {
@@ -451,7 +643,7 @@ INSERT INTO agent_runs (
 		ctx,
 		query,
 		run.ID,
-		run.RuleID,
+		nullableTrimmedString(run.RuleID),
 		run.AccountID,
 		run.ChatID,
 		run.TriggerMessageID,
@@ -551,11 +743,11 @@ LIMIT 1`
 }
 
 func (r *Repository) GetRunViewByID(ctx context.Context, id string) (RunView, error) {
-	const query = `
+	const baseQuery = `
 SELECT
     ar.id,
     ar.rule_id,
-    rules.name,
+    COALESCE(rules.name, ar.input_context->>'rule_name', 'System Agent'),
     ar.account_id,
     ar.chat_id,
     chats.title,
@@ -568,13 +760,18 @@ SELECT
     ar.created_at,
     ar.completed_at
 FROM agent_runs ar
-JOIN agent_rules rules ON rules.id = ar.rule_id
+LEFT JOIN agent_rules rules ON rules.id = ar.rule_id
 LEFT JOIN chats ON chats.id = ar.chat_id
 LEFT JOIN messages trigger_message ON trigger_message.id = ar.trigger_message_id
-WHERE ar.id = $1`
+WHERE ar.id = $1%s`
+
+	scopeClause, scopeArgs := agentAccountScope(ctx, "ar.account_id", 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{id}, scopeArgs...)
 
 	var (
 		item           RunView
+		ruleID         sql.NullString
 		chatTitle      sql.NullString
 		waChatJID      sql.NullString
 		triggerPreview sql.NullString
@@ -583,9 +780,9 @@ WHERE ar.id = $1`
 		completedAt    sql.NullTime
 	)
 
-	if err := r.db.QueryRowContext(ctx, query, id).Scan(
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&item.ID,
-		&item.RuleID,
+		&ruleID,
 		&item.RuleName,
 		&item.AccountID,
 		&item.ChatID,
@@ -602,6 +799,7 @@ WHERE ar.id = $1`
 		return RunView{}, fmt.Errorf("get agent run %q: %w", id, err)
 	}
 
+	item.RuleID = ruleID.String
 	item.ChatTitle = nullableString(chatTitle)
 	item.WAChatJID = nullableString(waChatJID)
 	item.TriggerPreview = nullableString(triggerPreview)
@@ -613,7 +811,7 @@ WHERE ar.id = $1`
 }
 
 func (r *Repository) ListRuns(ctx context.Context, filters RunListFilters) ([]RunView, int, error) {
-	whereClause, args := buildRunWhere(filters)
+	whereClause, args := buildRunWhere(ctx, filters)
 
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM agent_runs ar WHERE %s`, whereClause)
 	var total int
@@ -630,7 +828,7 @@ func (r *Repository) ListRuns(ctx context.Context, filters RunListFilters) ([]Ru
 SELECT
     ar.id,
     ar.rule_id,
-    rules.name,
+    COALESCE(rules.name, ar.input_context->>'rule_name', 'System Agent'),
     ar.account_id,
     ar.chat_id,
     chats.title,
@@ -643,7 +841,7 @@ SELECT
     ar.created_at,
     ar.completed_at
 FROM agent_runs ar
-JOIN agent_rules rules ON rules.id = ar.rule_id
+LEFT JOIN agent_rules rules ON rules.id = ar.rule_id
 LEFT JOIN chats ON chats.id = ar.chat_id
 LEFT JOIN messages trigger_message ON trigger_message.id = ar.trigger_message_id
 WHERE %s
@@ -660,6 +858,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 	for rows.Next() {
 		var (
 			item           RunView
+			ruleID         sql.NullString
 			chatTitle      sql.NullString
 			waChatJID      sql.NullString
 			triggerPreview sql.NullString
@@ -670,7 +869,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 
 		if err := rows.Scan(
 			&item.ID,
-			&item.RuleID,
+			&ruleID,
 			&item.RuleName,
 			&item.AccountID,
 			&item.ChatID,
@@ -687,6 +886,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 			return nil, 0, fmt.Errorf("scan agent run row: %w", err)
 		}
 
+		item.RuleID = ruleID.String
 		item.ChatTitle = nullableString(chatTitle)
 		item.WAChatJID = nullableString(waChatJID)
 		item.TriggerPreview = nullableString(triggerPreview)
@@ -704,7 +904,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 	return items, total, nil
 }
 
-func buildRuleWhere(filters RuleListFilters) (string, []any) {
+func buildRuleWhere(ctx context.Context, filters RuleListFilters) (string, []any) {
 	conditions := []string{"1 = 1"}
 	args := make([]any, 0, 2)
 
@@ -724,11 +924,15 @@ func buildRuleWhere(filters RuleListFilters) (string, []any) {
 		args = append(args, *filters.Enabled)
 		conditions = append(conditions, fmt.Sprintf("ar.enabled = $%d", len(args)))
 	}
+	if scopeCondition, scopeArgs := agentRuleScopeCondition(ctx, len(args)+1); scopeCondition != "" {
+		conditions = append(conditions, scopeCondition)
+		args = append(args, scopeArgs...)
+	}
 
 	return strings.Join(conditions, " AND "), args
 }
 
-func buildRunWhere(filters RunListFilters) (string, []any) {
+func buildRunWhere(ctx context.Context, filters RunListFilters) (string, []any) {
 	conditions := []string{"1 = 1"}
 	args := make([]any, 0, 4)
 
@@ -748,8 +952,54 @@ func buildRunWhere(filters RunListFilters) (string, []any) {
 		args = append(args, filters.Status)
 		conditions = append(conditions, fmt.Sprintf("ar.status = $%d", len(args)))
 	}
+	if scopeCondition, scopeArgs := agentRunScopeCondition(ctx, len(args)+1); scopeCondition != "" {
+		conditions = append(conditions, scopeCondition)
+		args = append(args, scopeArgs...)
+	}
 
 	return strings.Join(conditions, " AND "), args
+}
+
+func agentAccountScope(ctx context.Context, accountColumn string, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(` AND EXISTS (
+    SELECT 1
+    FROM accounts account_scope
+    WHERE account_scope.id = %s
+      AND account_scope.user_id = $%d
+)`, strings.TrimSpace(accountColumn), startIndex), []any{currentUser.ID}
+}
+
+func agentRuleScopeCondition(ctx context.Context, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(`EXISTS (
+    SELECT 1
+    FROM accounts account_scope
+    WHERE account_scope.id = ar.account_id
+      AND account_scope.user_id = $%d
+)`, startIndex), []any{currentUser.ID}
+}
+
+func agentRunScopeCondition(ctx context.Context, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf(`EXISTS (
+    SELECT 1
+    FROM accounts account_scope
+    WHERE account_scope.id = ar.account_id
+      AND account_scope.user_id = $%d
+)`, startIndex), []any{currentUser.ID}
 }
 
 func decodeRuleFilters(
@@ -884,6 +1134,15 @@ func nullableString(value sql.NullString) *string {
 	return &result
 }
 
+func nullableTrimmedString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+
+	return &trimmed
+}
+
 func nullableTime(value sql.NullTime) *time.Time {
 	if !value.Valid {
 		return nil
@@ -895,4 +1154,36 @@ func nullableTime(value sql.NullTime) *time.Time {
 
 func boolPointer(value bool) *bool {
 	return &value
+}
+
+func scanSystemConfig(row rowScanner) (SystemAgentConfig, error) {
+	var (
+		item           SystemAgentConfig
+		providerConfig []byte
+	)
+
+	if err := row.Scan(
+		&item.ID,
+		&item.Name,
+		&item.Purpose,
+		&item.Enabled,
+		&providerConfig,
+		&item.PromptTemplate,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return SystemAgentConfig{}, err
+	}
+	if err := json.Unmarshal(providerConfig, &item.ProviderConfig); err != nil {
+		return SystemAgentConfig{}, fmt.Errorf("decode system agent config %q: %w", item.ID, err)
+	}
+	if item.ProviderConfig == nil {
+		item.ProviderConfig = map[string]any{}
+	}
+
+	return item, nil
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
 }

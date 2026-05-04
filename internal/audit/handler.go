@@ -1,11 +1,13 @@
 package audit
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/httpx"
 )
 
@@ -28,6 +30,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 func (h *Handler) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpx.WriteMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if _, err := auth.RequireAdmin(r.Context()); err != nil {
+		if errors.Is(err, auth.ErrUnauthenticated) {
+			httpx.WriteError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
 		return
 	}
 

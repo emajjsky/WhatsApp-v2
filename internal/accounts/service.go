@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"whatsapp-agent-platform/internal/auth"
 	"whatsapp-agent-platform/internal/sessions"
 	"whatsapp-agent-platform/internal/support/ids"
 )
@@ -27,8 +28,8 @@ type Service struct {
 }
 
 const (
-	sessionStatusTimeout    = 350 * time.Millisecond
-	logoutOperationTimeout  = 8 * time.Second
+	sessionStatusTimeout   = 350 * time.Millisecond
+	logoutOperationTimeout = 8 * time.Second
 )
 
 type CreateAccountInput struct {
@@ -47,6 +48,7 @@ type SessionView struct {
 
 type AccountView struct {
 	ID            string       `json:"id"`
+	UserID        string       `json:"user_id,omitempty"`
 	DisplayName   string       `json:"display_name"`
 	PhoneNumber   *string      `json:"phone_number,omitempty"`
 	Status        string       `json:"status"`
@@ -77,6 +79,7 @@ func (s *Service) CreateAccount(ctx context.Context, input CreateAccountInput) (
 
 	account := Account{
 		ID:            generateAccountID(),
+		UserID:        currentUserID(ctx),
 		DisplayName:   displayName,
 		PhoneNumber:   normalizedOptionalString(input.PhoneNumber),
 		Status:        "pending",
@@ -213,6 +216,7 @@ func mapRepositoryError(accountID string, err error) error {
 func mapAccountToView(account Account, session *SessionView) AccountView {
 	return AccountView{
 		ID:            account.ID,
+		UserID:        account.UserID,
 		DisplayName:   account.DisplayName,
 		PhoneNumber:   account.PhoneNumber,
 		Status:        account.Status,
@@ -222,6 +226,15 @@ func mapAccountToView(account Account, session *SessionView) AccountView {
 		UpdatedAt:     account.UpdatedAt,
 		Session:       session,
 	}
+}
+
+func currentUserID(ctx context.Context) string {
+	user, ok := auth.CurrentUser(ctx)
+	if !ok {
+		return ""
+	}
+
+	return user.ID
 }
 
 func mapSessionToView(snapshot sessions.SessionSnapshot) *SessionView {

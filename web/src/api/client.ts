@@ -27,6 +27,7 @@ export interface SessionView {
 
 export interface AccountView {
   id: string
+  user_id?: string
   display_name: string
   phone_number?: string
   status: AccountStatus
@@ -162,6 +163,41 @@ export interface SendChatMessageResponse {
   wa_message_id: string
   message_text: string
   sent_at: string
+}
+
+export type UserRole = 'admin' | 'user'
+export type UserStatus = 'active' | 'disabled'
+export type UserPermission = 'accounts' | 'chats' | 'scripts' | 'exports'
+export type InvitationStatus = 'active' | 'disabled'
+
+export interface AuthUser {
+  id: string
+  email: string
+  display_name: string
+  role: UserRole
+  status: UserStatus
+  permissions?: UserPermission[]
+  last_login_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AuthSessionResponse {
+  authenticated: boolean
+  user?: AuthUser
+  registration_enabled: boolean
+}
+
+export interface LoginPayload {
+  email: string
+  password: string
+}
+
+export interface RegisterPayload {
+  email: string
+  password: string
+  display_name: string
+  invite_code: string
 }
 
 export type SendChatMediaType = 'image' | 'video' | 'audio' | 'document'
@@ -355,6 +391,26 @@ export interface UpsertAgentRulePayload {
   knowledge_binding?: AgentKnowledgeBinding
 }
 
+export interface SystemAgentConfigView {
+  id: string
+  name: string
+  purpose: AgentPurpose
+  enabled: boolean
+  provider_config: AgentProviderConfig
+  prompt_template: string
+  created_at: string
+  updated_at: string
+}
+
+export interface UpsertSystemAgentConfigPayload {
+  id?: string
+  name: string
+  purpose: AgentPurpose
+  enabled: boolean
+  provider_config: AgentProviderConfig
+  prompt_template: string
+}
+
 export interface UpsertAgentSettingsPayload {
   account_id: string
   provider: string
@@ -366,6 +422,7 @@ export interface UpsertAgentSettingsPayload {
 
 export interface GenerateAgentRunPayload {
   chat_id: string
+  agent_id?: string
   rule_id?: string
   message_text?: string
   context_enabled?: boolean
@@ -381,6 +438,7 @@ export interface AgentRunStreamHandlers {
 
 export interface TranslateTextPayload {
   account_id: string
+  agent_id?: string
   text: string
   target_language: string
   target_language_name?: string
@@ -398,6 +456,54 @@ export interface CreateAccountPayload {
   display_name: string
   phone_number?: string
   platform_label?: string
+}
+
+export interface CreateUserPayload {
+  email: string
+  password: string
+  display_name: string
+  role: UserRole
+  status: UserStatus
+  permissions?: UserPermission[]
+}
+
+export interface UpdateUserPayload {
+  display_name?: string
+  role?: UserRole
+  status?: UserStatus
+  permissions?: UserPermission[]
+}
+
+export interface ResetPasswordPayload {
+  password: string
+}
+
+export interface InvitationCodeView {
+  id: string
+  code: string
+  status: InvitationStatus
+  max_uses: number
+  used_count: number
+  expires_at?: string
+  note: string
+  created_by?: string
+  last_used_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateInvitationPayload {
+  code?: string
+  max_uses: number
+  expires_at?: string
+  note?: string
+}
+
+export interface UpdateInvitationPayload {
+  status?: InvitationStatus
+  max_uses?: number
+  expires_at?: string
+  note?: string
 }
 
 interface RequestOptions extends RequestInit {
@@ -427,6 +533,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       ...fetchOptions,
+      credentials: fetchOptions.credentials ?? 'include',
       headers: hasFormDataBody
         ? fetchOptions.headers
         : {
@@ -475,6 +582,71 @@ export async function getHealth() {
 
 export async function getSystemHealth() {
   return request<SystemHealthResponse>('/api/system/health')
+}
+
+export async function getAuthSession() {
+  return request<AuthSessionResponse>('/api/auth/session')
+}
+
+export async function login(payload: LoginPayload) {
+  return request<{ user: AuthUser; expires_at: string }>('/api/auth/login', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function register(payload: RegisterPayload) {
+  return request<{ user: AuthUser; expires_at: string }>('/api/auth/register', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function logout() {
+  return request<void>('/api/auth/logout', { method: 'POST' })
+}
+
+export async function listUsers() {
+  return request<{ users: AuthUser[] }>('/api/admin/users')
+}
+
+export async function createUser(payload: CreateUserPayload) {
+  return request<{ user: AuthUser }>('/api/admin/users', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function updateUser(userId: string, payload: UpdateUserPayload) {
+  return request<{ user: AuthUser }>(`/api/admin/users/${userId}`, {
+    method: 'PATCH',
+    jsonBody: payload,
+  })
+}
+
+export async function resetUserPassword(userId: string, password: string) {
+  return request<void>(`/api/admin/users/${userId}/password`, {
+    method: 'POST',
+    jsonBody: { password },
+  })
+}
+
+export async function listInvitations() {
+  return request<{ invitations: InvitationCodeView[] }>('/api/admin/invitations')
+}
+
+export async function createInvitation(payload: CreateInvitationPayload) {
+  return request<{ invitation: InvitationCodeView }>('/api/admin/invitations', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function updateInvitation(invitationId: string, payload: UpdateInvitationPayload) {
+  return request<{ invitation: InvitationCodeView }>(`/api/admin/invitations/${invitationId}`, {
+    method: 'PATCH',
+    jsonBody: payload,
+  })
 }
 
 export async function listAccounts() {
@@ -577,7 +749,7 @@ export function subscribeLiveUpdates(
   onUpdate: (update: LiveUpdate) => void,
   onError?: (event: Event) => void,
 ) {
-  const eventSource = new EventSource(`${baseUrl}/api/live`)
+  const eventSource = new EventSource(`${baseUrl}/api/live`, { withCredentials: true })
 
   eventSource.onmessage = (event) => {
     if (!event.data) {
@@ -620,6 +792,7 @@ export async function sendChatMedia(chatId: string, payload: SendChatMediaPayloa
       method: 'POST',
       body: formData,
       signal: controller.signal,
+      credentials: 'include',
     })
 
     if (!response.ok) {
@@ -798,6 +971,33 @@ export async function listAgentRuns(params?: {
   return request<AgentRunListResponse>(`/api/agent-runs${queryString ? `?${queryString}` : ''}`)
 }
 
+export async function listSystemAgentConfigs() {
+  return request<{ configs: SystemAgentConfigView[] }>('/api/admin/agent-configs')
+}
+
+export async function listAvailableSystemAgentConfigs(params?: { purpose?: AgentPurpose }) {
+  const searchParams = new URLSearchParams()
+  if (params?.purpose) {
+    searchParams.set('purpose', params.purpose)
+  }
+
+  const queryString = searchParams.toString()
+  return request<{ configs: SystemAgentConfigView[] }>(
+    `/api/agent-configs${queryString ? `?${queryString}` : ''}`,
+  )
+}
+
+export async function upsertSystemAgentConfig(payload: UpsertSystemAgentConfigPayload) {
+  return request<{ config: SystemAgentConfigView }>('/api/admin/agent-configs', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function deleteSystemAgentConfig(configId: string) {
+  return request<void>(`/api/admin/agent-configs/${configId}`, { method: 'DELETE' })
+}
+
 export async function generateAgentRun(payload: GenerateAgentRunPayload) {
   return request<{ run: AgentRunView }>('/api/agent-runs/generate', {
     method: 'POST',
@@ -811,6 +1011,7 @@ export async function streamGenerateAgentRun(
 ) {
   const response = await fetch(`${baseUrl}/api/agent-runs/generate/stream`, {
     method: 'POST',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
     },
@@ -964,6 +1165,7 @@ async function downloadBlob(
 ) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method ?? 'GET',
+    credentials: 'include',
     headers: options.jsonBody !== undefined ? { 'Content-Type': 'application/json' } : undefined,
     body: options.jsonBody !== undefined ? JSON.stringify(options.jsonBody) : undefined,
   })

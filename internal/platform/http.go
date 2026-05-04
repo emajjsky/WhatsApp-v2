@@ -20,7 +20,12 @@ func NewRouter(cfg config.Config, logger *slog.Logger, deps RouteDependencies) h
 	mux := http.NewServeMux()
 	registerRoutes(mux, cfg, logger, deps)
 
-	return requestLoggingMiddleware(logger, mux)
+	var handler http.Handler = mux
+	if deps.AuthService != nil {
+		handler = deps.AuthService.Middleware(handler)
+	}
+
+	return requestLoggingMiddleware(logger, handler)
 }
 
 func NewHTTPServer(cfg config.Config, handler http.Handler, _ *slog.Logger) *http.Server {

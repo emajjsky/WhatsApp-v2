@@ -118,6 +118,26 @@ type AgentSettings struct {
 	UpdatedAt      time.Time
 }
 
+type SystemAgentConfig struct {
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Purpose        AgentPurpose   `json:"purpose"`
+	Enabled        bool           `json:"enabled"`
+	ProviderConfig map[string]any `json:"provider_config"`
+	PromptTemplate string         `json:"prompt_template"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+type UpsertSystemConfigInput struct {
+	ID             string         `json:"id,omitempty"`
+	Name           string         `json:"name"`
+	Purpose        AgentPurpose   `json:"purpose"`
+	Enabled        bool           `json:"enabled"`
+	ProviderConfig map[string]any `json:"provider_config"`
+	PromptTemplate string         `json:"prompt_template"`
+}
+
 type SettingsView struct {
 	AccountID      string    `json:"account_id"`
 	Provider       string    `json:"provider"`

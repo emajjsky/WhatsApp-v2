@@ -111,6 +111,7 @@ type SendRunInput struct {
 
 type GenerateRunInput struct {
 	ChatID              string
+	AgentID             string
 	RuleID              string
 	MessageText         *string
 	ContextEnabled      bool
@@ -124,6 +125,7 @@ type GenerateRunStreamCallbacks struct {
 
 type TranslateTextInput struct {
 	AccountID          string
+	AgentID            string
 	Text               string
 	TargetLanguage     string
 	TargetLanguageName string
@@ -312,17 +314,15 @@ func (a *Automation) TranslateText(ctx context.Context, input TranslateTextInput
 		targetLanguageName = targetLanguage
 	}
 
-	rule, err := a.repository.FindRuleByPurposeAndAccount(ctx, AgentPurposeTranslation, accountID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return TranslationView{}, fmt.Errorf("no translation agent is configured for this account")
-		}
-		return TranslationView{}, err
+	systemConfig, err := a.resolveSystemAgentConfig(ctx, strings.TrimSpace(input.AgentID), AgentPurposeTranslation)
+	if err != nil || !systemConfig.Enabled {
+		return TranslationView{}, fmt.Errorf("no translation agent is configured in admin backend")
 	}
+	rule := systemConfigRule(accountID, systemConfig)
 
 	providerConfig, err := a.buildRunnerProvider(ctx, accountID, rule)
 	if err != nil {
-		return TranslationView{}, fmt.Errorf("load translation agent settings failed: %w", err)
+		return TranslationView{}, fmt.Errorf("load admin translation agent config failed: %w", err)
 	}
 
 	response, err := a.runner.Translate(ctx, RunnerTranslationRequest{
@@ -367,7 +367,7 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 		return preparedManualRun{}, err
 	}
 
-	selected, err := a.resolveManualRule(ctx, chatHeader, chatID, trigger.Text, input.RuleID)
+	selected, err := a.resolveManualRule(ctx, chatHeader, chatID, trigger.Text, input.AgentID, input.RuleID)
 	if err != nil {
 		return preparedManualRun{}, err
 	}
@@ -387,7 +387,7 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 		"wa_chat_jid":       chatHeader.WAChatJID,
 		"trigger_text":      trigger.Text,
 		"trigger_wa_id":     trigger.WAMessageID,
-		"rule_id":           selected.ID,
+		"agent_id":          selected.ID,
 		"rule_name":         selected.Name,
 		"rule_reply_mode":   selected.ReplyMode,
 		"manual":            true,
@@ -409,7 +409,7 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 
 	if err := a.repository.CreateRun(ctx, AgentRun{
 		ID:               runID,
-		RuleID:           selected.ID,
+		RuleID:           "",
 		AccountID:        chatHeader.AccountID,
 		ChatID:           chatID,
 		TriggerMessageID: trigger.ID,
@@ -471,6 +471,10 @@ func (a *Automation) failRun(ctx context.Context, runID string, reason string) (
 }
 
 func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Event) error {
+	// Agent generation is intentionally manual-only in the chat workspace.
+	// Admin backend system configs are used when the user explicitly generates a draft.
+	return nil
+
 	message := event.Message
 	if message == nil {
 		return nil
@@ -868,53 +872,34 @@ func (a *Automation) resolveManualRule(
 	chatHeader chats.ChatHeader,
 	chatID string,
 	triggerText string,
+	agentID string,
 	ruleID string,
 ) (AgentRule, error) {
-	trimmedRuleID := strings.TrimSpace(ruleID)
-	if trimmedRuleID != "" {
-		rule, err := a.repository.GetRuleByID(ctx, trimmedRuleID)
+	if strings.TrimSpace(ruleID) != "" {
+		return AgentRule{}, fmt.Errorf("account-level agent rules are no longer used for manual drafts; configure the reply agent in admin backend")
+	}
+
+	systemConfig, err := a.resolveSystemAgentConfig(ctx, strings.TrimSpace(agentID), AgentPurposeReply)
+	if err == nil && systemConfig.Enabled {
+		return systemConfigRule(chatHeader.AccountID, systemConfig), nil
+	}
+
+	return AgentRule{}, fmt.Errorf("no reply agent is configured in admin backend")
+}
+
+func (a *Automation) resolveSystemAgentConfig(ctx context.Context, agentID string, purpose AgentPurpose) (SystemAgentConfig, error) {
+	if strings.TrimSpace(agentID) != "" {
+		config, err := a.repository.GetSystemConfigByID(ctx, agentID, purpose)
 		if err != nil {
-			return AgentRule{}, err
+			return SystemAgentConfig{}, err
 		}
-		if rule.AccountID != chatHeader.AccountID {
-			if !ruleBelongsToAccount(rule, chatHeader.AccountID) {
-				return AgentRule{}, fmt.Errorf("agent rule does not belong to this chat account")
-			}
+		if !config.Enabled {
+			return SystemAgentConfig{}, fmt.Errorf("selected agent is disabled")
 		}
-		if rule.Purpose != AgentPurposeReply {
-			return AgentRule{}, fmt.Errorf("selected agent is not a reply agent")
-		}
-		if rule.ReplyMode == ReplyModeManual {
-			return AgentRule{}, fmt.Errorf("manual reply rule cannot generate agent drafts")
-		}
-		if !ruleScopeMatches(rule, chatHeader, chatID) {
-			return AgentRule{}, fmt.Errorf("agent rule scope does not include this chat")
-		}
-		return rule, nil
+		return config, nil
 	}
 
-	rules, err := a.repository.ListRules(ctx, RuleListFilters{AccountID: chatHeader.AccountID})
-	if err != nil {
-		return AgentRule{}, err
-	}
-
-	for _, rule := range rules {
-		if rule.Purpose != AgentPurposeReply {
-			continue
-		}
-		if rule.ReplyMode == ReplyModeManual {
-			continue
-		}
-		if !ruleScopeMatches(rule, chatHeader, chatID) {
-			continue
-		}
-		if !triggerMatches(rule.TriggerFilter, triggerText) {
-			continue
-		}
-		return rule, nil
-	}
-
-	return AgentRule{}, fmt.Errorf("no agent rule matches this chat and message")
+	return a.repository.GetSystemConfig(ctx, purpose)
 }
 
 func latestTextTrigger(messages []chats.MessageView, inboundOnly bool) (manualTrigger, bool) {
@@ -1107,30 +1092,52 @@ func (a *Automation) buildRunnerProvider(ctx context.Context, accountID string, 
 		return config, nil
 	}
 
-	settings, err := a.repository.GetSettings(ctx, accountID)
-	if err != nil {
-		return nil, err
+	if rule.Purpose != "" {
+		if systemConfig, err := a.repository.GetSystemConfig(ctx, rule.Purpose); err == nil && systemConfig.Enabled {
+			config := cloneProviderConfig(systemConfig.ProviderConfig)
+			if providerType := strings.TrimSpace(anyString(config["type"])); providerType != "" {
+				config["type"] = strings.ToLower(providerType)
+				config["prompt_template"] = strings.TrimSpace(resolveRunnerPrompt(rule, mapWithPromptFallback(config, systemConfig.PromptTemplate)))
+				return config, nil
+			}
+		}
 	}
 
-	promptTemplate := strings.TrimSpace(rule.PromptTemplate)
-	if promptTemplate == "" {
-		promptTemplate = strings.TrimSpace(settings.PromptTemplate)
+	return nil, fmt.Errorf("admin agent provider config is required")
+}
+
+func systemConfigRule(accountID string, config SystemAgentConfig) AgentRule {
+	replyMode := ReplyModeSuggest
+	if config.Purpose == AgentPurposeTranslation {
+		replyMode = ReplyModeManual
+	}
+	name := strings.TrimSpace(config.Name)
+	if name == "" {
+		name = "System Agent"
 	}
 
-	providerType := strings.ToLower(strings.TrimSpace(settings.Provider))
-	if providerType == "" {
-		return nil, fmt.Errorf("provider is required")
+	return AgentRule{
+		ID:             config.ID,
+		AccountID:      accountID,
+		AccountIDs:     []string{accountID},
+		Purpose:        config.Purpose,
+		Name:           name,
+		Enabled:        config.Enabled,
+		ReplyMode:      replyMode,
+		ScopeFilter:    ScopeFilter{},
+		TriggerFilter:  TriggerFilter{MatchMode: MatchModeAny, IgnoreFromMe: true},
+		PromptTemplate: strings.TrimSpace(config.PromptTemplate),
+		ProviderConfig: cloneProviderConfig(config.ProviderConfig),
+	}
+}
+
+func mapWithPromptFallback(config map[string]any, promptTemplate string) map[string]any {
+	result := cloneProviderConfig(config)
+	if strings.TrimSpace(anyString(result["prompt_template"])) == "" {
+		result["prompt_template"] = strings.TrimSpace(promptTemplate)
 	}
 
-	config := map[string]any{
-		"type":            providerType,
-		"base_url":        strings.TrimSpace(settings.BaseURL),
-		"api_key":         strings.TrimSpace(settings.APIKey),
-		"model":           strings.TrimSpace(settings.Model),
-		"prompt_template": promptTemplate,
-	}
-
-	return config, nil
+	return result
 }
 
 func resolveRunnerPrompt(rule AgentRule, providerConfig map[string]any) string {
