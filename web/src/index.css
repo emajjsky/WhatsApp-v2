@@ -790,7 +790,7 @@ a {
 
 .chat-frame {
   display: grid;
-  grid-template-columns: minmax(280px, 330px) minmax(0, 1fr) minmax(250px, 300px);
+  grid-template-columns: minmax(220px, 280px) minmax(520px, 1fr) minmax(520px, 620px);
   gap: 10px;
   min-height: 0;
   height: 100%;
@@ -1044,6 +1044,12 @@ a {
 .two-column-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.three-column-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -1937,23 +1943,162 @@ a {
 
 .assistant-panel-body {
   min-height: 0;
-  overflow-y: auto;
-  padding-right: 6px;
+  overflow: hidden;
+  padding-right: 0;
   display: grid;
-  gap: 12px;
+  grid-template-columns: minmax(245px, 1fr) minmax(230px, 0.92fr);
+  gap: 10px;
+  align-items: stretch;
+  overscroll-behavior: contain;
+}
+
+.assistant-reply-column,
+.assistant-status-column {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0;
+  display: grid;
+  gap: 10px;
   align-content: start;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 
 .assistant-card {
   display: grid;
   gap: 8px;
-  padding: 14px;
-  border-radius: var(--radius-md);
+  padding: 12px;
+  border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.84);
   box-shadow: none;
+}
+
+.assistant-card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.assistant-title-stack {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assistant-muted-count {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.assistant-inline-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.assistant-mini-button {
+  min-height: 28px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.assistant-header-select {
+  min-width: 0;
+  max-width: 190px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.assistant-status-card {
+  border-color: rgba(28, 115, 98, 0.16);
+}
+
+.assistant-status-body {
+  display: grid;
+  gap: 9px;
+}
+
+.assistant-status-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.assistant-status-metric {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(17, 27, 33, 0.08);
+  background: rgba(247, 251, 249, 0.8);
+}
+
+.assistant-status-metric span,
+.assistant-status-group > span,
+.assistant-next-action span {
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.assistant-status-metric strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.assistant-status-metric.tone-low strong {
+  color: #1c735f;
+}
+
+.assistant-status-metric.tone-medium strong {
+  color: #9a6700;
+}
+
+.assistant-status-metric.tone-high strong {
+  color: #b42318;
+}
+
+.assistant-status-group,
+.assistant-next-action {
+  display: grid;
+  gap: 6px;
+}
+
+.assistant-status-summary,
+.assistant-status-empty,
+.assistant-next-action p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.assistant-status-empty {
+  color: var(--text-soft);
+}
+
+.assistant-evidence-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .assistant-chat-context {
@@ -1975,15 +2120,15 @@ a {
 .assistant-chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .toolbar-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 30px;
-  padding: 0 12px;
+  min-height: 26px;
+  padding: 0 10px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.7);
@@ -2002,17 +2147,17 @@ a {
 .assistant-action-button {
   width: 100%;
   justify-content: center;
-  min-height: 42px;
-  padding: 10px 12px;
-  font-size: 13px;
+  min-height: 34px;
+  padding: 8px 10px;
+  font-size: 12px;
 }
 
 .assistant-draft-box {
   width: 100%;
-  min-height: 132px;
+  min-height: 118px;
   resize: vertical;
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  border-radius: 10px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.78);
   color: var(--text);
@@ -2022,8 +2167,8 @@ a {
 .assistant-context-controls,
 .assistant-translation-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(112px, 148px);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, 132px);
+  gap: 8px;
   align-items: end;
 }
 
@@ -3174,6 +3319,10 @@ a {
   min-height: 150px;
 }
 
+.admin-status-label-grid textarea {
+  min-height: 112px;
+}
+
 .brand-copy {
   margin: 0;
   max-width: 18ch;
@@ -3416,8 +3565,12 @@ a {
   }
 
   .chat-frame {
-    grid-template-columns: minmax(220px, 265px) minmax(0, 1fr) minmax(205px, 250px);
+    grid-template-columns: minmax(190px, 240px) minmax(460px, 1fr) minmax(470px, 560px);
     gap: 6px;
+  }
+
+  .assistant-panel-body {
+    grid-template-columns: minmax(220px, 1fr) minmax(205px, 0.9fr);
   }
 
   .whatsapp-chat-page {
@@ -3972,8 +4125,12 @@ a {
   }
 
   .chat-frame {
-    grid-template-columns: minmax(188px, 228px) minmax(0, 1fr) minmax(180px, 220px);
+    grid-template-columns: minmax(165px, 205px) minmax(420px, 1fr) minmax(420px, 500px);
     gap: 4px;
+  }
+
+  .assistant-panel-body {
+    grid-template-columns: minmax(195px, 1fr) minmax(180px, 0.9fr);
   }
 
   .whatsapp-chat-page {
@@ -4360,7 +4517,7 @@ a {
   }
 
   .assistant-panel-body {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(245px, 1fr) minmax(230px, 0.9fr);
     align-items: stretch;
   }
 
@@ -4452,7 +4609,8 @@ a {
   .admin-layout,
   .agent-overview-strip,
   .choice-grid,
-  .two-column-grid {
+  .two-column-grid,
+  .three-column-grid {
     grid-template-columns: 1fr;
   }
 
@@ -4509,6 +4667,13 @@ a {
 
   .assistant-panel-body {
     grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .assistant-reply-column,
+  .assistant-status-column {
+    overflow: visible;
+    padding-right: 0;
   }
 
   .chat-stage-header,

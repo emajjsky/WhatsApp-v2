@@ -266,7 +266,7 @@ export interface LiveUpdate {
 
 export type AgentReplyMode = 'manual' | 'suggest' | 'auto_send'
 export type AgentMatchMode = 'any' | 'all'
-export type AgentPurpose = 'reply' | 'translation'
+export type AgentPurpose = 'reply' | 'translation' | 'status_card'
 export type AgentRunStatus =
   | 'queued'
   | 'generating'
@@ -450,6 +450,27 @@ export interface TranslationView {
   target_language: string
   target_language_name: string
   translated_text: string
+}
+
+export interface StatusCardView {
+  agent_id: string
+  agent_name: string
+  current_stage: string
+  customer_types: string[]
+  current_risk: '低' | '中' | '高' | string
+  summary: string
+  evidence: string[]
+  next_action: string
+  confidence?: string
+  message_count: number
+  history_limit: number
+  analyzed_at: string
+}
+
+export interface AnalyzeStatusCardPayload {
+  chat_id: string
+  agent_id?: string
+  context_message_limit?: number
 }
 
 export interface CreateAccountPayload {
@@ -1110,6 +1131,18 @@ export async function translateText(payload: TranslateTextPayload) {
     method: 'POST',
     jsonBody: payload,
   })
+}
+
+export async function analyzeStatusCard(payload: AnalyzeStatusCardPayload) {
+  return request<{ status_card: StatusCardView }>('/api/agent-status-card', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function getStatusCard(chatId: string) {
+  const searchParams = new URLSearchParams({ chat_id: chatId })
+  return request<{ status_card: StatusCardView | null }>(`/api/agent-status-card?${searchParams.toString()}`)
 }
 
 export async function sendAgentRun(runId: string, payload?: { message_text?: string }) {

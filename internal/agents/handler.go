@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +53,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-runs/generate", h.handleGenerateRun)
 	mux.HandleFunc("/api/agent-runs/generate/stream", h.handleGenerateRunStream)
 	mux.HandleFunc("/api/agent-translations", h.handleTranslateText)
+	mux.HandleFunc("/api/agent-status-card", h.handleStatusCard)
 	mux.HandleFunc("/api/agent-runs/", h.handleRunByID)
 }
 
@@ -426,6 +428,80 @@ func (h *Handler) handleTranslateText(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"translation": translation})
+}
+
+func (h *Handler) handleStatusCard(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.handleGetStatusCard(w, r)
+	case http.MethodPost:
+		h.handleAnalyzeStatusCard(w, r)
+	default:
+		httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (h *Handler) handleGetStatusCard(w http.ResponseWriter, r *http.Request) {
+	chatID := strings.TrimSpace(r.URL.Query().Get("chat_id"))
+	statusCard, err := h.service.GetStatusCard(r.Context(), chatID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"status_card": nil})
+			return
+		}
+		h.writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status_card": statusCard})
+}
+
+func (h *Handler) handleAnalyzeStatusCard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload struct {
+		ChatID              string `json:"chat_id"`
+		AgentID             string `json:"agent_id,omitempty"`
+		ContextMessageLimit int    `json:"context_message_limit,omitempty"`
+	}
+	if err := httpx.DecodeJSON(r, &payload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	statusCard, err := h.automation.AnalyzeStatusCard(r.Context(), AnalyzeStatusCardInput{
+		ChatID:              payload.ChatID,
+		AgentID:             payload.AgentID,
+		ContextMessageLimit: payload.ContextMessageLimit,
+	})
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	h.recordAudit(r.Context(), r, audit.RecordInput{
+		ActorType:  audit.ActorTypeUser,
+		ActorID:    audit.RequestActorID(r),
+		Action:     "agent.status_card.analyze",
+		TargetType: "chat",
+		TargetID:   payload.ChatID,
+		Outcome:    audit.OutcomeSuccess,
+		Detail: map[string]any{
+			"agent_id":      statusCard.AgentID,
+			"agent_name":    statusCard.AgentName,
+			"message_count": statusCard.MessageCount,
+			"history_limit": statusCard.HistoryLimit,
+		},
+	})
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status_card": statusCard})
 }
 
 func (h *Handler) handleGenerateRunStream(w http.ResponseWriter, r *http.Request) {

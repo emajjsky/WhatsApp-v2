@@ -95,6 +95,31 @@ type RunnerTranslationResponse struct {
 	Provider           map[string]any `json:"provider"`
 }
 
+type RunnerStatusCardRequest struct {
+	RequestID          string                `json:"request_id,omitempty"`
+	AccountID          string                `json:"account_id"`
+	ChatID             string                `json:"chat_id"`
+	ChatTitle          *string               `json:"chat_title,omitempty"`
+	PromptTemplate     string                `json:"prompt_template,omitempty"`
+	StageLabels        []string              `json:"stage_labels,omitempty"`
+	CustomerTypeLabels []string              `json:"customer_type_labels,omitempty"`
+	RiskLabels         []string              `json:"risk_labels,omitempty"`
+	RecentMessages     []RunnerRecentMessage `json:"recent_messages,omitempty"`
+	Provider           map[string]any        `json:"provider,omitempty"`
+}
+
+type RunnerStatusCardResponse struct {
+	RequestID     string         `json:"request_id"`
+	CurrentStage  string         `json:"current_stage"`
+	CustomerTypes []string       `json:"customer_types"`
+	CurrentRisk   string         `json:"current_risk"`
+	Summary       string         `json:"summary"`
+	Evidence      []string       `json:"evidence"`
+	NextAction    string         `json:"next_action"`
+	Confidence    string         `json:"confidence"`
+	Provider      map[string]any `json:"provider"`
+}
+
 func NewRunnerClient(baseURL string) *RunnerClient {
 	return &RunnerClient{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
@@ -273,6 +298,45 @@ func (c *RunnerClient) Translate(ctx context.Context, payload RunnerTranslationR
 	var decoded RunnerTranslationResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
 		return RunnerTranslationResponse{}, fmt.Errorf("decode runner translation response: %w", err)
+	}
+
+	return decoded, nil
+}
+
+func (c *RunnerClient) AnalyzeStatusCard(ctx context.Context, payload RunnerStatusCardRequest) (RunnerStatusCardResponse, error) {
+	if c == nil || strings.TrimSpace(c.baseURL) == "" {
+		return RunnerStatusCardResponse{}, fmt.Errorf("agent runner is not configured")
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return RunnerStatusCardResponse{}, fmt.Errorf("encode runner status card request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/status-card", bytes.NewReader(body))
+	if err != nil {
+		return RunnerStatusCardResponse{}, fmt.Errorf("build runner status card request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return RunnerStatusCardResponse{}, fmt.Errorf("call agent runner status card: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		message := strings.TrimSpace(string(detail))
+		if message == "" {
+			message = resp.Status
+		}
+		return RunnerStatusCardResponse{}, fmt.Errorf("agent runner status card returned status %d: %s", resp.StatusCode, message)
+	}
+
+	var decoded RunnerStatusCardResponse
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return RunnerStatusCardResponse{}, fmt.Errorf("decode runner status card response: %w", err)
 	}
 
 	return decoded, nil

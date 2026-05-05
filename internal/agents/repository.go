@@ -619,6 +619,116 @@ func (r *Repository) DeleteSystemConfig(ctx context.Context, id string) error {
 	return ensureAffected(result, id)
 }
 
+func (r *Repository) GetStatusCardByChatID(ctx context.Context, chatID string) (StatusCardView, error) {
+	const baseQuery = `
+SELECT
+    csc.agent_id,
+    csc.agent_name,
+    csc.current_stage,
+    csc.customer_types,
+    csc.current_risk,
+    csc.summary,
+    csc.evidence,
+    csc.next_action,
+    csc.confidence,
+    csc.message_count,
+    csc.history_limit,
+    csc.analyzed_at
+FROM chat_status_cards csc
+WHERE csc.chat_id = $1%s`
+
+	scopeClause, scopeArgs := agentAccountScope(ctx, "csc.account_id", 2)
+	query := fmt.Sprintf(baseQuery, scopeClause)
+	args := append([]any{strings.TrimSpace(chatID)}, scopeArgs...)
+
+	return scanStatusCardView(r.db.QueryRowContext(ctx, query, args...))
+}
+
+func (r *Repository) UpsertStatusCard(ctx context.Context, chatID string, card StatusCardView) error {
+	customerTypes, err := mustMarshalJSON(card.CustomerTypes)
+	if err != nil {
+		return err
+	}
+	evidence, err := mustMarshalJSON(card.Evidence)
+	if err != nil {
+		return err
+	}
+
+	const query = `
+INSERT INTO chat_status_cards (
+    chat_id,
+    account_id,
+    agent_id,
+    agent_name,
+    current_stage,
+    customer_types,
+    current_risk,
+    summary,
+    evidence,
+    next_action,
+    confidence,
+    message_count,
+    history_limit,
+    analyzed_at
+)
+SELECT
+    c.id,
+    c.account_id,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13
+FROM chats c
+WHERE c.id = $1
+ON CONFLICT (chat_id) DO UPDATE
+SET
+    account_id = EXCLUDED.account_id,
+    agent_id = EXCLUDED.agent_id,
+    agent_name = EXCLUDED.agent_name,
+    current_stage = EXCLUDED.current_stage,
+    customer_types = EXCLUDED.customer_types,
+    current_risk = EXCLUDED.current_risk,
+    summary = EXCLUDED.summary,
+    evidence = EXCLUDED.evidence,
+    next_action = EXCLUDED.next_action,
+    confidence = EXCLUDED.confidence,
+    message_count = EXCLUDED.message_count,
+    history_limit = EXCLUDED.history_limit,
+    analyzed_at = EXCLUDED.analyzed_at,
+    updated_at = NOW()`
+
+	result, err := r.db.ExecContext(
+		ctx,
+		query,
+		strings.TrimSpace(chatID),
+		nullableTrimmedString(card.AgentID),
+		card.AgentName,
+		card.CurrentStage,
+		customerTypes,
+		card.CurrentRisk,
+		card.Summary,
+		evidence,
+		card.NextAction,
+		card.Confidence,
+		card.MessageCount,
+		card.HistoryLimit,
+		card.AnalyzedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert status card for chat %q: %w", chatID, err)
+	}
+
+	return ensureAffected(result, chatID)
+}
+
 func (r *Repository) CreateRun(ctx context.Context, run AgentRun) error {
 	if len(run.InputContext) == 0 {
 		run.InputContext = json.RawMessage(`{}`)
@@ -1179,6 +1289,47 @@ func scanSystemConfig(row rowScanner) (SystemAgentConfig, error) {
 	}
 	if item.ProviderConfig == nil {
 		item.ProviderConfig = map[string]any{}
+	}
+
+	return item, nil
+}
+
+func scanStatusCardView(row rowScanner) (StatusCardView, error) {
+	var (
+		item          StatusCardView
+		agentID       sql.NullString
+		customerTypes []byte
+		evidence      []byte
+	)
+
+	if err := row.Scan(
+		&agentID,
+		&item.AgentName,
+		&item.CurrentStage,
+		&customerTypes,
+		&item.CurrentRisk,
+		&item.Summary,
+		&evidence,
+		&item.NextAction,
+		&item.Confidence,
+		&item.MessageCount,
+		&item.HistoryLimit,
+		&item.AnalyzedAt,
+	); err != nil {
+		return StatusCardView{}, err
+	}
+	item.AgentID = agentID.String
+	if err := json.Unmarshal(customerTypes, &item.CustomerTypes); err != nil {
+		return StatusCardView{}, fmt.Errorf("decode status card customer types: %w", err)
+	}
+	if item.CustomerTypes == nil {
+		item.CustomerTypes = []string{}
+	}
+	if err := json.Unmarshal(evidence, &item.Evidence); err != nil {
+		return StatusCardView{}, fmt.Errorf("decode status card evidence: %w", err)
+	}
+	if item.Evidence == nil {
+		item.Evidence = []string{}
 	}
 
 	return item, nil

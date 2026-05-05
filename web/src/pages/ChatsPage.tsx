@@ -7,8 +7,10 @@ import {
   useState,
 } from 'react'
 import {
+  analyzeStatusCard,
   getChatMessages,
   getMediaAssetUrl,
+  getStatusCard,
   listAccounts,
   listAvailableSystemAgentConfigs,
   listChats,
@@ -27,6 +29,7 @@ import {
   type MessageHistoryResponse,
   type MessageView,
   type SendChatMediaType,
+  type StatusCardView,
   type SystemAgentConfigView,
   type TranslationView,
 } from '../api/client'
@@ -136,7 +139,11 @@ export function ChatsPage() {
   const [assistantContextLimit, setAssistantContextLimit] = useState(12)
   const [replyAgents, setReplyAgents] = useState<SystemAgentConfigView[]>([])
   const [translationAgents, setTranslationAgents] = useState<SystemAgentConfigView[]>([])
+  const [statusCardAgents, setStatusCardAgents] = useState<SystemAgentConfigView[]>([])
   const [selectedReplyAgentId, setSelectedReplyAgentId] = useState('')
+  const [statusCard, setStatusCard] = useState<StatusCardView>()
+  const [statusCardBusy, setStatusCardBusy] = useState(false)
+  const [statusCardNotice, setStatusCardNotice] = useState<string>()
   const [agentConfigsLoading, setAgentConfigsLoading] = useState(true)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [assistantSending, setAssistantSending] = useState(false)
@@ -151,6 +158,7 @@ export function ChatsPage() {
   const pendingMessageTranslationKeysRef = useRef<Set<string>>(new Set())
   const keepTimelinePinnedRef = useRef(true)
   const pendingScrollModeRef = useRef<'bottom' | 'preserve' | 'none'>('bottom')
+  const statusCardRequestSeqRef = useRef(0)
   const previousTimelineMetricsRef = useRef<
     { scrollHeight: number; scrollTop: number } | undefined
   >(undefined)
@@ -182,12 +190,14 @@ export function ChatsPage() {
   const loadAvailableAgentConfigs = useCallback(async () => {
     setAgentConfigsLoading(true)
     try {
-      const [replyResponse, translationResponse] = await Promise.all([
+      const [replyResponse, translationResponse, statusCardResponse] = await Promise.all([
         listAvailableSystemAgentConfigs({ purpose: 'reply' }),
         listAvailableSystemAgentConfigs({ purpose: 'translation' }),
+        listAvailableSystemAgentConfigs({ purpose: 'status_card' }),
       ])
       setReplyAgents(replyResponse.configs)
       setTranslationAgents(translationResponse.configs)
+      setStatusCardAgents(statusCardResponse.configs)
       setSelectedReplyAgentId((current) =>
         replyResponse.configs.some((config) => config.id === current)
           ? current
@@ -296,6 +306,25 @@ export function ChatsPage() {
     }
   }, [])
 
+  const loadSavedStatusCard = useCallback(async (chatId: string) => {
+    const requestSeq = statusCardRequestSeqRef.current + 1
+    statusCardRequestSeqRef.current = requestSeq
+    setStatusCard(undefined)
+    setStatusCardNotice(undefined)
+    try {
+      const response = await getStatusCard(chatId)
+      if (statusCardRequestSeqRef.current !== requestSeq) {
+        return
+      }
+      setStatusCard(response.status_card ?? undefined)
+    } catch (loadError) {
+      if (statusCardRequestSeqRef.current !== requestSeq) {
+        return
+      }
+      setStatusCardNotice(loadError instanceof Error ? loadError.message : '加载状态卡失败')
+    }
+  }, [])
+
   useEffect(() => {
     void loadAccountsList()
   }, [loadAccountsList])
@@ -310,12 +339,16 @@ export function ChatsPage() {
 
   useEffect(() => {
     if (!selectedChatId) {
+      statusCardRequestSeqRef.current += 1
       setHistory(undefined)
+      setStatusCard(undefined)
+      setStatusCardNotice(undefined)
       return
     }
 
     void loadHistory(selectedChatId)
-  }, [loadHistory, selectedChatId])
+    void loadSavedStatusCard(selectedChatId)
+  }, [loadHistory, loadSavedStatusCard, selectedChatId])
 
   useEffect(() => {
     setAssistantRun(undefined)
@@ -654,6 +687,33 @@ export function ChatsPage() {
     }
   }
 
+  async function handleAnalyzeStatusCard() {
+    if (!selectedChatId || statusCardBusy) {
+      return
+    }
+    const activeAgent = statusCardAgents[0]
+    if (!activeAgent) {
+      setStatusCardNotice('管理员后台还没有启用状态卡智能体')
+      return
+    }
+
+    setStatusCardBusy(true)
+    setStatusCardNotice(undefined)
+    setError(undefined)
+
+    try {
+      const response = await analyzeStatusCard({
+        chat_id: selectedChatId,
+        agent_id: activeAgent.id,
+      })
+      setStatusCard(response.status_card)
+    } catch (analyzeError) {
+      setStatusCardNotice(analyzeError instanceof Error ? analyzeError.message : '状态卡分析失败')
+    } finally {
+      setStatusCardBusy(false)
+    }
+  }
+
   async function handleGenerateAssistantDraft() {
     if (!selectedChatId || !history || assistantBusy) {
       return
@@ -817,8 +877,7 @@ export function ChatsPage() {
     })
   }
 
-  const selectedReplyAgent = replyAgents.find((item) => item.id === selectedReplyAgentId)
-  const activeTranslationAgent = translationAgents[0]
+  const activeStatusCardAgent = statusCardAgents[0]
   const selectedChat = chats.find((item) => item.id === selectedChatId)
   const hasSystemAssistantFallback = Boolean(history && selectedChat)
   const canGenerateAssistantDraft = Boolean(
@@ -835,6 +894,7 @@ export function ChatsPage() {
     history && isChatSendable(history.chat.wa_chat_jid, history.chat.chat_type),
   )
   const canSendMessage = Boolean(canSendInCurrentChat && draftMessage.trim() && !sending)
+  const canAnalyzeStatusCard = Boolean(selectedChatId && history && activeStatusCardAgent && !statusCardBusy)
   const sendBlockReason =
     history && !canSendInCurrentChat
       ? getChatSendBlockedReason(history.chat.wa_chat_jid, history.chat.chat_type)
@@ -1128,112 +1188,116 @@ export function ChatsPage() {
               <p className="eyebrow">AI 助手</p>
               <h3>对话辅助</h3>
             </div>
-            <span className="toolbar-chip active">实验中</span>
           </div>
 
           {selectedChat && history ? (
             <div className="assistant-panel-body whatsapp-assistant-body">
-              <section className="assistant-card assistant-chat-context">
-                <span className="assistant-section-label">当前会话</span>
-                <strong>{getChatDisplayName(history.chat)}</strong>
-                <p>{history.chat.wa_chat_jid}</p>
-                <div className="assistant-chip-row">
-                  <span className="toolbar-chip active">管理员后台智能体</span>
-                  <span className="toolbar-chip">{selectedReplyAgent?.name || '未选择回复智能体'}</span>
-                  <span className="toolbar-chip">
-                    {activeTranslationAgent ? `翻译：${activeTranslationAgent.name}` : '未启用翻译智能体'}
-                  </span>
-                </div>
-              </section>
-
-              <section className="assistant-card">
-                <span className="assistant-section-label">Agent 回复</span>
-                {agentConfigsLoading ? (
-                  <div className="warning-banner">正在加载管理员后台智能体配置...</div>
-                ) : replyAgents.length ? (
-                  <label className="field assistant-agent-field">
-                    <span>回复智能体</span>
-                    <select
-                      value={selectedReplyAgentId}
-                      onChange={(event) => {
-                        setSelectedReplyAgentId(event.target.value)
-                        setAssistantRun(undefined)
-                        setAssistantDraft('')
-                        setTranslatedDraft('')
-                      }}
-                      disabled={assistantBusy}
-                    >
-                      {replyAgents.map((agent) => (
-                        <option key={agent.id} value={agent.id}>
-                          {agent.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : (
-                  <div className="warning-banner">
-                    管理员后台还没有启用回复智能体，当前不能生成回复建议。
+              <div className="assistant-reply-column">
+                <section className="assistant-card assistant-reply-card">
+                  <div className="assistant-card-header-row">
+                    <span className="assistant-section-label">Agent 回复</span>
+                    {replyAgents.length ? (
+                      <select
+                        className="assistant-header-select"
+                        value={selectedReplyAgentId}
+                        onChange={(event) => {
+                          setSelectedReplyAgentId(event.target.value)
+                          setAssistantRun(undefined)
+                          setAssistantDraft('')
+                          setTranslatedDraft('')
+                        }}
+                        disabled={assistantBusy}
+                      >
+                        {replyAgents.map((agent) => (
+                          <option key={agent.id} value={agent.id}>
+                            {agent.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
                   </div>
-                )}
 
-                <div className="assistant-context-controls">
-                  <label className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={assistantContextEnabled}
-                      onChange={(event) => setAssistantContextEnabled(event.target.checked)}
-                    />
-                    <span>携带上下文</span>
-                  </label>
-                  <label className="field compact-field">
-                    <span>历史条数</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={50}
-                      value={assistantContextLimit}
-                      disabled={!assistantContextEnabled}
-                      onChange={(event) => {
-                        const next = Number(event.target.value)
-                        setAssistantContextLimit(Number.isFinite(next) ? next : 12)
-                      }}
-                    />
-                  </label>
-                </div>
+                  {agentConfigsLoading ? (
+                    <div className="warning-banner">加载中...</div>
+                  ) : replyAgents.length ? null : (
+                    <div className="warning-banner">未启用回复智能体。</div>
+                  )}
 
-                <button
-                  className="secondary-button assistant-action-button"
-                  type="button"
-                  onClick={() => void handleGenerateAssistantDraft()}
-                  disabled={!canGenerateAssistantDraft}
-                >
-                  {assistantBusy ? '生成中...' : '生成回复建议'}
-                </button>
+                  {replyAgents.length ? (
+                    <>
+                      <div className="assistant-context-controls">
+                        <label className="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={assistantContextEnabled}
+                            onChange={(event) => setAssistantContextEnabled(event.target.checked)}
+                          />
+                          <span>携带上下文</span>
+                        </label>
+                        <label className="field compact-field">
+                          <span>历史条数</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={50}
+                            value={assistantContextLimit}
+                            disabled={!assistantContextEnabled}
+                            onChange={(event) => {
+                              const next = Number(event.target.value)
+                              setAssistantContextLimit(Number.isFinite(next) ? next : 12)
+                            }}
+                          />
+                        </label>
+                      </div>
 
-                {assistantRun ? (
-                  <div className="assistant-chip-row">
-                    <StatusBadge status={assistantRun.status} />
-                    <span className="toolbar-chip">{assistantRun.rule_name}</span>
+                      <button
+                        className="secondary-button assistant-action-button"
+                        type="button"
+                        onClick={() => void handleGenerateAssistantDraft()}
+                        disabled={!canGenerateAssistantDraft}
+                      >
+                        {assistantBusy ? '生成中...' : '生成回复建议'}
+                      </button>
+                    </>
+                  ) : null}
+
+                  {assistantRun ? (
+                    <div className="assistant-chip-row">
+                      <StatusBadge status={assistantRun.status} />
+                    </div>
+                  ) : null}
+                </section>
+
+                <section className="assistant-card assistant-draft-card">
+                  <div className="assistant-card-header-row">
+                    <span className="assistant-section-label">草稿</span>
+                    <div className="assistant-inline-actions">
+                      <button
+                        className="secondary-button assistant-mini-button"
+                        type="button"
+                        onClick={handleWriteAssistantDraft}
+                        disabled={!canUseAssistantDraft}
+                      >
+                        写回
+                      </button>
+                      <button
+                        className="primary-button assistant-mini-button"
+                        type="button"
+                        onClick={() => void handleSendAssistantDraft()}
+                        disabled={!canUseAssistantDraft || !canSendInCurrentChat || assistantSending}
+                      >
+                        {assistantSending ? '发送中...' : '发送'}
+                      </button>
+                    </div>
                   </div>
-                ) : null}
-              </section>
-
-              <section className="assistant-card">
-                <span className="assistant-section-label">草稿</span>
-                <textarea
-                  className="assistant-draft-box"
-                  ref={assistantDraftRef}
-                  value={assistantDraft}
-                  onChange={(event) => setAssistantDraft(event.target.value)}
-                  placeholder="生成后会出现在这里"
-                  rows={7}
-                />
-                <div className="assistant-translation-panel">
-                  <div className="assistant-chip-row">
-                    <span className="toolbar-chip active">
-                      {activeTranslationAgent ? `当前翻译：${activeTranslationAgent.name}` : '未启用翻译智能体'}
-                    </span>
-                  </div>
+                  <textarea
+                    className="assistant-draft-box"
+                    ref={assistantDraftRef}
+                    value={assistantDraft}
+                    onChange={(event) => setAssistantDraft(event.target.value)}
+                    placeholder="生成后会出现在这里"
+                    rows={7}
+                  />
                   <div className="assistant-translation-row">
                     <label className="field compact-field">
                       <span>译文语种</span>
@@ -1270,31 +1334,78 @@ export function ChatsPage() {
                       rows={5}
                     />
                   ) : null}
-                </div>
-                {assistantRun?.block_reason ? (
-                  <div className="warning-banner">{assistantRun.block_reason}</div>
-                ) : null}
-                {assistantNotice ? <div className="success-banner">{assistantNotice}</div> : null}
+                  {assistantRun?.block_reason ? (
+                    <div className="warning-banner">{assistantRun.block_reason}</div>
+                  ) : null}
+                  {assistantNotice ? <div className="success-banner">{assistantNotice}</div> : null}
+                </section>
+              </div>
 
-                <div className="button-row">
-                  <button
-                    className="secondary-button assistant-action-button"
-                    type="button"
-                    onClick={handleWriteAssistantDraft}
-                    disabled={!canUseAssistantDraft}
-                  >
-                    写回输入框
-                  </button>
-                  <button
-                    className="primary-button assistant-action-button"
-                    type="button"
-                    onClick={() => void handleSendAssistantDraft()}
-                    disabled={!canUseAssistantDraft || !canSendInCurrentChat || assistantSending}
-                  >
-                    {assistantSending ? '发送中...' : '发送草稿'}
-                  </button>
-                </div>
-              </section>
+              <div className="assistant-status-column">
+                <section className="assistant-card assistant-status-card">
+                  <div className="assistant-card-header-row">
+                    <div className="assistant-title-stack">
+                      <span className="assistant-section-label">用户状态卡</span>
+                      {statusCard ? (
+                        <span className="assistant-muted-count">{statusCard.message_count} 条记录</span>
+                      ) : null}
+                    </div>
+                    <button
+                      className="secondary-button assistant-mini-button"
+                      type="button"
+                      onClick={() => void handleAnalyzeStatusCard()}
+                      disabled={!canAnalyzeStatusCard}
+                    >
+                      {statusCardBusy ? '分析中...' : statusCard ? '重分析' : '分析'}
+                    </button>
+                  </div>
+
+                  {agentConfigsLoading ? (
+                    <div className="warning-banner">加载中...</div>
+                  ) : !activeStatusCardAgent ? (
+                    <div className="warning-banner">未启用状态卡智能体。</div>
+                  ) : statusCard ? (
+                    <div className="assistant-status-body">
+                      <div className="assistant-status-metrics">
+                        <StatusMetric label="当前阶段" value={statusCard.current_stage || '未判断'} />
+                        <StatusMetric
+                          label="当前风险"
+                          value={statusCard.current_risk || '未判断'}
+                          tone={getRiskTone(statusCard.current_risk)}
+                        />
+                      </div>
+                      <div className="assistant-status-group">
+                        <span>客户类型</span>
+                        <div className="assistant-chip-row">
+                          {(statusCard.customer_types.length ? statusCard.customer_types : ['未判断']).map((item) => (
+                            <span className="toolbar-chip" key={item}>
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      {statusCard.summary ? <p className="assistant-status-summary">{statusCard.summary}</p> : null}
+                      {statusCard.evidence.length ? (
+                        <ul className="assistant-evidence-list">
+                          {statusCard.evidence.slice(0, 3).map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {statusCard.next_action ? (
+                        <div className="assistant-next-action">
+                          <span>下一步</span>
+                          <p>{statusCard.next_action}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <p className="assistant-status-empty">未分析</p>
+                  )}
+
+                  {statusCardNotice ? <div className="warning-banner">{statusCardNotice}</div> : null}
+                </section>
+              </div>
 
             </div>
           ) : (
@@ -1306,6 +1417,37 @@ export function ChatsPage() {
       {error ? <div className="error-banner">{error}</div> : null}
     </div>
   )
+}
+
+function StatusMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string
+  tone?: 'low' | 'medium' | 'high'
+}) {
+  return (
+    <div className={`assistant-status-metric${tone ? ` tone-${tone}` : ''}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
+function getRiskTone(value: string): 'low' | 'medium' | 'high' | undefined {
+  const normalized = value.trim()
+  if (normalized === '高') {
+    return 'high'
+  }
+  if (normalized === '中') {
+    return 'medium'
+  }
+  if (normalized === '低') {
+    return 'low'
+  }
+  return undefined
 }
 
 function renderMessageTranslation(state?: TranslationState, onTranslate?: () => void) {

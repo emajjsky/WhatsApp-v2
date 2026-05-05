@@ -393,7 +393,7 @@ func (s *Service) ListAvailableSystemConfigs(ctx context.Context, purpose AgentP
 	if err != nil {
 		return nil, err
 	}
-	if normalizedPurpose == AgentPurposeTranslation && len(items) > 1 {
+	if systemPurposeUsesSingleActiveConfig(normalizedPurpose) && len(items) > 1 {
 		items = items[:1]
 	}
 
@@ -403,6 +403,19 @@ func (s *Service) ListAvailableSystemConfigs(ctx context.Context, purpose AgentP
 	}
 
 	return items, nil
+}
+
+func (s *Service) GetStatusCard(ctx context.Context, chatID string) (StatusCardView, error) {
+	if _, err := auth.RequireUser(ctx); err != nil {
+		return StatusCardView{}, err
+	}
+
+	trimmedID := strings.TrimSpace(chatID)
+	if trimmedID == "" {
+		return StatusCardView{}, fmt.Errorf("chat_id is required")
+	}
+
+	return s.repository.GetStatusCardByChatID(ctx, trimmedID)
 }
 
 func (s *Service) UpsertSystemConfig(ctx context.Context, input UpsertSystemConfigInput) (SystemAgentConfig, error) {
@@ -445,7 +458,7 @@ func (s *Service) UpsertSystemConfig(ctx context.Context, input UpsertSystemConf
 	if err := s.repository.UpsertSystemConfig(ctx, config); err != nil {
 		return SystemAgentConfig{}, err
 	}
-	if purpose == AgentPurposeTranslation && config.Enabled {
+	if systemPurposeUsesSingleActiveConfig(purpose) && config.Enabled {
 		if err := s.repository.DisableOtherSystemConfigs(ctx, purpose, config.ID); err != nil {
 			return SystemAgentConfig{}, err
 		}
@@ -556,9 +569,15 @@ func normalizeAgentPurpose(value AgentPurpose) AgentPurpose {
 		return AgentPurposeReply
 	case string(AgentPurposeTranslation):
 		return AgentPurposeTranslation
+	case string(AgentPurposeStatusCard):
+		return AgentPurposeStatusCard
 	default:
 		return ""
 	}
+}
+
+func systemPurposeUsesSingleActiveConfig(purpose AgentPurpose) bool {
+	return purpose == AgentPurposeTranslation || purpose == AgentPurposeStatusCard
 }
 
 func normalizeAccountIDs(primary string, values []string) []string {

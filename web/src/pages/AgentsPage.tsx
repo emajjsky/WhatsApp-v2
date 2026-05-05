@@ -74,7 +74,7 @@ function mapRuleToForm(rule: AgentRuleView): AgentFormValue {
     id: rule.id,
     accountId: rule.account_id,
     accountIds: rule.account_ids?.length ? rule.account_ids : [rule.account_id],
-    purpose: rule.purpose ?? 'reply',
+    purpose: rule.purpose === 'translation' ? 'translation' : 'reply',
     name: rule.name,
     providerType,
     model: readConfigString(config, 'model'),

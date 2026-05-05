@@ -13,10 +13,15 @@ web/dist/
 # Local toolchains and caches
 .cache/
 .tools/
+.gocache/
+.gotelemetry/
 
 # Python bytecode / caches
 __pycache__/
 *.py[cod]
+
+# Go formatter temporary files on Windows
+*.go.[0-9]*
 
 # Local reference repositories
 refer/

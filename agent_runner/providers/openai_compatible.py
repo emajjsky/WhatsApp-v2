@@ -45,6 +45,22 @@ def _optional_bool(value: Any) -> bool | None:
     return None
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _optional_str(item)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+
+    return result
+
+
 def _normalize_base_url(value: str) -> str:
     base = value.strip().rstrip("/")
     if not base:
@@ -72,6 +88,51 @@ def _build_user_message(request: ProviderRequest) -> str:
                 request.customer_message.strip(),
             ]
         ).strip()
+
+    if request.metadata.get("task") == "status_card":
+        stage_labels = _string_list(request.metadata.get("stage_labels"))
+        customer_type_labels = _string_list(request.metadata.get("customer_type_labels"))
+        risk_labels = _string_list(request.metadata.get("risk_labels"))
+        lines = [
+            "[Status Card Task]",
+            "Analyze this WhatsApp conversation for private-domain conversion and group-entry guidance.",
+            "Return only strict JSON. Do not add markdown or explanations outside JSON.",
+            'JSON schema: {"current_stage":"string","customer_types":["string"],"current_risk":"低|中|高","summary":"string","evidence":["string"],"next_action":"string","confidence":"string"}',
+            "current_stage must use one of the stage labels when possible.",
+            "customer_types must use zero or more customer type labels when possible.",
+            "current_risk must use one of the risk labels.",
+            "",
+            "[Stage Labels]",
+            " / ".join(stage_labels) if stage_labels else "新线索 / 已破冰 / 问费用 / 问进群 / 已进群 / 问推荐 / 问操作 / 异议中 / check-in / 沉默待复访",
+            "",
+            "[Customer Type Labels]",
+            " / ".join(customer_type_labels) if customer_type_labels else "新手 / 有经验 / 曾亏损 / 价格敏感 / 信任不足 / 操作小白 / 高意向",
+            "",
+            "[Risk Labels]",
+            " / ".join(risk_labels) if risk_labels else "低 / 中 / 高",
+            "",
+        ]
+        if request.chat_title:
+            lines.extend(["[Chat Title]", request.chat_title.strip(), ""])
+
+        recent_messages = request.recent_messages or []
+        if recent_messages:
+            lines.append("[Conversation]")
+            for index, item in enumerate(recent_messages, start=1):
+                role = _optional_str(item.get("role")) or "unknown"
+                text = _optional_str(item.get("text")) or ""
+                if not text:
+                    continue
+                lines.append(f"{index}. {role}: {text}")
+            lines.append("")
+
+        lines.extend(
+            [
+                "[Latest Customer Message]",
+                request.customer_message.strip() or "",
+            ]
+        )
+        return "\n".join(lines).strip()
 
     lines: list[str] = []
 

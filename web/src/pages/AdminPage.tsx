@@ -41,6 +41,10 @@ interface AgentConfigForm {
   maxTokens: string
   timeoutSeconds: string
   enableThinking: boolean
+  historyLimit: string
+  stageLabels: string
+  customerTypeLabels: string
+  riskLabels: string
   promptTemplate: string
 }
 
@@ -48,6 +52,23 @@ const defaultReplyPrompt =
   '你是 WhatsApp 客服回复助手。根据当前客户消息和上下文，生成一条简洁、礼貌、可直接发送给客户的中文回复建议。'
 const defaultTranslationPrompt =
   '你是 WhatsApp 客服翻译助手。检测原文语种，并把文本准确翻译成目标语种。source_language_name 使用中文语种名。只输出严格 JSON。'
+const defaultStatusCardPrompt =
+  '你是 WhatsApp 私域转化顾问。基于完整聊天记录分析客户所处阶段、客户类型、风险等级，并给出下一步引导入群和转化动作。只输出严格 JSON。'
+
+const defaultStatusStageLabels = [
+  '新线索',
+  '已破冰',
+  '问费用',
+  '问进群',
+  '已进群',
+  '问推荐',
+  '问操作',
+  '异议中',
+  'check-in',
+  '沉默待复访',
+]
+const defaultCustomerTypeLabels = ['新手', '有经验', '曾亏损', '价格敏感', '信任不足', '操作小白', '高意向']
+const defaultRiskLabels = ['低', '中', '高']
 
 const providerOptions: Array<{ value: ProviderType; label: string }> = [
   { value: 'openai_compatible', label: 'OpenAI-compatible' },
@@ -628,16 +649,16 @@ function SystemAgentPanel() {
         name,
         purpose,
         enabled: form.enabled,
-        provider_config: buildProviderConfig(form),
+        provider_config: buildProviderConfig({ ...form, purpose }),
         prompt_template: form.promptTemplate.trim(),
       })
       setConfigs((current) => [
         ...current
           .filter((item) => item.id !== response.config.id)
           .map((item) =>
-            response.config.purpose === 'translation' &&
+            (response.config.purpose === 'translation' || response.config.purpose === 'status_card') &&
             response.config.enabled &&
-            item.purpose === 'translation'
+            item.purpose === response.config.purpose
               ? { ...item, enabled: false }
               : item,
           ),
@@ -683,7 +704,7 @@ function SystemAgentPanel() {
       <div className="panel-heading">
         <div>
           <p className="eyebrow">系统智能体</p>
-          <h3>{loading ? '加载配置中' : purpose === 'reply' ? '回复 Agent' : '翻译 Agent'}</h3>
+          <h3>{loading ? '加载配置中' : getPurposeTitle(purpose)}</h3>
         </div>
       </div>
 
@@ -706,17 +727,21 @@ function SystemAgentPanel() {
               <strong>翻译 Agent</strong>
               <span>管理员选择一个当前生效</span>
             </button>
+            <button
+              type="button"
+              className={`admin-purpose-button${purpose === 'status_card' ? ' active' : ''}`}
+              onClick={() => setPurpose('status_card')}
+            >
+              <strong>状态卡 Agent</strong>
+              <span>分析客户阶段、类型和风险</span>
+            </button>
           </div>
 
           <div className="system-agent-selector">
             <div className="system-agent-selector-head">
               <div>
-                <strong>{purpose === 'reply' ? '回复智能体' : '翻译智能体'}</strong>
-                <span>
-                  {purpose === 'reply'
-                    ? '用户可在对话页按需求选择启用的回复智能体'
-                    : '普通用户不选择翻译智能体，管理员只启用一个作为当前生效'}
-                </span>
+                <strong>{getPurposeConfigTitle(purpose)}</strong>
+                <span>{getPurposeDescription(purpose)}</span>
               </div>
               <button
                 className="secondary-button"
@@ -740,7 +765,7 @@ function SystemAgentPanel() {
                       <strong>{config.name}</strong>
                       <small>
                         {config.enabled
-                          ? purpose === 'translation'
+                          ? purpose === 'translation' || purpose === 'status_card'
                             ? '当前生效'
                             : '已启用'
                           : '未启用'}
@@ -761,7 +786,7 @@ function SystemAgentPanel() {
             <section className="admin-form-section">
               <div className="admin-form-section-title">
                 <strong>基础设置</strong>
-                <span>{purpose === 'translation' ? '翻译只允许一个当前生效' : '启用后普通用户可在对话页选择'}</span>
+                <span>{getPurposeEnableHint(purpose)}</span>
               </div>
               <div className="two-column-grid">
                 <label className="field">
@@ -769,12 +794,12 @@ function SystemAgentPanel() {
                   <input
                     value={form.name}
                     onChange={(event) => updateForm({ name: event.target.value })}
-                    placeholder={purpose === 'reply' ? '例如：售前回复助手' : '例如：多语言翻译助手'}
+                    placeholder={getPurposeNamePlaceholder(purpose)}
                   />
                 </label>
                 <label className="field">
                   <span>智能体类型</span>
-                  <input value={purpose === 'reply' ? '回复 Agent' : '翻译 Agent'} disabled />
+                  <input value={getPurposeTitle(purpose)} disabled />
                 </label>
               </div>
 
@@ -784,18 +809,18 @@ function SystemAgentPanel() {
                   checked={form.enabled}
                   onChange={(event) => updateForm({ enabled: event.target.checked })}
                 />
-                <span>{purpose === 'translation' ? '设为当前生效翻译智能体' : '启用当前智能体'}</span>
+                <span>{getPurposeEnableLabel(purpose)}</span>
               </label>
             </section>
 
             <section className="admin-form-section">
               <div className="admin-form-section-title">
                 <strong>API 接入</strong>
-                <span>回复可接大模型、Coze、n8n；翻译使用 OpenAI-compatible</span>
+                <span>回复和状态卡可接大模型、Coze、n8n；翻译使用 OpenAI-compatible</span>
               </div>
               <div className="admin-provider-grid">
                 {providerOptions
-                  .filter((option) => purpose === 'reply' || option.value === 'openai_compatible')
+                  .filter((option) => purpose !== 'translation' || option.value === 'openai_compatible')
                   .map((option) => (
                     <button
                       key={option.value}
@@ -925,6 +950,52 @@ function SystemAgentPanel() {
             )}
             </section>
 
+            {purpose === 'status_card' ? (
+              <section className="admin-form-section">
+                <div className="admin-form-section-title">
+                  <strong>状态卡配置</strong>
+                  <span>历史默认读取全部，最多 500 条；标签会约束状态卡输出</span>
+                </div>
+                <label className="field compact-field">
+                  <span>历史记录条数</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={form.historyLimit}
+                    onChange={(event) => updateForm({ historyLimit: event.target.value })}
+                    placeholder="默认全部，最多 500"
+                  />
+                </label>
+                <div className="three-column-grid admin-status-label-grid">
+                  <label className="field agent-prompt-field">
+                    <span>当前阶段标签</span>
+                    <textarea
+                      rows={6}
+                      value={form.stageLabels}
+                      onChange={(event) => updateForm({ stageLabels: event.target.value })}
+                    />
+                  </label>
+                  <label className="field agent-prompt-field">
+                    <span>客户类型标签</span>
+                    <textarea
+                      rows={6}
+                      value={form.customerTypeLabels}
+                      onChange={(event) => updateForm({ customerTypeLabels: event.target.value })}
+                    />
+                  </label>
+                  <label className="field agent-prompt-field">
+                    <span>风险标签</span>
+                    <textarea
+                      rows={6}
+                      value={form.riskLabels}
+                      onChange={(event) => updateForm({ riskLabels: event.target.value })}
+                    />
+                  </label>
+                </div>
+              </section>
+            ) : null}
+
             <section className="admin-form-section">
               <div className="admin-form-section-title">
                 <strong>提示词</strong>
@@ -970,7 +1041,7 @@ function SystemAgentPanel() {
 function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
   return {
     id: '',
-    name: purpose === 'translation' ? '翻译智能体' : '回复智能体',
+    name: getPurposeDefaultName(purpose),
     purpose,
     enabled: false,
     providerType: 'openai_compatible',
@@ -982,10 +1053,96 @@ function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
     method: 'POST',
     responsePath: 'draft',
     temperature: '0.2',
-    maxTokens: purpose === 'translation' ? '800' : '1200',
+    maxTokens: purpose === 'translation' ? '800' : purpose === 'status_card' ? '1400' : '1200',
     timeoutSeconds: '60',
     enableThinking: false,
-    promptTemplate: purpose === 'translation' ? defaultTranslationPrompt : defaultReplyPrompt,
+    historyLimit: '500',
+    stageLabels: defaultStatusStageLabels.join('\n'),
+    customerTypeLabels: defaultCustomerTypeLabels.join('\n'),
+    riskLabels: defaultRiskLabels.join('\n'),
+    promptTemplate:
+      purpose === 'translation'
+        ? defaultTranslationPrompt
+        : purpose === 'status_card'
+          ? defaultStatusCardPrompt
+          : defaultReplyPrompt,
+  }
+}
+
+function getPurposeTitle(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return '翻译 Agent'
+    case 'status_card':
+      return '状态卡 Agent'
+    default:
+      return '回复 Agent'
+  }
+}
+
+function getPurposeConfigTitle(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return '翻译智能体'
+    case 'status_card':
+      return '状态卡智能体'
+    default:
+      return '回复智能体'
+  }
+}
+
+function getPurposeDescription(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return '普通用户不选择翻译智能体，管理员只启用一个作为当前生效'
+    case 'status_card':
+      return '对话页右侧状态卡使用当前生效的状态卡智能体'
+    default:
+      return '用户可在对话页按需求选择启用的回复智能体'
+  }
+}
+
+function getPurposeEnableHint(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return '翻译只允许一个当前生效'
+    case 'status_card':
+      return '状态卡只允许一个当前生效'
+    default:
+      return '启用后普通用户可在对话页选择'
+  }
+}
+
+function getPurposeEnableLabel(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return '设为当前生效翻译智能体'
+    case 'status_card':
+      return '设为当前生效状态卡智能体'
+    default:
+      return '启用当前智能体'
+  }
+}
+
+function getPurposeNamePlaceholder(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return '例如：多语言翻译助手'
+    case 'status_card':
+      return '例如：客户状态分析助手'
+    default:
+      return '例如：售前回复助手'
+  }
+}
+
+function getPurposeDefaultName(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return '翻译智能体'
+    case 'status_card':
+      return '状态卡智能体'
+    default:
+      return '回复智能体'
   }
 }
 
@@ -1011,13 +1168,21 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
     maxTokens: readConfigString(providerConfig, 'max_tokens') || fallback.maxTokens,
     timeoutSeconds: readConfigString(providerConfig, 'timeout_seconds') || fallback.timeoutSeconds,
     enableThinking: readConfigBool(providerConfig, 'enable_thinking', false),
+    historyLimit: readConfigString(providerConfig, 'history_limit') || fallback.historyLimit,
+    stageLabels: readConfigStringList(providerConfig, 'stage_labels', defaultStatusStageLabels).join('\n'),
+    customerTypeLabels: readConfigStringList(
+      providerConfig,
+      'customer_type_labels',
+      defaultCustomerTypeLabels,
+    ).join('\n'),
+    riskLabels: readConfigStringList(providerConfig, 'risk_labels', defaultRiskLabels).join('\n'),
     promptTemplate: config.prompt_template || fallback.promptTemplate,
   }
 }
 
 function buildProviderConfig(form: AgentConfigForm): AgentProviderConfig {
   if (form.providerType === 'openai_compatible') {
-    return compactConfig({
+    return withStatusCardConfig(form, {
       type: 'openai_compatible',
       model: form.model.trim(),
       base_url: form.baseUrl.trim(),
@@ -1029,7 +1194,7 @@ function buildProviderConfig(form: AgentConfigForm): AgentProviderConfig {
     })
   }
 
-  return compactConfig({
+  return withStatusCardConfig(form, {
     type: form.providerType,
     endpoint_url: form.endpointUrl.trim(),
     api_key: form.apiKey.trim(),
@@ -1037,6 +1202,20 @@ function buildProviderConfig(form: AgentConfigForm): AgentProviderConfig {
     method: form.method.trim().toUpperCase() || 'POST',
     response_path: form.responsePath.trim() || 'draft',
     timeout_seconds: optionalNumber(form.timeoutSeconds),
+  })
+}
+
+function withStatusCardConfig(form: AgentConfigForm, config: AgentProviderConfig) {
+  if (form.purpose !== 'status_card') {
+    return compactConfig(config)
+  }
+
+  return compactConfig({
+    ...config,
+    history_limit: optionalNumber(form.historyLimit) ?? 500,
+    stage_labels: parseLabelTextarea(form.stageLabels),
+    customer_type_labels: parseLabelTextarea(form.customerTypeLabels),
+    risk_labels: parseLabelTextarea(form.riskLabels),
   })
 }
 
@@ -1062,6 +1241,33 @@ function readConfigString(config: AgentProviderConfig, key: string) {
     return ''
   }
   return String(value)
+}
+
+function readConfigStringList(config: AgentProviderConfig, key: string, fallback: string[]) {
+  const value = config[key]
+  if (Array.isArray(value)) {
+    const parsed = value.map((item) => String(item).trim()).filter(Boolean)
+    return parsed.length ? parsed : fallback
+  }
+  if (typeof value === 'string') {
+    const parsed = parseLabelTextarea(value)
+    return parsed.length ? parsed : fallback
+  }
+  return fallback
+}
+
+function parseLabelTextarea(value: string) {
+  const seen = new Set<string>()
+  return value
+    .split(/[\n,，/]+/)
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) {
+        return false
+      }
+      seen.add(item)
+      return true
+    })
 }
 
 function readConfigBool(config: AgentProviderConfig, key: string, fallback: boolean) {

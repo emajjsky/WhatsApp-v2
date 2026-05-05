@@ -139,6 +139,27 @@ type TranslationView struct {
 	TranslatedText     string `json:"translated_text"`
 }
 
+type AnalyzeStatusCardInput struct {
+	ChatID              string
+	AgentID             string
+	ContextMessageLimit int
+}
+
+type StatusCardView struct {
+	AgentID       string    `json:"agent_id"`
+	AgentName     string    `json:"agent_name"`
+	CurrentStage  string    `json:"current_stage"`
+	CustomerTypes []string  `json:"customer_types"`
+	CurrentRisk   string    `json:"current_risk"`
+	Summary       string    `json:"summary"`
+	Evidence      []string  `json:"evidence"`
+	NextAction    string    `json:"next_action"`
+	Confidence    string    `json:"confidence,omitempty"`
+	MessageCount  int       `json:"message_count"`
+	HistoryLimit  int       `json:"history_limit"`
+	AnalyzedAt    time.Time `json:"analyzed_at"`
+}
+
 type preparedManualRun struct {
 	RunID         string
 	AccountID     string
@@ -344,6 +365,84 @@ func (a *Automation) TranslateText(ctx context.Context, input TranslateTextInput
 		TargetLanguageName: strings.TrimSpace(response.TargetLanguageName),
 		TranslatedText:     strings.TrimSpace(response.TranslatedText),
 	}, nil
+}
+
+func (a *Automation) AnalyzeStatusCard(ctx context.Context, input AnalyzeStatusCardInput) (StatusCardView, error) {
+	if a == nil {
+		return StatusCardView{}, fmt.Errorf("agent automation is not configured")
+	}
+	if !a.runner.Configured() {
+		return StatusCardView{}, fmt.Errorf("agent runner is not configured (AGENT_RUNNER_BASE_URL)")
+	}
+
+	chatID := strings.TrimSpace(input.ChatID)
+	if chatID == "" {
+		return StatusCardView{}, fmt.Errorf("chat_id is required")
+	}
+
+	chatHeader, err := a.chatRepository.GetChatHeader(ctx, chatID)
+	if err != nil {
+		return StatusCardView{}, err
+	}
+
+	systemConfig, err := a.resolveSystemAgentConfig(ctx, strings.TrimSpace(input.AgentID), AgentPurposeStatusCard)
+	if err != nil || !systemConfig.Enabled {
+		return StatusCardView{}, fmt.Errorf("no status card agent is configured in admin backend")
+	}
+	rule := systemConfigRule(chatHeader.AccountID, systemConfig)
+
+	providerConfig, err := a.buildRunnerProvider(ctx, chatHeader.AccountID, rule)
+	if err != nil {
+		return StatusCardView{}, fmt.Errorf("load admin status card agent config failed: %w", err)
+	}
+
+	historyLimit := normalizeStatusCardHistoryLimit(input.ContextMessageLimit, systemConfig.ProviderConfig)
+	messages, _, err := a.chatRepository.ListMessages(ctx, chats.MessageListFilters{
+		ChatID: chatID,
+		Limit:  historyLimit,
+	})
+	if err != nil {
+		return StatusCardView{}, err
+	}
+	if len(messages) == 0 {
+		return StatusCardView{}, fmt.Errorf("chat has no messages to analyze")
+	}
+
+	response, err := a.runner.AnalyzeStatusCard(ctx, RunnerStatusCardRequest{
+		RequestID:          ids.NewUUID(),
+		AccountID:          chatHeader.AccountID,
+		ChatID:             chatID,
+		ChatTitle:          chatHeader.Title,
+		PromptTemplate:     resolveRunnerPrompt(rule, providerConfig),
+		StageLabels:        readConfigStringList(systemConfig.ProviderConfig, "stage_labels", defaultStatusCardStageLabels()),
+		CustomerTypeLabels: readConfigStringList(systemConfig.ProviderConfig, "customer_type_labels", defaultStatusCardCustomerTypeLabels()),
+		RiskLabels:         readConfigStringList(systemConfig.ProviderConfig, "risk_labels", defaultStatusCardRiskLabels()),
+		RecentMessages:     buildRunnerRecentMessages(messages),
+		Provider:           providerConfig,
+	})
+	if err != nil {
+		return StatusCardView{}, err
+	}
+
+	statusCard := StatusCardView{
+		AgentID:       systemConfig.ID,
+		AgentName:     systemConfig.Name,
+		CurrentStage:  strings.TrimSpace(response.CurrentStage),
+		CustomerTypes: normalizeStringList(response.CustomerTypes),
+		CurrentRisk:   strings.TrimSpace(response.CurrentRisk),
+		Summary:       strings.TrimSpace(response.Summary),
+		Evidence:      normalizeStringList(response.Evidence),
+		NextAction:    strings.TrimSpace(response.NextAction),
+		Confidence:    strings.TrimSpace(response.Confidence),
+		MessageCount:  len(messages),
+		HistoryLimit:  historyLimit,
+		AnalyzedAt:    a.now(),
+	}
+	if err := a.repository.UpsertStatusCard(ctx, chatID, statusCard); err != nil {
+		return StatusCardView{}, err
+	}
+
+	return statusCard, nil
 }
 
 func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInput) (preparedManualRun, error) {
@@ -959,6 +1058,90 @@ func normalizeContextMessageLimit(value int) int {
 	return value
 }
 
+func normalizeStatusCardHistoryLimit(value int, config map[string]any) int {
+	limit := value
+	if limit <= 0 {
+		limit = anyInt(config["history_limit"])
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 500 {
+		return 500
+	}
+	return limit
+}
+
+func readConfigStringList(config map[string]any, key string, fallback []string) []string {
+	value, ok := config[key]
+	if !ok || value == nil {
+		return append([]string{}, fallback...)
+	}
+
+	switch typed := value.(type) {
+	case []string:
+		items := normalizeStringList(typed)
+		if len(items) > 0 {
+			return items
+		}
+	case []any:
+		values := make([]string, 0, len(typed))
+		for _, item := range typed {
+			values = append(values, anyString(item))
+		}
+		items := normalizeStringList(values)
+		if len(items) > 0 {
+			return items
+		}
+	case string:
+		values := strings.FieldsFunc(typed, func(r rune) bool {
+			return r == ',' || r == '，' || r == '\n' || r == '\r'
+		})
+		items := normalizeStringList(values)
+		if len(items) > 0 {
+			return items
+		}
+	}
+
+	return append([]string{}, fallback...)
+}
+
+func anyInt(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return int(parsed)
+	default:
+		var parsed int
+		if _, err := fmt.Sscanf(anyString(value), "%d", &parsed); err == nil {
+			return parsed
+		}
+		return 0
+	}
+}
+
+func defaultStatusCardStageLabels() []string {
+	return []string{"新线索", "已破冰", "问费用", "问进群", "已进群", "问推荐", "问操作", "异议中", "check-in", "沉默待复访"}
+}
+
+func defaultStatusCardCustomerTypeLabels() []string {
+	return []string{"新手", "有经验", "曾亏损", "价格敏感", "信任不足", "操作小白", "高意向"}
+}
+
+func defaultStatusCardRiskLabels() []string {
+	return []string{"低", "中", "高"}
+}
+
 func tailMessages(messages []chats.MessageView, limit int) []chats.MessageView {
 	if limit <= 0 || len(messages) <= limit {
 		return messages
@@ -1108,7 +1291,7 @@ func (a *Automation) buildRunnerProvider(ctx context.Context, accountID string, 
 
 func systemConfigRule(accountID string, config SystemAgentConfig) AgentRule {
 	replyMode := ReplyModeSuggest
-	if config.Purpose == AgentPurposeTranslation {
+	if config.Purpose == AgentPurposeTranslation || config.Purpose == AgentPurposeStatusCard {
 		replyMode = ReplyModeManual
 	}
 	name := strings.TrimSpace(config.Name)

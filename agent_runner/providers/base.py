@@ -49,6 +49,20 @@ class MockProvider(BaseProvider):
     model = "mock-echo-v1"
 
     def generate(self, request: ProviderRequest) -> ProviderResponse:
+        if request.metadata.get("task") == "status_card":
+            draft = (
+                '{"current_stage":"新线索","customer_types":["新手"],'
+                '"current_risk":"低","summary":"本地模拟分析：客户刚开始沟通，信息量有限。",'
+                '"evidence":["当前为 mock provider，未调用外部模型"],'
+                '"next_action":"继续破冰，确认客户需求后再引导进群。","confidence":"低"}'
+            )
+            return ProviderResponse(
+                provider=self.name,
+                model=self.model,
+                draft=draft,
+                usage={"input_messages": len(request.recent_messages), "output_characters": len(draft)},
+            )
+
         customer_message = request.customer_message.strip() or "您好，已收到您的消息。"
         summary = request.knowledge_summary.strip() if request.knowledge_summary else ""
         references = "；".join(reference.strip() for reference in request.knowledge_references if reference.strip())

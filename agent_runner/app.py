@@ -71,6 +71,9 @@ class AgentRunnerHandler(BaseHTTPRequestHandler):
         if route == "/v1/translations":
             self.handle_translation_request()
             return
+        if route == "/v1/status-card":
+            self.handle_status_card_request()
+            return
 
         self.respond(HTTPStatus.NOT_FOUND, {"error": "route not found"})
 
@@ -124,6 +127,22 @@ class AgentRunnerHandler(BaseHTTPRequestHandler):
         try:
             payload = self.read_json()
             response = self.server.handle_translation(payload)
+        except ValueError as exc:
+            self.respond(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        except ProviderError as exc:
+            self.respond(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        except Exception as exc:
+            self.respond(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"internal runner error: {exc}"})
+            return
+
+        self.respond(HTTPStatus.OK, response)
+
+    def handle_status_card_request(self) -> None:
+        try:
+            payload = self.read_json()
+            response = self.server.handle_status_card(payload)
         except ValueError as exc:
             self.respond(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
@@ -344,6 +363,62 @@ class AgentRunnerServer(ThreadingHTTPServer):
             },
         }
 
+    def handle_status_card(self, payload: dict[str, Any]) -> dict[str, Any]:
+        request_id = str(payload.get("request_id") or uuid4())
+        account_id = required_string(payload, "account_id")
+        chat_id = required_string(payload, "chat_id")
+        provider_config = expect_object(
+            payload.get("provider", {"type": self.config.default_provider}),
+            "provider",
+        )
+        recent_messages = normalize_recent_messages(payload.get("recent_messages"))
+        latest_customer_message = latest_message_by_role(recent_messages, "customer")
+        prompt_template = optional_string(payload.get("prompt_template")) or (
+            "你是 WhatsApp 私域转化顾问。基于完整聊天记录分析客户状态，只输出严格 JSON。"
+        )
+        stage_labels = normalize_label_list(payload.get("stage_labels"))
+        customer_type_labels = normalize_label_list(payload.get("customer_type_labels"))
+        risk_labels = normalize_label_list(payload.get("risk_labels"))
+
+        provider = build_provider(provider_config)
+        provider_response = provider.generate(
+            ProviderRequest(
+                rule_name="status_card",
+                prompt_template=prompt_template,
+                knowledge_summary=None,
+                knowledge_references=[],
+                chat_title=optional_string(payload.get("chat_title")),
+                customer_message=latest_customer_message or "请基于全部会话分析客户状态。",
+                recent_messages=recent_messages,
+                metadata={
+                    "task": "status_card",
+                    "account_id": account_id,
+                    "chat_id": chat_id,
+                    "stage_labels": stage_labels,
+                    "customer_type_labels": customer_type_labels,
+                    "risk_labels": risk_labels,
+                    "message_count": len(recent_messages),
+                },
+            )
+        )
+        status_card = parse_status_card_payload(provider_response.draft)
+
+        return {
+            "request_id": request_id,
+            "current_stage": status_card["current_stage"],
+            "customer_types": status_card["customer_types"],
+            "current_risk": status_card["current_risk"],
+            "summary": status_card["summary"],
+            "evidence": status_card["evidence"],
+            "next_action": status_card["next_action"],
+            "confidence": status_card["confidence"],
+            "provider": {
+                "type": provider_response.provider,
+                "model": provider_response.model,
+                "usage": provider_response.usage,
+            },
+        }
+
 
 def required_string(payload: dict[str, Any], key: str) -> str:
     value = optional_string(payload.get(key))
@@ -406,7 +481,35 @@ def normalize_recent_messages(value: Any) -> list[dict[str, Any]]:
     return result
 
 
-def parse_translation_payload(text: str) -> dict[str, str]:
+def normalize_label_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        label = optional_string(item)
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        result.append(label)
+
+    return result
+
+
+def latest_message_by_role(messages: list[dict[str, Any]], role: str) -> str | None:
+    expected_role = role.strip().lower()
+    for item in reversed(messages):
+        item_role = optional_string(item.get("role")) or ""
+        if item_role.strip().lower() != expected_role:
+            continue
+        text = optional_string(item.get("text"))
+        if text:
+            return text
+    return None
+
+
+def parse_json_object_payload(text: str) -> dict[str, Any] | None:
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`").strip()
@@ -415,13 +518,22 @@ def parse_translation_payload(text: str) -> dict[str, str]:
     try:
         decoded = json.loads(cleaned)
     except Exception:
-        return {
-            "source_language_code": "unknown",
-            "source_language_name": "Unknown",
-            "translated_text": cleaned,
-        }
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            decoded = json.loads(cleaned[start : end + 1])
+        except Exception:
+            return None
 
-    if not isinstance(decoded, dict):
+    return decoded if isinstance(decoded, dict) else None
+
+
+def parse_translation_payload(text: str) -> dict[str, str]:
+    cleaned = text.strip()
+    decoded = parse_json_object_payload(cleaned)
+    if decoded is None:
         return {
             "source_language_code": "unknown",
             "source_language_name": "Unknown",
@@ -432,6 +544,33 @@ def parse_translation_payload(text: str) -> dict[str, str]:
         "source_language_code": optional_string(decoded.get("source_language_code")) or "unknown",
         "source_language_name": optional_string(decoded.get("source_language_name")) or "Unknown",
         "translated_text": optional_string(decoded.get("translated_text")) or cleaned,
+    }
+
+
+def parse_status_card_payload(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    decoded = parse_json_object_payload(cleaned)
+    if decoded is None:
+        raise ProviderError("status card response must be strict JSON")
+
+    customer_types = decoded.get("customer_types")
+    if not isinstance(customer_types, list):
+        customer_type = optional_string(decoded.get("customer_type"))
+        customer_types = [customer_type] if customer_type else []
+
+    evidence = decoded.get("evidence")
+    if not isinstance(evidence, list):
+        evidence_text = optional_string(evidence)
+        evidence = [evidence_text] if evidence_text else []
+
+    return {
+        "current_stage": optional_string(decoded.get("current_stage")) or "新线索",
+        "customer_types": normalize_label_list(customer_types),
+        "current_risk": optional_string(decoded.get("current_risk")) or "低",
+        "summary": optional_string(decoded.get("summary")) or "",
+        "evidence": normalize_label_list(evidence),
+        "next_action": optional_string(decoded.get("next_action")) or "",
+        "confidence": optional_string(decoded.get("confidence")) or "",
     }
 
 

@@ -18,6 +18,7 @@ type AgentPurpose string
 const (
 	AgentPurposeReply       AgentPurpose = "reply"
 	AgentPurposeTranslation AgentPurpose = "translation"
+	AgentPurposeStatusCard  AgentPurpose = "status_card"
 )
 
 type MatchMode string

@@ -53,7 +53,7 @@ func canAccessPath(user User, path string) bool {
 		return false
 	case strings.HasPrefix(path, "/api/accounts"), strings.HasPrefix(path, "/api/live"):
 		return user.HasPermission(PermissionAccounts)
-	case strings.HasPrefix(path, "/api/chats"), strings.HasPrefix(path, "/api/media/"), strings.HasPrefix(path, "/api/agent-configs"), strings.HasPrefix(path, "/api/agent-runs"), strings.HasPrefix(path, "/api/agent-translations"):
+	case strings.HasPrefix(path, "/api/chats"), strings.HasPrefix(path, "/api/media/"), strings.HasPrefix(path, "/api/agent-configs"), strings.HasPrefix(path, "/api/agent-runs"), strings.HasPrefix(path, "/api/agent-translations"), strings.HasPrefix(path, "/api/agent-status-card"):
 		return user.HasPermission(PermissionChats)
 	case strings.HasPrefix(path, "/api/scripts"):
 		return user.HasPermission(PermissionScripts)
