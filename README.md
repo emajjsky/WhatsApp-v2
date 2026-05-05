@@ -135,6 +135,8 @@ AUTH_SECURE_COOKIE=false
 
 ## 启动方式
 
+服务器部署和后续更新请看：[服务器部署与更新](docs/server-deploy.md)
+
 ### Windows
 
 前置要求：
