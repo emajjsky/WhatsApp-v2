@@ -9,6 +9,7 @@ import {
   type AgentRuleView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
+import { Icon } from '../components/Icon'
 
 type AgentProviderType = 'openai_compatible' | 'coze' | 'n8n' | 'webhook'
 
@@ -444,6 +445,7 @@ export function AgentsPage() {
           <h2>智能回复 Agent</h2>
         </div>
         <button className="primary-button" type="button" onClick={handleCreateAgent}>
+          <Icon name="plus" />
           新建 Agent
         </button>
       </header>
@@ -492,6 +494,7 @@ export function AgentsPage() {
               <strong>还没有 Agent</strong>
               <span>创建一个大模型、Coze、n8n 或 Webhook 接入。</span>
               <button className="primary-button" type="button" onClick={handleCreateAgent}>
+                <Icon name="plus" />
                 新建 Agent
               </button>
             </div>
@@ -723,6 +726,7 @@ export function AgentsPage() {
 
             <div className="button-row agent-config-actions">
               <button className="primary-button" type="submit" disabled={submitting}>
+                <Icon name="save" />
                 {submitting ? '保存中...' : form.id ? '保存 Agent' : '创建 Agent'}
               </button>
               {form.id ? (
@@ -732,6 +736,7 @@ export function AgentsPage() {
                   onClick={() => void handleDeleteAgent()}
                   disabled={deleting || submitting}
                 >
+                  <Icon name="delete" />
                   {deleting ? '删除中...' : '删除 Agent'}
                 </button>
               ) : null}

@@ -13,6 +13,7 @@ import {
   type ExportJobView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
+import { Icon } from '../components/Icon'
 import { StatusBadge } from '../components/StatusBadge'
 
 const formatOptions: Array<{ value: ExportFormat; label: string; description: string }> = [
@@ -461,7 +462,10 @@ export function ExportsPage() {
                   onClick={() => setOpenDropdown((current) => (current === 'accounts' ? null : 'accounts'))}
                 >
                   <span>{formatAccountSelectionSummary(form.accountIds, accountNameMap)}</span>
-                  <strong>{openDropdown === 'accounts' ? '收起' : '展开'}</strong>
+                  <strong className="dropdown-trigger-indicator">
+                    <span>{openDropdown === 'accounts' ? '收起' : '展开'}</span>
+                    <Icon name="chevronDown" />
+                  </strong>
                 </button>
 
                 {openDropdown === 'accounts' ? (
@@ -503,7 +507,10 @@ export function ExportsPage() {
                       ? '先选择账号'
                       : `已选 ${form.chatIds.length} 个联系人 / 群聊`}
                   </span>
-                  <strong>{openDropdown === 'chats' ? '收起' : '展开'}</strong>
+                  <strong className="dropdown-trigger-indicator">
+                    <span>{openDropdown === 'chats' ? '收起' : '展开'}</span>
+                    <Icon name="chevronDown" />
+                  </strong>
                 </button>
 
                 {openDropdown === 'chats' ? (
@@ -522,9 +529,11 @@ export function ExportsPage() {
 
                       <div className="dropdown-action-row">
                         <button className="secondary-button" type="button" onClick={selectAllVisibleChats}>
+                          <Icon name="check" />
                           全选当前结果
                         </button>
                         <button className="secondary-button" type="button" onClick={clearSelectedChats}>
+                          <Icon name="delete" />
                           取消全选
                         </button>
                       </div>
@@ -666,6 +675,7 @@ export function ExportsPage() {
             ) : null}
 
             <button className="primary-button" type="submit" disabled={submitting || loading}>
+              <Icon name="export" />
               {submitting ? '正在创建导出任务...' : '批量创建导出任务'}
             </button>
           </form>
@@ -702,6 +712,7 @@ export function ExportsPage() {
                 disabled={selectedJobIds.length === 0}
                 onClick={() => setSelectedJobIds([])}
               >
+                <Icon name="delete" />
                 清空勾选
               </button>
               <button
@@ -710,6 +721,7 @@ export function ExportsPage() {
                 disabled={completedSelectedJobIds.length === 0 || bulkDownloading}
                 onClick={() => void handleBulkDownload()}
               >
+                <Icon name="download" />
                 {bulkDownloading ? '正在打包下载...' : `批量下载已选 (${completedSelectedJobIds.length})`}
               </button>
               <button
@@ -718,6 +730,7 @@ export function ExportsPage() {
                 disabled={selectedJobIds.length === 0 || bulkDeleting}
                 onClick={() => void handleBulkDeleteJobs()}
               >
+                <Icon name="delete" />
                 {bulkDeleting ? '删除中...' : `删除已选 (${selectedJobIds.length})`}
               </button>
             </div>
@@ -761,6 +774,7 @@ export function ExportsPage() {
                             disabled={downloadingJobId === job.id}
                             onClick={() => void handleDownload(job.id)}
                           >
+                            <Icon name="download" />
                             {downloadingJobId === job.id ? '下载中...' : '下载'}
                           </button>
                         ) : (
@@ -772,6 +786,7 @@ export function ExportsPage() {
                           disabled={deletingJobId === job.id}
                           onClick={() => void handleDeleteJob(job.id)}
                         >
+                          <Icon name="delete" />
                           {deletingJobId === job.id ? '删除中...' : '删除'}
                         </button>
                       </span>

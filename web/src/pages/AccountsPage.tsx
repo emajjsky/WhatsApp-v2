@@ -11,6 +11,7 @@ import {
   type PairingMethod,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
+import { Icon } from '../components/Icon'
 import { StatusBadge } from '../components/StatusBadge'
 
 const initialForm = {
@@ -219,6 +220,7 @@ export function AccountsPage() {
             </label>
 
             <button className="primary-button" type="submit" disabled={submitting}>
+              <Icon name="plus" />
               {submitting ? '正在创建...' : '创建账号'}
             </button>
           </form>
@@ -281,6 +283,7 @@ export function AccountsPage() {
                     disabled={isSelectedAccountBusy}
                     onClick={() => void runAccountAction(selectedAccount.id, 'qr')}
                   >
+                    <Icon name="qr" />
                     {selectedBusyAction === 'qr' ? '生成中...' : '二维码配对'}
                   </button>
                   <button
@@ -289,6 +292,7 @@ export function AccountsPage() {
                     disabled={isSelectedAccountBusy}
                     onClick={() => void runAccountAction(selectedAccount.id, 'pairing_code')}
                   >
+                    <Icon name="key" />
                     {selectedBusyAction === 'pairing_code' ? '生成中...' : '生成配对码'}
                   </button>
                   <button
@@ -297,6 +301,7 @@ export function AccountsPage() {
                     disabled={isSelectedAccountBusy}
                     onClick={() => void runAccountAction(selectedAccount.id, 'logout')}
                   >
+                    <Icon name="logout" />
                     {selectedBusyAction === 'logout' ? '退出中...' : '退出登录'}
                   </button>
                   <button
@@ -305,6 +310,7 @@ export function AccountsPage() {
                     disabled={isSelectedAccountBusy}
                     onClick={() => void runAccountAction(selectedAccount.id, 'delete')}
                   >
+                    <Icon name="delete" />
                     {selectedBusyAction === 'delete' ? '删除中...' : '删除账号'}
                   </button>
                 </div>

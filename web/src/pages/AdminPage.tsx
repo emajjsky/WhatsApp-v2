@@ -20,6 +20,7 @@ import {
   type UserRole,
   type UserStatus,
 } from '../api/client'
+import { Icon } from '../components/Icon'
 
 type AdminTab = 'users' | 'invitations' | 'agents'
 type ProviderType = 'openai_compatible' | 'coze' | 'n8n' | 'webhook'
@@ -281,6 +282,7 @@ function UserAdminPanel() {
             <PermissionPicker value={permissions} onChange={setPermissions} />
           ) : null}
           <button className="primary-button" type="submit" disabled={submitting}>
+            <Icon name="user" />
             {submitting ? '创建中...' : '创建用户'}
           </button>
         </form>
@@ -326,6 +328,7 @@ function UserAdminPanel() {
                 />
               ) : null}
               <button className="secondary-button" type="button" onClick={() => void handleResetPassword(user)}>
+                <Icon name="key" />
                 重置密码
               </button>
             </div>
@@ -496,6 +499,7 @@ function InvitationAdminPanel() {
             <input value={note} onChange={(event) => setNote(event.target.value)} />
           </label>
           <button className="primary-button" type="submit" disabled={submitting}>
+            <Icon name="key" />
             {submitting ? '创建中...' : '创建邀请码'}
           </button>
         </form>
@@ -543,6 +547,7 @@ function InvitationAdminPanel() {
                   }
                 }}
               >
+                <Icon name="edit" />
                 修改次数
               </button>
               <button
@@ -555,6 +560,7 @@ function InvitationAdminPanel() {
                   }
                 }}
               >
+                <Icon name="edit" />
                 备注
               </button>
             </div>
@@ -749,6 +755,7 @@ function SystemAgentPanel() {
                 onClick={() => setSelectedConfigId('new')}
                 disabled={selectedConfigId === 'new'}
               >
+                <Icon name="plus" />
                 新建
               </button>
             </div>
@@ -1018,6 +1025,7 @@ function SystemAgentPanel() {
 
             <div className="button-row">
               <button className="primary-button" type="submit" disabled={saving}>
+                <Icon name="save" />
                 {saving ? '保存中...' : '保存智能体'}
               </button>
               {selectedConfig ? (
@@ -1027,6 +1035,7 @@ function SystemAgentPanel() {
                   onClick={() => void handleDeleteSelected()}
                   disabled={saving}
                 >
+                  <Icon name="delete" />
                   删除智能体
                 </button>
               ) : null}

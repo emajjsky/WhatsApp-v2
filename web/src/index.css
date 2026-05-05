@@ -78,6 +78,21 @@ button {
   outline: none;
 }
 
+.app-icon {
+  display: block;
+  width: 1.15em;
+  height: 1.15em;
+  flex: 0 0 auto;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
+button .app-icon,
+a .app-icon {
+  width: 16px;
+  height: 16px;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -218,8 +233,10 @@ a {
 
 .nav-link {
   display: grid;
-  gap: 4px;
-  padding: 16px 18px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
   border-radius: 18px;
   border: 1px solid transparent;
   transition:
@@ -251,6 +268,7 @@ a {
 
 .nav-list-chat-mode .nav-link {
   justify-items: center;
+  grid-template-columns: 1fr;
   gap: 6px;
   padding: 12px 8px;
   border-radius: 18px;
@@ -264,16 +282,25 @@ a {
 }
 
 .nav-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: rgba(28, 115, 98, 0.1);
   color: var(--accent-strong);
-  font-weight: 800;
-  font-size: 14px;
+}
+
+.nav-icon .app-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.nav-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
 }
 
 .nav-list-chat-mode .nav-title {
@@ -525,6 +552,11 @@ a {
 .primary-button,
 .secondary-button,
 .danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
   border-radius: 999px;
   border: 1px solid transparent;
   padding: 11px 18px;
@@ -542,6 +574,12 @@ a {
   background: linear-gradient(180deg, #31e06c, var(--accent));
   color: #073b1e;
   box-shadow: none;
+}
+
+.primary-button span,
+.secondary-button span,
+.danger-button span {
+  min-width: 0;
 }
 
 .secondary-button {
@@ -1754,12 +1792,23 @@ a {
   border-radius: 50%;
   background: transparent;
   color: #54656f;
-  font-size: 26px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.whatsapp-compose-utility .app-icon {
+  width: 21px;
+  height: 21px;
 }
 
 .whatsapp-compose-utility.active {
   background: #e9edef;
+  color: var(--accent-strong);
   transform: rotate(45deg);
 }
 
@@ -1781,7 +1830,7 @@ a {
 .whatsapp-attachment-item {
   width: 100%;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   border: none;
@@ -1799,31 +1848,37 @@ a {
 }
 
 .attachment-icon {
-  width: 22px;
-  height: 22px;
+  width: 32px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 800;
+  border-radius: 10px;
+}
+
+.attachment-icon .app-icon {
+  width: 17px;
+  height: 17px;
 }
 
 .attachment-icon.tone-purple {
-  background: #7c5cff;
+  background: rgba(124, 92, 255, 0.12);
+  color: #6650d8;
 }
 
 .attachment-icon.tone-blue {
-  background: #1f8fff;
+  background: rgba(31, 143, 255, 0.12);
+  color: #1769c2;
 }
 
 .attachment-icon.tone-pink {
-  background: #ff2f86;
+  background: rgba(255, 47, 134, 0.12);
+  color: #c92b72;
 }
 
 .attachment-icon.tone-orange {
-  background: #ff7a1a;
+  background: rgba(255, 122, 26, 0.13);
+  color: #b95412;
 }
 
 .attachment-icon.tone-cyan {
@@ -1867,6 +1922,11 @@ a {
   box-shadow: none;
   background: #25d366;
   color: #073b1e;
+}
+
+.whatsapp-send-button .app-icon {
+  width: 17px;
+  height: 17px;
 }
 
 .whatsapp-send-button:disabled {
@@ -2460,9 +2520,13 @@ a {
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: #7c5cff;
-  color: #fff;
-  font-weight: 800;
+  background: rgba(28, 115, 98, 0.11);
+  color: var(--accent-strong);
+}
+
+.media-document-icon .app-icon {
+  width: 19px;
+  height: 19px;
 }
 
 .dropdown-field {
@@ -2477,8 +2541,21 @@ a {
 }
 
 .dropdown-trigger strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--accent-strong);
+}
+
+.dropdown-trigger-indicator .app-icon {
+  width: 13px;
+  height: 13px;
+  transition: transform 160ms ease;
+}
+
+.dropdown-trigger.open .dropdown-trigger-indicator .app-icon {
+  transform: rotate(180deg);
 }
 
 .dropdown-panel {
@@ -3465,9 +3542,21 @@ a {
   }
 
   .nav-link {
+    grid-template-columns: 28px minmax(0, 1fr);
     gap: 2px;
     padding: 9px 10px;
     border-radius: 12px;
+  }
+
+  .nav-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+  }
+
+  .nav-icon .app-icon {
+    width: 15px;
+    height: 15px;
   }
 
   .nav-list-chat-mode .nav-link {
@@ -3743,6 +3832,11 @@ a {
     height: 30px;
   }
 
+  .whatsapp-compose-utility .app-icon {
+    width: 17px;
+    height: 17px;
+  }
+
   .whatsapp-chat-compose-box textarea {
     min-height: 30px;
     max-height: 70px;
@@ -3754,20 +3848,31 @@ a {
     min-height: 30px;
   }
 
+  .whatsapp-send-button .app-icon {
+    width: 14px;
+    height: 14px;
+  }
+
   .whatsapp-attachment-menu {
     width: 150px;
     padding: 6px;
   }
 
   .whatsapp-attachment-item {
-    grid-template-columns: 24px minmax(0, 1fr);
+    grid-template-columns: 26px minmax(0, 1fr);
     gap: 7px;
     padding: 7px;
   }
 
   .attachment-icon {
-    width: 20px;
-    height: 20px;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+  }
+
+  .attachment-icon .app-icon {
+    width: 14px;
+    height: 14px;
   }
 
   .whatsapp-chat-assistant {
@@ -4010,6 +4115,7 @@ a {
   }
 
   .nav-link {
+    grid-template-columns: 26px minmax(0, 1fr);
     gap: 2px;
     padding: 7px 8px;
     border-radius: 10px;
@@ -4021,10 +4127,14 @@ a {
   }
 
   .nav-icon {
-    width: 28px;
-    height: 28px;
-    border-radius: 10px;
-    font-size: 11px;
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+  }
+
+  .nav-icon .app-icon {
+    width: 14px;
+    height: 14px;
   }
 
   .nav-title {
@@ -4277,6 +4387,11 @@ a {
     height: 26px;
   }
 
+  .whatsapp-compose-utility .app-icon {
+    width: 15px;
+    height: 15px;
+  }
+
   .whatsapp-chat-compose-box textarea {
     min-height: 26px;
     max-height: 60px;
@@ -4289,20 +4404,31 @@ a {
     padding-inline: 10px;
   }
 
+  .whatsapp-send-button .app-icon {
+    width: 13px;
+    height: 13px;
+  }
+
   .whatsapp-attachment-menu {
     width: 136px;
     padding: 5px;
   }
 
   .whatsapp-attachment-item {
-    grid-template-columns: 22px minmax(0, 1fr);
+    grid-template-columns: 24px minmax(0, 1fr);
     gap: 6px;
     padding: 6px;
   }
 
   .attachment-icon {
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+  }
+
+  .attachment-icon .app-icon {
+    width: 13px;
+    height: 13px;
   }
 
   .whatsapp-chat-assistant {

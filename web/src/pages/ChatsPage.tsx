@@ -34,6 +34,7 @@ import {
   type TranslationView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
+import { Icon, type IconName } from '../components/Icon'
 import { StatusBadge } from '../components/StatusBadge'
 
 const chatTypeOptions: Array<{ value: ChatType | ''; label: string }> = [
@@ -86,13 +87,13 @@ const languageOptions = [
 const attachmentActions: Array<{
   key: AttachmentAction
   label: string
-  icon: string
+  icon: IconName
   tone: string
 }> = [
-  { key: 'document', label: '文档', icon: '▣', tone: 'purple' },
-  { key: 'media', label: '照片和视频', icon: '▧', tone: 'blue' },
-  { key: 'camera', label: '相机', icon: '●', tone: 'pink' },
-  { key: 'audio', label: '音频', icon: '♪', tone: 'orange' },
+  { key: 'document', label: '文档', icon: 'document', tone: 'purple' },
+  { key: 'media', label: '照片和视频', icon: 'image', tone: 'blue' },
+  { key: 'camera', label: '相机', icon: 'camera', tone: 'pink' },
+  { key: 'audio', label: '音频', icon: 'audio', tone: 'orange' },
 ]
 
 const messageTranslationCacheStorageKey = 'whatsapp.messageTranslations.v1'
@@ -1077,7 +1078,7 @@ export function ChatsPage() {
                       onClick={() => setAttachmentMenuOpen((current) => !current)}
                       disabled={!canSendInCurrentChat || sending}
                     >
-                      +
+                      <Icon name="plus" />
                     </button>
 
                     {attachmentMenuOpen ? (
@@ -1091,7 +1092,7 @@ export function ChatsPage() {
                             onClick={() => handleAttachmentAction(action.key)}
                           >
                             <span className={`attachment-icon tone-${action.tone}`} aria-hidden="true">
-                              {action.icon}
+                              <Icon name={action.icon} />
                             </span>
                             <span>{action.label}</span>
                           </button>
@@ -1164,7 +1165,8 @@ export function ChatsPage() {
                     onClick={() => void handleSendMessage()}
                     disabled={!canSendMessage}
                   >
-                    {sending ? '发送中...' : '发送'}
+                    <Icon name="send" />
+                    <span>{sending ? '发送中...' : '发送'}</span>
                   </button>
                 </div>
 
@@ -1553,7 +1555,9 @@ function renderMediaAttachment(
         target="_blank"
         rel="noreferrer"
       >
-        <span className="media-document-icon" aria-hidden="true">▣</span>
+        <span className="media-document-icon" aria-hidden="true">
+          <Icon name={getMediaDocumentIconName(media.media_type)} />
+        </span>
         <span>
           <strong>{label}</strong>
           <small>{media.media_type}</small>
@@ -1568,6 +1572,19 @@ function renderMediaAttachment(
       {media.download_status === 'failed' ? ' · 下载失败' : ' · 下载中'}
     </span>
   )
+}
+
+function getMediaDocumentIconName(mediaType: string): IconName {
+  if (mediaType === 'audio') {
+    return 'audio'
+  }
+  if (mediaType === 'video') {
+    return 'video'
+  }
+  if (mediaType === 'image' || mediaType === 'sticker') {
+    return 'image'
+  }
+  return 'fileText'
 }
 
 function choosePreferredChatId(chats: ChatSummary[], current?: string) {

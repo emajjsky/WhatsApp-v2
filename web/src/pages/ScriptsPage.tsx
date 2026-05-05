@@ -6,6 +6,7 @@ import {
   type ScriptDocumentView,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
+import { Icon } from '../components/Icon'
 
 export function ScriptsPage() {
   const [scripts, setScripts] = useState<ScriptDocumentView[]>([])
@@ -137,6 +138,7 @@ export function ScriptsPage() {
             </label>
 
             <button className="primary-button" type="submit" disabled={submitting}>
+              <Icon name="upload" />
               {submitting ? '上传中...' : '上传到剧本库'}
             </button>
           </form>
@@ -168,6 +170,7 @@ export function ScriptsPage() {
                     disabled={deletingId === script.id}
                     onClick={() => void handleDelete(script.id)}
                   >
+                    <Icon name="delete" />
                     {deletingId === script.id ? '删除中...' : '删除'}
                   </button>
                 </div>

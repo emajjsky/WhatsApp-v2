@@ -1,21 +1,23 @@
 import { type UserPermission } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { Icon, type IconName } from './Icon'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 const baseNavItems: Array<{
   to: string
   label: string
   hint: string
+  icon: IconName
   permission: UserPermission
 }> = [
-  { to: '/accounts', label: '账号接入', hint: '创建账号、查看配对状态、管理登录会话', permission: 'accounts' },
-  { to: '/chats', label: '对话查看', hint: '按账号和会话筛选，浏览消息时间线', permission: 'chats' },
-  { to: '/scripts', label: '剧本', hint: '上传话术、产品知识和流程内容', permission: 'scripts' },
-  { to: '/exports', label: '导出中心', hint: '按单账号多选会话，生成导出文件', permission: 'exports' },
+  { to: '/accounts', label: '账号接入', hint: '创建账号、查看配对状态、管理登录会话', icon: 'account', permission: 'accounts' },
+  { to: '/chats', label: '对话查看', hint: '按账号和会话筛选，浏览消息时间线', icon: 'chat', permission: 'chats' },
+  { to: '/scripts', label: '剧本', hint: '上传话术、产品知识和流程内容', icon: 'script', permission: 'scripts' },
+  { to: '/exports', label: '导出中心', hint: '按单账号多选会话，生成导出文件', icon: 'export', permission: 'exports' },
 ]
 
 const adminNavItems = [
-  { to: '/admin', label: '管理员后台', hint: '用户、邀请码、智能回复与权限配置' },
+  { to: '/admin', label: '管理员后台', hint: '用户、邀请码、智能回复与权限配置', icon: 'admin' as IconName },
 ]
 
 export function AppShell() {
@@ -51,8 +53,13 @@ export function AppShell() {
               to={item.to}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
-              <span className="nav-title">{item.label}</span>
-              <span className="nav-hint">{item.hint}</span>
+              <span className="nav-icon">
+                <Icon name={item.icon} />
+              </span>
+              <span className="nav-copy">
+                <span className="nav-title">{item.label}</span>
+                <span className="nav-hint">{item.hint}</span>
+              </span>
             </NavLink>
           ))}
         </nav>
@@ -62,6 +69,7 @@ export function AppShell() {
           <strong className="sidebar-user-name">{auth.user?.display_name}</strong>
           <span className="subtle-text">{auth.user?.email}</span>
           <button className="secondary-button sidebar-logout" type="button" onClick={handleLogout}>
+            <Icon name="logout" />
             退出登录
           </button>
         </section>
