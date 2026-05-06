@@ -1186,9 +1186,54 @@ export function ChatsPage() {
 
         <aside className="panel chat-assistant-panel whatsapp-chat-assistant">
           <div className="whatsapp-assistant-header">
-            <div>
+            <div className="assistant-header-title">
               <p className="eyebrow">AI 助手</p>
               <h3>对话辅助</h3>
+            </div>
+            <div className="assistant-header-controls">
+              {replyAgents.length ? (
+                <select
+                  className="assistant-header-select"
+                  value={selectedReplyAgentId}
+                  onChange={(event) => {
+                    setSelectedReplyAgentId(event.target.value)
+                    setAssistantRun(undefined)
+                    setAssistantDraft('')
+                    setTranslatedDraft('')
+                  }}
+                  disabled={assistantBusy}
+                >
+                  {replyAgents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
+              <label className="checkbox-row assistant-context-toggle">
+                <input
+                  type="checkbox"
+                  checked={assistantContextEnabled}
+                  onChange={(event) => setAssistantContextEnabled(event.target.checked)}
+                />
+                <span>携带上下文</span>
+              </label>
+
+              <label className="field compact-field assistant-context-limit-field">
+                <span>历史条数</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={assistantContextLimit}
+                  disabled={!assistantContextEnabled}
+                  onChange={(event) => {
+                    const next = Number(event.target.value)
+                    setAssistantContextLimit(Number.isFinite(next) ? next : 12)
+                  }}
+                />
+              </label>
             </div>
           </div>
 
@@ -1196,29 +1241,6 @@ export function ChatsPage() {
             <div className="assistant-panel-body whatsapp-assistant-body">
               <div className="assistant-reply-column">
                 <section className="assistant-card assistant-reply-card">
-                  <div className="assistant-card-header-row">
-                    <span className="assistant-section-label">Agent 回复</span>
-                    {replyAgents.length ? (
-                      <select
-                        className="assistant-header-select"
-                        value={selectedReplyAgentId}
-                        onChange={(event) => {
-                          setSelectedReplyAgentId(event.target.value)
-                          setAssistantRun(undefined)
-                          setAssistantDraft('')
-                          setTranslatedDraft('')
-                        }}
-                        disabled={assistantBusy}
-                      >
-                        {replyAgents.map((agent) => (
-                          <option key={agent.id} value={agent.id}>
-                            {agent.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : null}
-                  </div>
-
                   {agentConfigsLoading ? (
                     <div className="warning-banner">加载中...</div>
                   ) : replyAgents.length ? null : (
@@ -1226,41 +1248,14 @@ export function ChatsPage() {
                   )}
 
                   {replyAgents.length ? (
-                    <>
-                      <div className="assistant-context-controls">
-                        <label className="checkbox-row">
-                          <input
-                            type="checkbox"
-                            checked={assistantContextEnabled}
-                            onChange={(event) => setAssistantContextEnabled(event.target.checked)}
-                          />
-                          <span>携带上下文</span>
-                        </label>
-                        <label className="field compact-field">
-                          <span>历史条数</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={50}
-                            value={assistantContextLimit}
-                            disabled={!assistantContextEnabled}
-                            onChange={(event) => {
-                              const next = Number(event.target.value)
-                              setAssistantContextLimit(Number.isFinite(next) ? next : 12)
-                            }}
-                          />
-                        </label>
-                      </div>
-
-                      <button
-                        className="secondary-button assistant-action-button"
-                        type="button"
-                        onClick={() => void handleGenerateAssistantDraft()}
-                        disabled={!canGenerateAssistantDraft}
-                      >
-                        {assistantBusy ? '生成中...' : '生成回复建议'}
-                      </button>
-                    </>
+                    <button
+                      className="secondary-button assistant-action-button"
+                      type="button"
+                      onClick={() => void handleGenerateAssistantDraft()}
+                      disabled={!canGenerateAssistantDraft}
+                    >
+                      {assistantBusy ? '生成中...' : '生成回复建议'}
+                    </button>
                   ) : null}
 
                   {assistantRun ? (

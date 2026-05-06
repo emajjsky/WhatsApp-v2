@@ -106,10 +106,14 @@ a {
   min-height: 100vh;
   height: 100vh;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 224px minmax(0, 1fr);
   gap: 12px;
   padding: 12px;
   overflow: hidden;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 68px minmax(0, 1fr);
 }
 
 .app-shell-chat-mode {
@@ -127,6 +131,39 @@ a {
   position: sticky;
   top: 12px;
   align-self: start;
+}
+
+.sidebar-topbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sidebar-toggle {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--text-soft);
+  box-shadow: var(--shadow);
+}
+
+.sidebar-toggle:hover,
+.sidebar-toggle:focus-visible {
+  color: var(--accent-strong);
+  border-color: rgba(28, 115, 98, 0.22);
+}
+
+.sidebar-toggle .app-icon {
+  transform: rotate(90deg);
+  transition: transform 160ms ease;
+}
+
+.sidebar-collapsed .sidebar-toggle .app-icon {
+  transform: rotate(-90deg);
 }
 
 .sidebar-chat-mode {
@@ -228,7 +265,7 @@ a {
 .nav-list {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .nav-link {
@@ -236,8 +273,8 @@ a {
   grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  padding: 12px 14px;
-  border-radius: 18px;
+  padding: 11px 12px;
+  border-radius: 14px;
   border: 1px solid transparent;
   transition:
     transform 180ms ease,
@@ -303,6 +340,33 @@ a {
   gap: 3px;
 }
 
+.sidebar-collapsed .nav-list,
+.sidebar-collapsed .sidebar-note {
+  padding: 10px 8px;
+}
+
+.sidebar-collapsed .nav-link {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 10px 6px;
+}
+
+.sidebar-collapsed .nav-copy,
+.sidebar-collapsed .sidebar-note-content,
+.sidebar-collapsed .sidebar-logout span {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-note {
+  justify-items: center;
+}
+
+.sidebar-collapsed .sidebar-logout {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+
 .nav-list-chat-mode .nav-title {
   font-size: 11px;
 }
@@ -313,7 +377,7 @@ a {
 
 .nav-title {
   font-family: var(--display);
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   color: var(--text);
 }
@@ -828,7 +892,7 @@ a {
 
 .chat-frame {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(520px, 1fr) minmax(520px, 620px);
+  grid-template-columns: minmax(220px, 272px) minmax(560px, 1.26fr) minmax(430px, 540px);
   gap: 10px;
   min-height: 0;
   height: 100%;
@@ -1984,17 +2048,52 @@ a {
 
 .whatsapp-assistant-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 10px;
   padding-bottom: 10px;
   border-bottom: 1px solid rgba(17, 27, 33, 0.06);
 }
 
+.assistant-header-title {
+  flex: 0 0 auto;
+}
+
 .whatsapp-assistant-header h3 {
   font-size: 18px;
   margin: 0;
+}
+
+.assistant-header-controls {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto minmax(72px, 88px);
+  gap: 8px;
+  align-items: center;
+}
+
+.assistant-context-toggle {
+  white-space: nowrap;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.assistant-context-limit-field {
+  gap: 3px;
+}
+
+.assistant-context-limit-field span {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.assistant-context-limit-field input {
+  min-height: 30px;
+  padding: 5px 8px;
+  text-align: center;
 }
 
 .whatsapp-assistant-body {
@@ -2006,7 +2105,7 @@ a {
   overflow: hidden;
   padding-right: 0;
   display: grid;
-  grid-template-columns: minmax(245px, 1fr) minmax(230px, 0.92fr);
+  grid-template-columns: minmax(215px, 1fr) minmax(190px, 0.86fr);
   gap: 10px;
   align-items: stretch;
   overscroll-behavior: contain;
@@ -2068,7 +2167,7 @@ a {
 
 .assistant-header-select {
   min-width: 0;
-  max-width: 190px;
+  max-width: 100%;
   min-height: 30px;
   padding: 5px 9px;
   border-radius: 8px;
@@ -3478,9 +3577,13 @@ a {
   }
 
   .app-shell {
-    grid-template-columns: 210px minmax(0, 1fr);
+    grid-template-columns: 198px minmax(0, 1fr);
     gap: 8px;
     padding: 8px;
+  }
+
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 54px minmax(0, 1fr);
   }
 
   .app-shell-chat-mode {
@@ -3654,12 +3757,12 @@ a {
   }
 
   .chat-frame {
-    grid-template-columns: minmax(190px, 240px) minmax(460px, 1fr) minmax(470px, 560px);
+    grid-template-columns: minmax(188px, 230px) minmax(560px, 1.34fr) minmax(390px, 480px);
     gap: 6px;
   }
 
   .assistant-panel-body {
-    grid-template-columns: minmax(220px, 1fr) minmax(205px, 0.9fr);
+    grid-template-columns: minmax(195px, 1fr) minmax(170px, 0.82fr);
   }
 
   .whatsapp-chat-page {
@@ -4141,6 +4244,22 @@ a {
     font-size: 14px;
   }
 
+  .sidebar-toggle {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+  }
+
+  .sidebar-collapsed .nav-list,
+  .sidebar-collapsed .sidebar-note {
+    padding: 7px 5px;
+  }
+
+  .sidebar-collapsed .sidebar-logout {
+    width: 30px;
+    height: 30px;
+  }
+
   .nav-hint {
     font-size: 10px;
   }
@@ -4235,12 +4354,12 @@ a {
   }
 
   .chat-frame {
-    grid-template-columns: minmax(165px, 205px) minmax(420px, 1fr) minmax(420px, 500px);
+    grid-template-columns: minmax(165px, 205px) minmax(470px, 1.32fr) minmax(350px, 430px);
     gap: 4px;
   }
 
   .assistant-panel-body {
-    grid-template-columns: minmax(195px, 1fr) minmax(180px, 0.9fr);
+    grid-template-columns: minmax(178px, 1fr) minmax(154px, 0.82fr);
   }
 
   .whatsapp-chat-page {
@@ -4445,6 +4564,23 @@ a {
     font-size: 14px;
   }
 
+  .assistant-header-controls {
+    grid-template-columns: minmax(90px, 1fr) auto minmax(52px, 64px);
+    gap: 5px;
+  }
+
+  .assistant-context-toggle {
+    gap: 4px;
+    font-size: 10px;
+  }
+
+  .assistant-context-limit-field input,
+  .assistant-header-select {
+    min-height: 26px;
+    padding: 4px 6px;
+    font-size: 10px;
+  }
+
   .assistant-panel-body {
     gap: 5px;
   }
@@ -4643,7 +4779,7 @@ a {
   }
 
   .assistant-panel-body {
-    grid-template-columns: minmax(245px, 1fr) minmax(230px, 0.9fr);
+    grid-template-columns: minmax(230px, 1fr) minmax(210px, 0.86fr);
     align-items: stretch;
   }
 
