@@ -107,8 +107,8 @@ a {
   height: 100vh;
   display: grid;
   grid-template-columns: 62px minmax(0, 1fr);
-  gap: 6px;
-  padding: 6px;
+  gap: 12px;
+  padding: 8px;
   overflow: hidden;
 }
 
@@ -123,9 +123,9 @@ a {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 6px;
-  min-height: calc(100vh - 12px);
+  min-height: calc(100vh - 16px);
   position: sticky;
-  top: 6px;
+  top: 8px;
   align-self: start;
 }
 
@@ -857,7 +857,7 @@ a {
 
 .chat-frame {
   display: grid;
-  grid-template-columns: minmax(210px, 260px) minmax(640px, 1.36fr) minmax(520px, 660px);
+  grid-template-columns: minmax(250px, 320px) minmax(460px, 1fr) minmax(620px, 760px);
   gap: 8px;
   min-height: 0;
   height: 100%;
@@ -3542,8 +3542,8 @@ a {
 
   .app-shell {
     grid-template-columns: 58px minmax(0, 1fr);
-    gap: 5px;
-    padding: 5px;
+    gap: 10px;
+    padding: 6px;
   }
 
   .app-shell-chat-mode {
@@ -3562,8 +3562,8 @@ a {
 
   .sidebar {
     gap: 5px;
-    min-height: calc(100vh - 10px);
-    top: 5px;
+    min-height: calc(100vh - 12px);
+    top: 6px;
   }
 
   .sidebar-chat-mode {
@@ -3718,7 +3718,7 @@ a {
   }
 
   .chat-frame {
-    grid-template-columns: minmax(188px, 226px) minmax(600px, 1.34fr) minmax(470px, 600px);
+    grid-template-columns: minmax(235px, 292px) minmax(430px, 1fr) minmax(560px, 700px);
     gap: 6px;
   }
 
@@ -4120,7 +4120,7 @@ a {
 
   .app-shell {
     grid-template-columns: 54px minmax(0, 1fr);
-    gap: 5px;
+    gap: 9px;
     padding: 5px;
   }
 
@@ -4300,7 +4300,7 @@ a {
   }
 
   .chat-frame {
-    grid-template-columns: minmax(165px, 202px) minmax(510px, 1.28fr) minmax(420px, 530px);
+    grid-template-columns: minmax(220px, 270px) minmax(390px, 1fr) minmax(500px, 620px);
     gap: 4px;
   }
 
