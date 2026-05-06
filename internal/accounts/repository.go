@@ -228,7 +228,7 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 
 func accountRowScope(ctx context.Context, startIndex int) (string, []any) {
 	currentUser, ok := auth.CurrentUser(ctx)
-	if !ok || currentUser.IsAdmin() {
+	if !ok {
 		return "", nil
 	}
 
