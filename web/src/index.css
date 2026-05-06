@@ -106,9 +106,9 @@ a {
   min-height: 100vh;
   height: 100vh;
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
-  padding: 8px;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 6px;
+  padding: 6px;
   overflow: hidden;
 }
 
@@ -122,15 +122,15 @@ a {
 .sidebar {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: 8px;
-  min-height: calc(100vh - 16px);
+  gap: 6px;
+  min-height: calc(100vh - 12px);
   position: sticky;
-  top: 8px;
+  top: 6px;
   align-self: start;
 }
 
 .sidebar-compact {
-  width: 64px;
+  width: 56px;
 }
 
 .sidebar-chat-mode {
@@ -232,17 +232,17 @@ a {
 .nav-list {
   display: grid;
   align-content: start;
-  gap: 8px;
-  padding: 10px 6px;
+  gap: 7px;
+  padding: 8px 5px;
 }
 
 .nav-link {
   display: grid;
   grid-template-columns: 1fr;
   justify-items: center;
-  gap: 5px;
-  padding: 9px 4px;
-  border-radius: 14px;
+  gap: 4px;
+  padding: 8px 2px;
+  border-radius: 12px;
   border: 1px solid transparent;
   text-align: center;
   transition:
@@ -288,9 +288,9 @@ a {
 }
 
 .nav-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -299,8 +299,8 @@ a {
 }
 
 .nav-icon .app-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .nav-copy {
@@ -318,10 +318,33 @@ a {
 
 .nav-title {
   font-family: var(--display);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text);
   line-height: 1.1;
+}
+
+.sidebar-note-compact {
+  padding: 8px 5px;
+}
+
+.sidebar-note-compact .sidebar-logout {
+  width: 44px;
+  min-height: 50px;
+  display: grid;
+  grid-template-columns: 1fr;
+  justify-items: center;
+  align-content: center;
+  gap: 3px;
+  padding: 6px 4px;
+  border-radius: 14px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.sidebar-note-compact .sidebar-logout .app-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .nav-hint {
@@ -3518,9 +3541,9 @@ a {
   }
 
   .app-shell {
-    grid-template-columns: 64px minmax(0, 1fr);
-    gap: 6px;
-    padding: 6px;
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 5px;
+    padding: 5px;
   }
 
   .app-shell-chat-mode {
@@ -3538,9 +3561,9 @@ a {
   }
 
   .sidebar {
-    gap: 6px;
-    min-height: calc(100vh - 12px);
-    top: 6px;
+    gap: 5px;
+    min-height: calc(100vh - 10px);
+    top: 5px;
   }
 
   .sidebar-chat-mode {
@@ -3578,26 +3601,26 @@ a {
   }
 
   .nav-list {
-    gap: 7px;
-    padding: 8px 5px;
+    gap: 6px;
+    padding: 7px 4px;
   }
 
   .nav-link {
     grid-template-columns: 1fr;
-    gap: 4px;
-    padding: 8px 3px;
-    border-radius: 12px;
+    gap: 3px;
+    padding: 7px 2px;
+    border-radius: 10px;
   }
 
   .nav-icon {
-    width: 31px;
-    height: 31px;
+    width: 28px;
+    height: 28px;
     border-radius: 9px;
   }
 
   .nav-icon .app-icon {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
   }
 
   .nav-list-chat-mode .nav-link {
@@ -4096,7 +4119,7 @@ a {
   }
 
   .app-shell {
-    grid-template-columns: 58px minmax(0, 1fr);
+    grid-template-columns: 54px minmax(0, 1fr);
     gap: 5px;
     padding: 5px;
   }
@@ -4153,13 +4176,13 @@ a {
 
   .nav-list {
     gap: 6px;
-    padding: 7px 4px;
+    padding: 6px 3px;
   }
 
   .nav-link {
     grid-template-columns: 1fr;
     gap: 3px;
-    padding: 7px 2px;
+    padding: 6px 1px;
     border-radius: 10px;
   }
 
@@ -4180,7 +4203,7 @@ a {
   }
 
   .nav-title {
-    font-size: 10px;
+    font-size: 9.5px;
   }
 
   .nav-hint {
