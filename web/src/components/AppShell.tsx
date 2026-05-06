@@ -1,10 +1,7 @@
-import { useEffect, useState } from 'react'
 import { type UserPermission } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from './Icon'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-
-const sidebarCollapsedStorageKey = 'whatsapp.sidebarCollapsed.v1'
 
 const baseNavItems: Array<{
   to: string
@@ -12,26 +9,19 @@ const baseNavItems: Array<{
   icon: IconName
   permission: UserPermission
 }> = [
-  { to: '/accounts', label: '账号接入', icon: 'account', permission: 'accounts' },
-  { to: '/chats', label: '对话查看', icon: 'chat', permission: 'chats' },
-  { to: '/scripts', label: '剧本', icon: 'script', permission: 'scripts' },
-  { to: '/exports', label: '导出中心', icon: 'export', permission: 'exports' },
+  { to: '/accounts', label: '登录', icon: 'account', permission: 'accounts' },
+  { to: '/chats', label: '对话', icon: 'chat', permission: 'chats' },
+  { to: '/scripts', label: '话术', icon: 'script', permission: 'scripts' },
+  { to: '/exports', label: '导出', icon: 'export', permission: 'exports' },
 ]
 
 const adminNavItems = [
-  { to: '/admin', label: '管理员后台', icon: 'admin' as IconName },
+  { to: '/admin', label: '后台', icon: 'admin' as IconName },
 ]
 
 export function AppShell() {
   const auth = useAuth()
   const navigate = useNavigate()
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    if (typeof window === 'undefined') {
-      return false
-    }
-
-    return window.localStorage.getItem(sidebarCollapsedStorageKey) === '1'
-  })
   const userPermissions = new Set<UserPermission>(auth.user?.permissions ?? [])
   const visibleBaseNavItems =
     auth.user?.role === 'admin'
@@ -41,31 +31,14 @@ export function AppShell() {
     ? [...visibleBaseNavItems, ...adminNavItems]
     : visibleBaseNavItems
 
-  useEffect(() => {
-    window.localStorage.setItem(sidebarCollapsedStorageKey, sidebarCollapsed ? '1' : '0')
-  }, [sidebarCollapsed])
-
   async function handleLogout() {
     await auth.logout()
     navigate('/login', { replace: true })
   }
 
   return (
-    <div className={`app-shell${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
-      <aside className={`sidebar${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
-        <div className="sidebar-topbar">
-          <button
-            className="sidebar-toggle"
-            type="button"
-            onClick={() => setSidebarCollapsed((current) => !current)}
-            aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
-            title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
-            aria-pressed={sidebarCollapsed}
-          >
-            <Icon name="chevronDown" />
-          </button>
-        </div>
-
+    <div className="app-shell">
+      <aside className="sidebar sidebar-compact">
         <nav className="nav-list" aria-label="主导航">
           {navItems.map((item) => (
             <NavLink
@@ -85,15 +58,16 @@ export function AppShell() {
           ))}
         </nav>
 
-        <section className="sidebar-note">
-          <div className="sidebar-note-content">
-            <p className="eyebrow">当前用户</p>
-            <strong className="sidebar-user-name">{auth.user?.display_name}</strong>
-            <span className="subtle-text">{auth.user?.email}</span>
-          </div>
-          <button className="secondary-button sidebar-logout" type="button" onClick={handleLogout}>
+        <section className="sidebar-note sidebar-note-compact">
+          <button
+            className="secondary-button sidebar-logout"
+            type="button"
+            onClick={handleLogout}
+            title={`退出登录：${auth.user?.email ?? ''}`}
+            aria-label="退出登录"
+          >
             <Icon name="logout" />
-            <span>退出登录</span>
+            <span>退出</span>
           </button>
         </section>
       </aside>

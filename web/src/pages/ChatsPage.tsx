@@ -80,6 +80,7 @@ const languageOptions = [
   { code: 'tl', name: '菲律宾语' },
   { code: 'ar', name: '阿拉伯语' },
   { code: 'es', name: '西班牙语' },
+  { code: 'es-MX', name: '墨西哥语' },
   { code: 'fr', name: '法语' },
   { code: 'pt', name: '葡萄牙语' },
 ]
@@ -1187,8 +1188,7 @@ export function ChatsPage() {
         <aside className="panel chat-assistant-panel whatsapp-chat-assistant">
           <div className="whatsapp-assistant-header">
             <div className="assistant-header-title">
-              <p className="eyebrow">AI 助手</p>
-              <h3>对话辅助</h3>
+              <h3>AI 助手</h3>
             </div>
             <div className="assistant-header-controls">
               {replyAgents.length ? (
@@ -1221,7 +1221,6 @@ export function ChatsPage() {
               </label>
 
               <label className="field compact-field assistant-context-limit-field">
-                <span>历史条数</span>
                 <input
                   type="number"
                   min={1}
