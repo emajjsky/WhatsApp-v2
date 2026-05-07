@@ -1,5 +1,7 @@
 :root {
   color-scheme: light;
+  --app-sidebar-width: 72px;
+  --app-shell-gap: 16px;
   --bg: #f0f2f5;
   --bg-strong: #e9edef;
   --surface: #ffffff;
@@ -106,8 +108,8 @@ a {
   min-height: 100vh;
   height: 100vh;
   display: grid;
-  grid-template-columns: 62px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: var(--app-sidebar-width) minmax(0, 1fr);
+  gap: var(--app-shell-gap);
   padding: 8px;
   overflow: hidden;
 }
@@ -130,7 +132,8 @@ a {
 }
 
 .sidebar-compact {
-  width: 56px;
+  width: 100%;
+  min-width: 0;
 }
 
 .sidebar-chat-mode {
@@ -234,6 +237,8 @@ a {
   align-content: start;
   gap: 7px;
   padding: 8px 5px;
+  width: 100%;
+  min-width: 0;
 }
 
 .nav-link {
@@ -326,10 +331,12 @@ a {
 
 .sidebar-note-compact {
   padding: 8px 5px;
+  width: 100%;
+  min-width: 0;
 }
 
 .sidebar-note-compact .sidebar-logout {
-  width: 44px;
+  width: 100%;
   min-height: 50px;
   display: grid;
   grid-template-columns: 1fr;
@@ -3541,8 +3548,8 @@ a {
   }
 
   .app-shell {
-    grid-template-columns: 58px minmax(0, 1fr);
-    gap: 10px;
+    --app-sidebar-width: 66px;
+    --app-shell-gap: 14px;
     padding: 6px;
   }
 
@@ -4119,8 +4126,8 @@ a {
   }
 
   .app-shell {
-    grid-template-columns: 54px minmax(0, 1fr);
-    gap: 9px;
+    --app-sidebar-width: 62px;
+    --app-shell-gap: 12px;
     padding: 5px;
   }
 
