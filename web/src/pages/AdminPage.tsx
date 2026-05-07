@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   createInvitation,
   createUser,
+  listDesktopDevices,
   deleteSystemAgentConfig,
   listInvitations,
   listSystemAgentConfigs,
@@ -9,10 +10,14 @@ import {
   resetUserPassword,
   updateInvitation,
   updateUser,
+  updateDesktopDeviceStatus,
   upsertSystemAgentConfig,
   type AgentProviderConfig,
   type AgentPurpose,
   type AuthUser,
+  type DesktopDeviceStatus,
+  type DesktopDeviceView,
+  type DesktopGrant,
   type InvitationCodeView,
   type InvitationStatus,
   type SystemAgentConfigView,
@@ -156,6 +161,9 @@ function UserAdminPanel() {
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<UserRole>('user')
   const [permissions, setPermissions] = useState<UserPermission[]>(permissionOptions.map((item) => item.value))
+  const [desktopEnabled, setDesktopEnabled] = useState(true)
+  const [desktopMaxDevices, setDesktopMaxDevices] = useState('1')
+  const [desktopExpiresAt, setDesktopExpiresAt] = useState('')
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
@@ -192,12 +200,16 @@ function UserAdminPanel() {
         role,
         status: 'active',
         permissions: role === 'user' ? permissions : undefined,
+        desktop: buildDesktopGrant(desktopEnabled, desktopMaxDevices, desktopExpiresAt),
       })
       setEmail('')
       setDisplayName('')
       setPassword('')
       setRole('user')
       setPermissions(permissionOptions.map((item) => item.value))
+      setDesktopEnabled(true)
+      setDesktopMaxDevices('1')
+      setDesktopExpiresAt('')
       await loadUsers()
       setNotice('用户已创建')
     } catch (createError) {
@@ -209,7 +221,7 @@ function UserAdminPanel() {
 
   async function handlePatchUser(
     user: AuthUser,
-    patch: { role?: UserRole; status?: UserStatus; permissions?: UserPermission[] },
+    patch: { role?: UserRole; status?: UserStatus; permissions?: UserPermission[]; desktop?: DesktopGrant },
   ) {
     setError(undefined)
     setNotice(undefined)
@@ -278,9 +290,17 @@ function UserAdminPanel() {
               <option value="admin">管理员</option>
             </select>
           </label>
-          {role === 'user' ? (
+              {role === 'user' ? (
             <PermissionPicker value={permissions} onChange={setPermissions} />
           ) : null}
+          <DesktopGrantEditor
+            enabled={desktopEnabled}
+            maxDevices={desktopMaxDevices}
+            expiresAt={desktopExpiresAt}
+            onEnabledChange={setDesktopEnabled}
+            onMaxDevicesChange={setDesktopMaxDevices}
+            onExpiresAtChange={setDesktopExpiresAt}
+          />
           <button className="primary-button" type="submit" disabled={submitting}>
             <Icon name="user" />
             {submitting ? '创建中...' : '创建用户'}
@@ -327,6 +347,7 @@ function UserAdminPanel() {
                   onChange={(next) => void handlePatchUser(user, { permissions: next })}
                 />
               ) : null}
+              <DesktopUserControls user={user} onUpdate={handlePatchUser} />
               <button className="secondary-button" type="button" onClick={() => void handleResetPassword(user)}>
                 <Icon name="key" />
                 重置密码
@@ -377,6 +398,163 @@ function PermissionPicker({
       ))}
     </div>
   )
+}
+
+function DesktopGrantEditor({
+  enabled,
+  maxDevices,
+  expiresAt,
+  onEnabledChange,
+  onMaxDevicesChange,
+  onExpiresAtChange,
+}: {
+  enabled: boolean
+  maxDevices: string
+  expiresAt: string
+  onEnabledChange: (value: boolean) => void
+  onMaxDevicesChange: (value: string) => void
+  onExpiresAtChange: (value: string) => void
+}) {
+  return (
+    <div className="desktop-grant-editor">
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => onEnabledChange(event.target.checked)}
+        />
+        <span>允许桌面端登录</span>
+      </label>
+      <label className="field compact-field">
+        <span>设备数</span>
+        <input
+          type="number"
+          min={1}
+          value={maxDevices}
+          onChange={(event) => onMaxDevicesChange(event.target.value)}
+        />
+      </label>
+      <label className="field compact-field">
+        <span>授权到期</span>
+        <input
+          type="datetime-local"
+          value={expiresAt}
+          onChange={(event) => onExpiresAtChange(event.target.value)}
+        />
+      </label>
+    </div>
+  )
+}
+
+function DesktopUserControls({
+  user,
+  onUpdate,
+}: {
+  user: AuthUser
+  onUpdate: (
+    user: AuthUser,
+    patch: { role?: UserRole; status?: UserStatus; permissions?: UserPermission[]; desktop?: DesktopGrant },
+  ) => Promise<void>
+}) {
+  const [devices, setDevices] = useState<DesktopDeviceView[]>([])
+  const [expanded, setExpanded] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const desktop = normalizeUserDesktopGrant(user.desktop)
+
+  async function loadDevices() {
+    setLoading(true)
+    try {
+      const response = await listDesktopDevices(user.id)
+      setDevices(response.devices)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function toggleExpanded() {
+    const next = !expanded
+    setExpanded(next)
+    if (next) {
+      await loadDevices()
+    }
+  }
+
+  async function patchDesktop(patch: Partial<DesktopGrant>) {
+    await onUpdate(user, {
+      desktop: {
+        ...desktop,
+        ...patch,
+      },
+    })
+  }
+
+  async function patchDevice(device: DesktopDeviceView, status: DesktopDeviceStatus) {
+    await updateDesktopDeviceStatus(user.id, device.device_id, status)
+    await loadDevices()
+  }
+
+  return (
+    <div className="desktop-user-controls">
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={desktop.enabled}
+          onChange={(event) => void patchDesktop({ enabled: event.target.checked })}
+        />
+        <span>桌面端</span>
+      </label>
+      <input
+        type="number"
+        min={1}
+        value={desktop.max_devices}
+        title="最大设备数"
+        onChange={(event) => void patchDesktop({ max_devices: Math.max(1, Number(event.target.value) || 1) })}
+      />
+      <button className="secondary-button" type="button" onClick={() => void toggleExpanded()}>
+        <Icon name="account" />
+        设备
+      </button>
+      {expanded ? (
+        <div className="desktop-device-list">
+          {loading ? <span>加载中...</span> : null}
+          {!loading && devices.length === 0 ? <span>暂无设备</span> : null}
+          {devices.map((device) => (
+            <div key={device.id} className="desktop-device-row">
+              <div>
+                <strong>{device.device_name || device.device_id}</strong>
+                <span>{device.app_version || 'unknown'} · {formatDateTime(device.last_seen_at)}</span>
+              </div>
+              <select
+                value={device.status}
+                onChange={(event) => void patchDevice(device, event.target.value as DesktopDeviceStatus)}
+              >
+                <option value="active">启用</option>
+                <option value="disabled">禁用</option>
+              </select>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function buildDesktopGrant(enabled: boolean, maxDevices: string, expiresAt: string): DesktopGrant {
+  const parsedMaxDevices = Number(maxDevices)
+  return {
+    enabled,
+    max_devices: Number.isFinite(parsedMaxDevices) && parsedMaxDevices > 0 ? parsedMaxDevices : 1,
+    license_expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+  }
+}
+
+function normalizeUserDesktopGrant(value?: DesktopGrant): DesktopGrant {
+  return {
+    enabled: value?.enabled ?? true,
+    license_expires_at: value?.license_expires_at,
+    max_devices: value?.max_devices && value.max_devices > 0 ? value.max_devices : 1,
+  }
 }
 
 function permissionLabel(value: UserPermission[]) {

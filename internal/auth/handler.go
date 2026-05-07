@@ -27,10 +27,77 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/login", h.handleLogin)
 	mux.HandleFunc("/api/auth/logout", h.handleLogout)
 	mux.HandleFunc("/api/auth/register", h.handleRegister)
+	mux.HandleFunc("/api/desktop/auth/login", h.handleDesktopLogin)
+	mux.HandleFunc("/api/desktop/auth/register", h.handleDesktopRegister)
+	mux.HandleFunc("/api/desktop/auth/verify", h.handleDesktopVerify)
+	mux.HandleFunc("/api/desktop/devices/heartbeat", h.handleDesktopVerify)
 	mux.HandleFunc("/api/admin/users", h.handleUsers)
 	mux.HandleFunc("/api/admin/users/", h.handleUserByID)
 	mux.HandleFunc("/api/admin/invitations", h.handleInvitations)
 	mux.HandleFunc("/api/admin/invitations/", h.handleInvitationByID)
+}
+
+func (h *Handler) handleDesktopLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+
+	var input DesktopLoginInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.service.DesktopLogin(r.Context(), input, r)
+	if err != nil {
+		h.writeAuthError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) handleDesktopRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+
+	var input DesktopRegisterInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.service.DesktopRegister(r.Context(), input, r)
+	if err != nil {
+		h.writeAuthError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, result)
+}
+
+func (h *Handler) handleDesktopVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+
+	var input DesktopVerifyInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.service.DesktopVerify(r.Context(), bearerToken(r), input, r)
+	if err != nil {
+		h.writeAuthError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +144,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	h.setSessionCookie(w, result)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"user":       result.User,
+		"token":      result.Token,
 		"expires_at": result.ExpiresAt,
 	})
 }
@@ -102,6 +170,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	h.setSessionCookie(w, result)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"user":       result.User,
+		"token":      result.Token,
 		"expires_at": result.ExpiresAt,
 	})
 }
@@ -172,6 +241,34 @@ func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"user": user})
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "desktop-devices" && r.Method == http.MethodGet {
+		devices, err := h.service.ListDesktopDevices(r.Context(), userID)
+		if err != nil {
+			h.writeAuthError(w, err)
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"devices": devices})
+		return
+	}
+
+	if len(parts) == 4 && parts[1] == "desktop-devices" && parts[3] == "status" && r.Method == http.MethodPatch {
+		var input UpdateDesktopDeviceInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		device, err := h.service.UpdateDesktopDevice(r.Context(), userID, parts[2], input)
+		if err != nil {
+			h.writeAuthError(w, err)
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"device": device})
 		return
 	}
 
@@ -297,13 +394,31 @@ func (h *Handler) writeAuthError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, ErrInvalidCredentials):
 		httpx.WriteError(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, ErrRegistrationDisabled), errors.Is(err, ErrUserDisabled), errors.Is(err, ErrCannotDisableSelf), errors.Is(err, ErrCannotDemoteLastAdmin), errors.Is(err, ErrInvalidInviteCode):
+	case errors.Is(err, ErrRegistrationDisabled), errors.Is(err, ErrUserDisabled), errors.Is(err, ErrCannotDisableSelf), errors.Is(err, ErrCannotDemoteLastAdmin), errors.Is(err, ErrInvalidInviteCode), errors.Is(err, ErrDesktopDisabled), errors.Is(err, ErrDesktopLicenseExpired), errors.Is(err, ErrDesktopDeviceDisabled), errors.Is(err, ErrDesktopDeviceLimitReached):
 		httpx.WriteError(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrDesktopDeviceRequired):
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrUserNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 	default:
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	}
+}
+
+func bearerToken(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	header := strings.TrimSpace(r.Header.Get("Authorization"))
+	if header == "" {
+		return ""
+	}
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+
+	return strings.TrimSpace(parts[1])
 }
 
 func timeUntil(t time.Time) time.Duration {

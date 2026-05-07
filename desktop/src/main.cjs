@@ -4,6 +4,8 @@ const fs = require('node:fs')
 const http = require('node:http')
 const net = require('node:net')
 const path = require('node:path')
+const os = require('node:os')
+const crypto = require('node:crypto')
 
 const API_PORT = Number(process.env.WA_DESKTOP_API_PORT || 18080)
 const AGENT_PORT = Number(process.env.WA_DESKTOP_AGENT_PORT || 18090)
@@ -26,6 +28,24 @@ function runtimeRoot() {
   return path.join(resourcesRoot(), 'runtime')
 }
 
+function desktopConfig() {
+  const candidates = [
+    path.join(resourcesRoot(), 'desktop-config.json'),
+    path.join(repoRoot(), 'desktop', 'desktop-config.json'),
+  ]
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) {
+      continue
+    }
+    try {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    } catch {
+      return {}
+    }
+  }
+  return {}
+}
+
 function webRoot() {
   return app.isPackaged ? path.join(process.resourcesPath, 'web') : path.join(repoRoot(), 'web', 'dist')
 }
@@ -40,6 +60,38 @@ function userDataRoot() {
 
 function dataRoot() {
   return path.join(userDataRoot(), 'data')
+}
+
+function desktopIdentityPath() {
+  return path.join(userDataRoot(), 'desktop-device.json')
+}
+
+function desktopIdentity() {
+  ensureDir(userDataRoot())
+  const filePath = desktopIdentityPath()
+  if (fs.existsSync(filePath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+      if (parsed && typeof parsed.device_id === 'string' && parsed.device_id.trim()) {
+        return {
+          deviceID: parsed.device_id.trim(),
+          deviceName: String(parsed.device_name || os.hostname() || 'Windows PC'),
+        }
+      }
+    } catch {
+      // Regenerate below.
+    }
+  }
+
+  const identity = {
+    device_id: crypto.randomUUID(),
+    device_name: os.hostname() || 'Windows PC',
+  }
+  fs.writeFileSync(filePath, JSON.stringify(identity, null, 2))
+  return {
+    deviceID: identity.device_id,
+    deviceName: identity.device_name,
+  }
 }
 
 function logRoot() {
@@ -192,6 +244,8 @@ function startAgentRunner() {
 }
 
 function startAPI() {
+  const identity = desktopIdentity()
+  const config = desktopConfig()
   const apiExe = requiredFile(path.join(runtimeRoot(), 'api', 'api-server.exe'), '本地 API 服务')
   ensureDir(dataRoot())
   spawnManaged('api-server', apiExe, [], {
@@ -213,7 +267,10 @@ function startAPI() {
       AUTH_BOOTSTRAP_ADMIN_NAME: process.env.AUTH_BOOTSTRAP_ADMIN_NAME || 'Administrator',
       AUTH_SECURE_COOKIE: 'false',
       AGENT_RUNNER_BASE_URL: `http://127.0.0.1:${AGENT_PORT}`,
-      CLOUD_AUTH_BASE_URL: process.env.CLOUD_AUTH_BASE_URL || '',
+      CLOUD_AUTH_BASE_URL: process.env.CLOUD_AUTH_BASE_URL || config.cloudAuthBaseUrl || '',
+      WA_DESKTOP_DEVICE_ID: identity.deviceID,
+      WA_DESKTOP_DEVICE_NAME: identity.deviceName,
+      WA_DESKTOP_APP_VERSION: app.getVersion(),
       AGENT_AUTO_SEND_ENABLED: 'false',
       LOG_LEVEL: process.env.LOG_LEVEL || 'info',
       LOG_FORMAT: 'text',

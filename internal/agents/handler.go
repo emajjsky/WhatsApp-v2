@@ -19,6 +19,7 @@ import (
 type Handler struct {
 	service       *Service
 	automation    *Automation
+	cloudProxy    *CloudProxy
 	auditRecorder interface {
 		Record(ctx context.Context, input audit.RecordInput) error
 	}
@@ -34,6 +35,10 @@ func NewHandler(service *Service) (*Handler, error) {
 
 func (h *Handler) SetAutomation(automation *Automation) {
 	h.automation = automation
+}
+
+func (h *Handler) SetCloudProxy(proxy *CloudProxy) {
+	h.cloudProxy = proxy
 }
 
 func (h *Handler) SetAuditRecorder(recorder interface {
@@ -54,6 +59,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-runs/generate/stream", h.handleGenerateRunStream)
 	mux.HandleFunc("/api/agent-translations", h.handleTranslateText)
 	mux.HandleFunc("/api/agent-status-card", h.handleStatusCard)
+	mux.HandleFunc("/api/desktop/agent-runs/generate", h.handleDesktopGenerateDraft)
+	mux.HandleFunc("/api/desktop/agent-runs/generate/stream", h.handleDesktopGenerateDraftStream)
+	mux.HandleFunc("/api/desktop/agent-translations", h.handleDesktopTranslateText)
+	mux.HandleFunc("/api/desktop/agent-status-card", h.handleDesktopStatusCard)
 	mux.HandleFunc("/api/agent-runs/", h.handleRunByID)
 }
 
@@ -344,6 +353,10 @@ func (h *Handler) handleGenerateRun(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteMethodNotAllowed(w, http.MethodPost)
 		return
 	}
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleGenerateRun(w, r)
+		return
+	}
 	if h.automation == nil {
 		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
 		return
@@ -396,6 +409,10 @@ func (h *Handler) handleGenerateRun(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleTranslateText(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleTranslateText(w, r)
 		return
 	}
 	if h.automation == nil {
@@ -461,6 +478,10 @@ func (h *Handler) handleAnalyzeStatusCard(w http.ResponseWriter, r *http.Request
 		httpx.WriteMethodNotAllowed(w, http.MethodPost)
 		return
 	}
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleStatusCard(w, r)
+		return
+	}
 	if h.automation == nil {
 		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
 		return
@@ -507,6 +528,10 @@ func (h *Handler) handleAnalyzeStatusCard(w http.ResponseWriter, r *http.Request
 func (h *Handler) handleGenerateRunStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleGenerateRunStream(w, r)
 		return
 	}
 	if h.automation == nil {
@@ -631,6 +656,120 @@ func (h *Handler) handleRunByID(w http.ResponseWriter, r *http.Request) {
 	})
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"run": updated})
+}
+
+func (h *Handler) handleDesktopGenerateDraft(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload DesktopAgentDraftInput
+	if err := httpx.DecodeJSON(r, &payload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.automation.GenerateDesktopDraft(r.Context(), payload)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"result": result})
+}
+
+func (h *Handler) handleDesktopGenerateDraftStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload DesktopAgentDraftInput
+	if err := httpx.DecodeJSON(r, &payload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	result, err := h.automation.GenerateDesktopDraftStream(
+		r.Context(),
+		payload,
+		GenerateRunStreamCallbacks{
+			OnDelta: func(text string) error {
+				return writeAgentRunSSE(w, "delta", map[string]any{"text": text})
+			},
+		},
+	)
+	if err != nil {
+		_ = writeAgentRunSSE(w, "error", map[string]any{"message": err.Error()})
+		return
+	}
+
+	_ = writeAgentRunSSE(w, "complete", map[string]any{"result": result})
+}
+
+func (h *Handler) handleDesktopTranslateText(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload DesktopAgentTranslationInput
+	if err := httpx.DecodeJSON(r, &payload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	translation, err := h.automation.TranslateDesktopText(r.Context(), payload)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"translation": translation})
+}
+
+func (h *Handler) handleDesktopStatusCard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.automation == nil {
+		httpx.WriteError(w, http.StatusNotImplemented, "agent automation is not configured")
+		return
+	}
+
+	var payload DesktopAgentStatusCardInput
+	if err := httpx.DecodeJSON(r, &payload); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	statusCard, err := h.automation.AnalyzeDesktopStatusCard(r.Context(), payload)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status_card": statusCard})
 }
 
 func (h *Handler) writeServiceError(w http.ResponseWriter, err error) {

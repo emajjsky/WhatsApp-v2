@@ -3,11 +3,13 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"whatsapp-agent-platform/internal/storage"
+	"whatsapp-agent-platform/internal/support/ids"
 )
 
 type Repository struct {
@@ -67,8 +69,13 @@ INSERT INTO users (
     password_hash,
     display_name,
     role,
-    status
-) VALUES ($1, $2, $3, $4, $5, $6)`
+    status,
+    desktop_enabled,
+    license_expires_at,
+    max_devices
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+
+	desktop := normalizeCreateDesktopGrant(user.Desktop)
 
 	if _, err := r.db.ExecContext(
 		ctx,
@@ -79,6 +86,9 @@ INSERT INTO users (
 		user.DisplayName,
 		user.Role,
 		user.Status,
+		desktop.Enabled,
+		desktop.LicenseExpiresAt,
+		desktop.MaxDevices,
 	); err != nil {
 		return fmt.Errorf("create user %q: %w", user.Email, err)
 	}
@@ -145,6 +155,14 @@ SET
 	return nil
 }
 
+func normalizeCreateDesktopGrant(value DesktopGrant) DesktopGrant {
+	desktop := normalizeDesktopGrant(value)
+	if !value.Enabled {
+		desktop.Enabled = true
+	}
+	return desktop
+}
+
 func (r *Repository) SetUserPermissions(ctx context.Context, userID string, permissions []Permission) error {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
@@ -179,6 +197,9 @@ SELECT
     display_name,
     role,
     status,
+    desktop_enabled,
+    license_expires_at,
+    max_devices,
     last_login_at,
     created_at,
     updated_at
@@ -202,6 +223,9 @@ SELECT
     display_name,
     role,
     status,
+    desktop_enabled,
+    license_expires_at,
+    max_devices,
     last_login_at,
     created_at,
     updated_at
@@ -225,6 +249,9 @@ SELECT
     display_name,
     role,
     status,
+    desktop_enabled,
+    license_expires_at,
+    max_devices,
     last_login_at,
     created_at,
     updated_at
@@ -250,6 +277,9 @@ SELECT
     display_name,
     role,
     status,
+    desktop_enabled,
+    license_expires_at,
+    max_devices,
     last_login_at,
     created_at,
     updated_at
@@ -295,6 +325,9 @@ func (r *Repository) UpdateUser(ctx context.Context, id string, input UpdateUser
 	if input.Permissions != nil {
 		existing.Permissions = normalizePermissions(*input.Permissions)
 	}
+	if input.Desktop != nil {
+		existing.Desktop = normalizeDesktopGrant(*input.Desktop)
+	}
 
 	const query = `
 UPDATE users
@@ -302,10 +335,24 @@ SET
     display_name = $2,
     role = $3,
     status = $4,
+    desktop_enabled = $5,
+    license_expires_at = $6,
+    max_devices = $7,
     updated_at = NOW()
 WHERE id = $1`
 
-	result, err := r.db.ExecContext(ctx, query, existing.ID, existing.DisplayName, existing.Role, existing.Status)
+	desktop := normalizeDesktopGrant(existing.Desktop)
+	result, err := r.db.ExecContext(
+		ctx,
+		query,
+		existing.ID,
+		existing.DisplayName,
+		existing.Role,
+		existing.Status,
+		desktop.Enabled,
+		desktop.LicenseExpiresAt,
+		desktop.MaxDevices,
+	)
 	if err != nil {
 		return User{}, fmt.Errorf("update user %q: %w", id, err)
 	}
@@ -357,10 +404,11 @@ INSERT INTO auth_sessions (
     id,
     user_id,
     token_hash,
+    cloud_token_hash,
     user_agent,
     ip_address,
     expires_at
-) VALUES ($1, $2, $3, $4, $5, $6)`
+) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
 	if _, err := r.db.ExecContext(
 		ctx,
@@ -368,6 +416,7 @@ INSERT INTO auth_sessions (
 		session.ID,
 		session.UserID,
 		session.TokenHash,
+		session.CloudTokenHash,
 		session.UserAgent,
 		session.IPAddress,
 		session.ExpiresAt,
@@ -376,6 +425,21 @@ INSERT INTO auth_sessions (
 	}
 
 	return nil
+}
+
+func (r *Repository) CloudTokenHashBySessionTokenHash(ctx context.Context, tokenHash string, now time.Time) (string, error) {
+	const query = `
+SELECT COALESCE(cloud_token_hash, '')
+FROM auth_sessions
+WHERE token_hash = $1
+  AND expires_at > $2`
+
+	var cloudTokenHash string
+	if err := r.db.QueryRowContext(ctx, query, strings.TrimSpace(tokenHash), now).Scan(&cloudTokenHash); err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(cloudTokenHash), nil
 }
 
 func (r *Repository) UserBySessionTokenHash(ctx context.Context, tokenHash string, now time.Time) (User, error) {
@@ -387,6 +451,9 @@ SELECT
     u.display_name,
     u.role,
     u.status,
+    u.desktop_enabled,
+    u.license_expires_at,
+    u.max_devices,
     u.last_login_at,
     u.created_at,
     u.updated_at
@@ -420,6 +487,176 @@ func (r *Repository) DeleteExpiredSessions(ctx context.Context, now time.Time) e
 	}
 
 	return nil
+}
+
+func (r *Repository) UpsertDesktopDevice(ctx context.Context, user User, input DesktopClientInput, ipAddress string, now time.Time) (DesktopDevice, error) {
+	userID := strings.TrimSpace(user.ID)
+	deviceID := normalizeDeviceID(input.DeviceID)
+	if userID == "" {
+		return DesktopDevice{}, fmt.Errorf("user id is required")
+	}
+	if deviceID == "" {
+		return DesktopDevice{}, fmt.Errorf("device id is required")
+	}
+
+	var existingID string
+	err := r.db.QueryRowContext(
+		ctx,
+		`SELECT id FROM user_desktop_devices WHERE user_id = $1 AND device_id = $2`,
+		userID,
+		deviceID,
+	).Scan(&existingID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return DesktopDevice{}, fmt.Errorf("lookup desktop device: %w", err)
+	}
+
+	if existingID == "" {
+		activeCount, err := r.CountActiveDesktopDevices(ctx, userID)
+		if err != nil {
+			return DesktopDevice{}, err
+		}
+		desktop := normalizeDesktopGrant(user.Desktop)
+		if activeCount >= desktop.MaxDevices {
+			return DesktopDevice{}, ErrDesktopDeviceLimitReached
+		}
+		existingID = ids.NewUUID()
+	}
+
+	const query = `
+INSERT INTO user_desktop_devices (
+    id,
+    user_id,
+    device_id,
+    device_name,
+    app_version,
+    status,
+    last_ip_address,
+    last_seen_at
+) VALUES ($1, $2, $3, $4, $5, 'active', $6, $7)
+ON CONFLICT (user_id, device_id) DO UPDATE
+SET
+    device_name = EXCLUDED.device_name,
+    app_version = EXCLUDED.app_version,
+    last_ip_address = EXCLUDED.last_ip_address,
+    last_seen_at = EXCLUDED.last_seen_at,
+    updated_at = NOW()`
+
+	if _, err := r.db.ExecContext(
+		ctx,
+		query,
+		existingID,
+		userID,
+		deviceID,
+		strings.TrimSpace(input.DeviceName),
+		strings.TrimSpace(input.AppVersion),
+		optionalString(strings.TrimSpace(ipAddress)),
+		now,
+	); err != nil {
+		return DesktopDevice{}, fmt.Errorf("upsert desktop device: %w", err)
+	}
+
+	return r.GetDesktopDevice(ctx, userID, deviceID)
+}
+
+func (r *Repository) GetDesktopDevice(ctx context.Context, userID string, deviceID string) (DesktopDevice, error) {
+	const query = `
+SELECT
+    id,
+    user_id,
+    device_id,
+    device_name,
+    app_version,
+    status,
+    last_ip_address,
+    last_seen_at,
+    created_at,
+    updated_at
+FROM user_desktop_devices
+WHERE user_id = $1 AND device_id = $2`
+
+	return scanDesktopDevice(r.db.QueryRowContext(ctx, query, strings.TrimSpace(userID), normalizeDeviceID(deviceID)))
+}
+
+func (r *Repository) ListDesktopDevices(ctx context.Context, userID string) ([]DesktopDevice, error) {
+	const query = `
+SELECT
+    id,
+    user_id,
+    device_id,
+    device_name,
+    app_version,
+    status,
+    last_ip_address,
+    last_seen_at,
+    created_at,
+    updated_at
+FROM user_desktop_devices
+WHERE user_id = $1
+ORDER BY last_seen_at DESC, created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, strings.TrimSpace(userID))
+	if err != nil {
+		return nil, fmt.Errorf("list desktop devices: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]DesktopDevice, 0)
+	for rows.Next() {
+		item, err := scanDesktopDeviceRows(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate desktop devices: %w", err)
+	}
+
+	return items, nil
+}
+
+func (r *Repository) CountActiveDesktopDevices(ctx context.Context, userID string) (int, error) {
+	var count int
+	if err := r.db.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM user_desktop_devices WHERE user_id = $1 AND status = 'active'`,
+		strings.TrimSpace(userID),
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count desktop devices: %w", err)
+	}
+
+	return count, nil
+}
+
+func (r *Repository) UpdateDesktopDevice(ctx context.Context, userID string, deviceID string, input UpdateDesktopDeviceInput) (DesktopDevice, error) {
+	existing, err := r.GetDesktopDevice(ctx, userID, deviceID)
+	if err != nil {
+		return DesktopDevice{}, err
+	}
+
+	if input.Status != nil {
+		status := normalizeDesktopDeviceStatus(*input.Status)
+		if status == "" {
+			return DesktopDevice{}, fmt.Errorf("unsupported desktop device status %q", *input.Status)
+		}
+		existing.Status = status
+	}
+
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE user_desktop_devices SET status = $3, updated_at = NOW() WHERE user_id = $1 AND device_id = $2`,
+		existing.UserID,
+		existing.DeviceID,
+		existing.Status,
+	)
+	if err != nil {
+		return DesktopDevice{}, fmt.Errorf("update desktop device: %w", err)
+	}
+	if err := ensureAffected(result, existing.DeviceID); err != nil {
+		return DesktopDevice{}, err
+	}
+
+	return r.GetDesktopDevice(ctx, existing.UserID, existing.DeviceID)
 }
 
 func (r *Repository) AssignOrphanAccounts(ctx context.Context, userID string) error {
@@ -670,8 +907,9 @@ type rowScanner interface {
 
 func scanUser(row rowScanner) (User, error) {
 	var (
-		user        User
-		lastLoginAt sql.NullTime
+		user             User
+		lastLoginAt      sql.NullTime
+		licenseExpiresAt sql.NullTime
 	)
 
 	if err := row.Scan(
@@ -681,6 +919,9 @@ func scanUser(row rowScanner) (User, error) {
 		&user.DisplayName,
 		&user.Role,
 		&user.Status,
+		&user.Desktop.Enabled,
+		&licenseExpiresAt,
+		&user.Desktop.MaxDevices,
 		&lastLoginAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
@@ -691,6 +932,10 @@ func scanUser(row rowScanner) (User, error) {
 	if lastLoginAt.Valid {
 		user.LastLoginAt = &lastLoginAt.Time
 	}
+	if licenseExpiresAt.Valid {
+		user.Desktop.LicenseExpiresAt = &licenseExpiresAt.Time
+	}
+	user.Desktop = normalizeDesktopGrant(user.Desktop)
 
 	return user, nil
 }
@@ -745,6 +990,41 @@ func scanInvitationCodeRows(rows *sql.Rows) (InvitationCode, error) {
 	item, err := scanInvitationCode(rows)
 	if err != nil {
 		return InvitationCode{}, fmt.Errorf("scan invitation code row: %w", err)
+	}
+
+	return item, nil
+}
+
+func scanDesktopDevice(row rowScanner) (DesktopDevice, error) {
+	var (
+		item          DesktopDevice
+		lastIPAddress sql.NullString
+	)
+	if err := row.Scan(
+		&item.ID,
+		&item.UserID,
+		&item.DeviceID,
+		&item.DeviceName,
+		&item.AppVersion,
+		&item.Status,
+		&lastIPAddress,
+		&item.LastSeenAt,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return DesktopDevice{}, err
+	}
+	if lastIPAddress.Valid {
+		item.LastIPAddress = &lastIPAddress.String
+	}
+
+	return item, nil
+}
+
+func scanDesktopDeviceRows(rows *sql.Rows) (DesktopDevice, error) {
+	item, err := scanDesktopDevice(rows)
+	if err != nil {
+		return DesktopDevice{}, fmt.Errorf("scan desktop device row: %w", err)
 	}
 
 	return item, nil

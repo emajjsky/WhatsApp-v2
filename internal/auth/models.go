@@ -39,6 +39,7 @@ type User struct {
 	Role         Role         `json:"role"`
 	Status       Status       `json:"status"`
 	Permissions  []Permission `json:"permissions,omitempty"`
+	Desktop      DesktopGrant `json:"desktop"`
 	LastLoginAt  *time.Time   `json:"last_login_at,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
@@ -73,14 +74,15 @@ func (u User) HasPermission(permission Permission) bool {
 }
 
 type Session struct {
-	ID         string
-	UserID     string
-	TokenHash  string
-	UserAgent  *string
-	IPAddress  *string
-	ExpiresAt  time.Time
-	CreatedAt  time.Time
-	LastSeenAt time.Time
+	ID             string
+	UserID         string
+	TokenHash      string
+	CloudTokenHash *string
+	UserAgent      *string
+	IPAddress      *string
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+	LastSeenAt     time.Time
 }
 
 type LoginInput struct {
@@ -95,6 +97,63 @@ type RegisterInput struct {
 	InviteCode  string `json:"invite_code"`
 }
 
+type DesktopGrant struct {
+	Enabled          bool       `json:"enabled,omitempty"`
+	LicenseExpiresAt *time.Time `json:"license_expires_at,omitempty"`
+	MaxDevices       int        `json:"max_devices"`
+}
+
+type DesktopDeviceStatus string
+
+const (
+	DesktopDeviceStatusActive   DesktopDeviceStatus = "active"
+	DesktopDeviceStatusDisabled DesktopDeviceStatus = "disabled"
+)
+
+type DesktopDevice struct {
+	ID            string              `json:"id"`
+	UserID        string              `json:"user_id"`
+	DeviceID      string              `json:"device_id"`
+	DeviceName    string              `json:"device_name"`
+	AppVersion    string              `json:"app_version"`
+	Status        DesktopDeviceStatus `json:"status"`
+	LastIPAddress *string             `json:"last_ip_address,omitempty"`
+	LastSeenAt    time.Time           `json:"last_seen_at"`
+	CreatedAt     time.Time           `json:"created_at"`
+	UpdatedAt     time.Time           `json:"updated_at"`
+}
+
+type DesktopClientInput struct {
+	DeviceID   string `json:"device_id"`
+	DeviceName string `json:"device_name"`
+	AppVersion string `json:"app_version"`
+}
+
+type DesktopLoginInput struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	DesktopClientInput
+}
+
+type DesktopRegisterInput struct {
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	DisplayName string `json:"display_name"`
+	InviteCode  string `json:"invite_code"`
+	DesktopClientInput
+}
+
+type DesktopVerifyInput struct {
+	DesktopClientInput
+}
+
+type DesktopAuthResult struct {
+	User      User          `json:"user"`
+	Device    DesktopDevice `json:"device"`
+	Token     string        `json:"token,omitempty"`
+	ExpiresAt time.Time     `json:"expires_at"`
+}
+
 type CreateUserInput struct {
 	Email       string       `json:"email"`
 	Password    string       `json:"password"`
@@ -102,6 +161,7 @@ type CreateUserInput struct {
 	Role        Role         `json:"role"`
 	Status      Status       `json:"status"`
 	Permissions []Permission `json:"permissions,omitempty"`
+	Desktop     DesktopGrant `json:"desktop,omitempty"`
 }
 
 type MirrorUserInput struct {
@@ -118,6 +178,11 @@ type UpdateUserInput struct {
 	Role        *Role         `json:"role,omitempty"`
 	Status      *Status       `json:"status,omitempty"`
 	Permissions *[]Permission `json:"permissions,omitempty"`
+	Desktop     *DesktopGrant `json:"desktop,omitempty"`
+}
+
+type UpdateDesktopDeviceInput struct {
+	Status *DesktopDeviceStatus `json:"status,omitempty"`
 }
 
 type ResetPasswordInput struct {
@@ -125,9 +190,10 @@ type ResetPasswordInput struct {
 }
 
 type AuthResult struct {
-	User      User      `json:"user"`
-	Token     string    `json:"-"`
-	ExpiresAt time.Time `json:"expires_at"`
+	User       User      `json:"user"`
+	Token      string    `json:"-"`
+	CloudToken string    `json:"-"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 type InvitationStatus string

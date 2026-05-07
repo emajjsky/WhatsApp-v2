@@ -231,6 +231,54 @@ type RunStatusUpdate struct {
 	CompletedAt   *time.Time
 }
 
+type DesktopAgentMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+type DesktopAgentDraftInput struct {
+	RequestID           string                `json:"request_id,omitempty"`
+	AccountID           string                `json:"account_id"`
+	ChatID              string                `json:"chat_id"`
+	ChatTitle           *string               `json:"chat_title,omitempty"`
+	TriggerMessageID    string                `json:"trigger_message_id"`
+	MessageText         string                `json:"message_text"`
+	AgentID             string                `json:"agent_id,omitempty"`
+	ContextEnabled      bool                  `json:"context_enabled"`
+	ContextMessageLimit int                   `json:"context_message_limit,omitempty"`
+	RecentMessages      []DesktopAgentMessage `json:"recent_messages,omitempty"`
+}
+
+type DesktopAgentDraftResult struct {
+	RequestID   string         `json:"request_id"`
+	AgentID     string         `json:"agent_id"`
+	AgentName   string         `json:"agent_name"`
+	Status      RunStatus      `json:"status"`
+	Draft       string         `json:"draft,omitempty"`
+	BlockReason string         `json:"block_reason,omitempty"`
+	Provider    map[string]any `json:"provider,omitempty"`
+	CompletedAt time.Time      `json:"completed_at"`
+}
+
+type DesktopAgentTranslationInput struct {
+	RequestID          string `json:"request_id,omitempty"`
+	AccountID          string `json:"account_id"`
+	AgentID            string `json:"agent_id,omitempty"`
+	Text               string `json:"text"`
+	TargetLanguage     string `json:"target_language"`
+	TargetLanguageName string `json:"target_language_name,omitempty"`
+}
+
+type DesktopAgentStatusCardInput struct {
+	RequestID           string                `json:"request_id,omitempty"`
+	AccountID           string                `json:"account_id"`
+	ChatID              string                `json:"chat_id"`
+	ChatTitle           *string               `json:"chat_title,omitempty"`
+	AgentID             string                `json:"agent_id,omitempty"`
+	ContextMessageLimit int                   `json:"context_message_limit,omitempty"`
+	RecentMessages      []DesktopAgentMessage `json:"recent_messages,omitempty"`
+}
+
 func mapRuleToView(rule AgentRule) RuleView {
 	view := RuleView{
 		ID:                      rule.ID,

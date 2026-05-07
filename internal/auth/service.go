@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -21,14 +22,19 @@ import (
 )
 
 var (
-	ErrInvalidCredentials    = errors.New("email or password is incorrect")
-	ErrRegistrationDisabled  = errors.New("registration is disabled")
-	ErrUserDisabled          = errors.New("user is disabled")
-	ErrUserNotFound          = errors.New("user not found")
-	ErrInvalidSession        = errors.New("invalid session")
-	ErrCannotDisableSelf     = errors.New("cannot disable the current administrator")
-	ErrCannotDemoteLastAdmin = errors.New("cannot remove the last administrator")
-	ErrInvalidInviteCode     = errors.New("invitation code is invalid or exhausted")
+	ErrInvalidCredentials        = errors.New("email or password is incorrect")
+	ErrRegistrationDisabled      = errors.New("registration is disabled")
+	ErrUserDisabled              = errors.New("user is disabled")
+	ErrUserNotFound              = errors.New("user not found")
+	ErrInvalidSession            = errors.New("invalid session")
+	ErrCannotDisableSelf         = errors.New("cannot disable the current administrator")
+	ErrCannotDemoteLastAdmin     = errors.New("cannot remove the last administrator")
+	ErrInvalidInviteCode         = errors.New("invitation code is invalid or exhausted")
+	ErrDesktopDisabled           = errors.New("desktop access is disabled")
+	ErrDesktopLicenseExpired     = errors.New("desktop license is expired")
+	ErrDesktopDeviceDisabled     = errors.New("desktop device is disabled")
+	ErrDesktopDeviceRequired     = errors.New("desktop device id is required")
+	ErrDesktopDeviceLimitReached = errors.New("desktop device limit reached")
 )
 
 type ServiceConfig struct {
@@ -133,7 +139,13 @@ func (s *Service) Bootstrap(ctx context.Context) (User, error) {
 
 func (s *Service) Register(ctx context.Context, input RegisterInput, r *http.Request) (AuthResult, error) {
 	if s.cloud != nil {
-		response, err := s.cloud.Register(ctx, input)
+		response, err := s.cloud.DesktopRegister(ctx, DesktopRegisterInput{
+			Email:              input.Email,
+			Password:           input.Password,
+			DisplayName:        input.DisplayName,
+			InviteCode:         input.InviteCode,
+			DesktopClientInput: desktopClientFromRequest(r),
+		})
 		if err != nil {
 			return AuthResult{}, err
 		}
@@ -141,7 +153,7 @@ func (s *Service) Register(ctx context.Context, input RegisterInput, r *http.Req
 		if err != nil {
 			return AuthResult{}, err
 		}
-		return s.createLoginSession(ctx, user, r)
+		return s.createCloudLoginSession(ctx, user, response.Token, r)
 	}
 
 	if !s.cfg.RegistrationEnabled {
@@ -190,7 +202,11 @@ func (s *Service) Login(ctx context.Context, input LoginInput, r *http.Request) 
 	}
 
 	if s.cloud != nil {
-		response, err := s.cloud.Login(ctx, input)
+		response, err := s.cloud.DesktopLogin(ctx, DesktopLoginInput{
+			Email:              input.Email,
+			Password:           input.Password,
+			DesktopClientInput: desktopClientFromRequest(r),
+		})
 		if err != nil {
 			return AuthResult{}, err
 		}
@@ -198,7 +214,7 @@ func (s *Service) Login(ctx context.Context, input LoginInput, r *http.Request) 
 		if err != nil {
 			return AuthResult{}, err
 		}
-		return s.createLoginSession(ctx, user, r)
+		return s.createCloudLoginSession(ctx, user, response.Token, r)
 	}
 
 	user, err := s.repository.GetUserByEmail(ctx, email)
@@ -216,6 +232,55 @@ func (s *Service) Login(ctx context.Context, input LoginInput, r *http.Request) 
 	}
 
 	return s.createLoginSession(ctx, user, r)
+}
+
+func (s *Service) DesktopLogin(ctx context.Context, input DesktopLoginInput, r *http.Request) (DesktopAuthResult, error) {
+	authResult, err := s.Login(ctx, LoginInput{Email: input.Email, Password: input.Password}, r)
+	if err != nil {
+		return DesktopAuthResult{}, err
+	}
+
+	device, err := s.authorizeDesktopDevice(ctx, authResult.User, input.DesktopClientInput, requestIP(r))
+	if err != nil {
+		_ = s.Logout(ctx, authResult.Token)
+		return DesktopAuthResult{}, err
+	}
+
+	return DesktopAuthResult{User: authResult.User, Device: device, Token: authResult.Token, ExpiresAt: authResult.ExpiresAt}, nil
+}
+
+func (s *Service) DesktopRegister(ctx context.Context, input DesktopRegisterInput, r *http.Request) (DesktopAuthResult, error) {
+	authResult, err := s.Register(ctx, RegisterInput{
+		Email:       input.Email,
+		Password:    input.Password,
+		DisplayName: input.DisplayName,
+		InviteCode:  input.InviteCode,
+	}, r)
+	if err != nil {
+		return DesktopAuthResult{}, err
+	}
+
+	device, err := s.authorizeDesktopDevice(ctx, authResult.User, input.DesktopClientInput, requestIP(r))
+	if err != nil {
+		_ = s.Logout(ctx, authResult.Token)
+		return DesktopAuthResult{}, err
+	}
+
+	return DesktopAuthResult{User: authResult.User, Device: device, Token: authResult.Token, ExpiresAt: authResult.ExpiresAt}, nil
+}
+
+func (s *Service) DesktopVerify(ctx context.Context, token string, input DesktopVerifyInput, r *http.Request) (DesktopAuthResult, error) {
+	user, err := s.UserFromToken(ctx, token)
+	if err != nil {
+		return DesktopAuthResult{}, err
+	}
+
+	device, err := s.authorizeDesktopDevice(ctx, user, input.DesktopClientInput, requestIP(r))
+	if err != nil {
+		return DesktopAuthResult{}, err
+	}
+
+	return DesktopAuthResult{User: user, Device: device, ExpiresAt: s.now().Add(s.cfg.SessionTTL)}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
@@ -245,6 +310,26 @@ func (s *Service) UserFromToken(ctx context.Context, token string) (User, error)
 	}
 
 	return user, nil
+}
+
+func (s *Service) CloudTokenFromLocalToken(ctx context.Context, token string) (string, error) {
+	tokenHash := HashToken(token)
+	if tokenHash == "" {
+		return "", ErrInvalidSession
+	}
+
+	cloudTokenHash, err := s.repository.CloudTokenHashBySessionTokenHash(ctx, tokenHash, s.now())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrInvalidSession
+		}
+		return "", err
+	}
+	if cloudTokenHash == "" {
+		return "", ErrInvalidSession
+	}
+
+	return cloudTokenHash, nil
 }
 
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
@@ -363,6 +448,22 @@ func (s *Service) UpdateUser(ctx context.Context, id string, input UpdateUserInp
 	return s.repository.UpdateUser(ctx, target.ID, input)
 }
 
+func (s *Service) ListDesktopDevices(ctx context.Context, userID string) ([]DesktopDevice, error) {
+	if _, err := RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
+
+	return s.repository.ListDesktopDevices(ctx, userID)
+}
+
+func (s *Service) UpdateDesktopDevice(ctx context.Context, userID string, deviceID string, input UpdateDesktopDeviceInput) (DesktopDevice, error) {
+	if _, err := RequireAdmin(ctx); err != nil {
+		return DesktopDevice{}, err
+	}
+
+	return s.repository.UpdateDesktopDevice(ctx, userID, deviceID, input)
+}
+
 func (s *Service) ResetPassword(ctx context.Context, id string, input ResetPasswordInput) error {
 	if _, err := RequireAdmin(ctx); err != nil {
 		return err
@@ -457,6 +558,34 @@ func (s *Service) Config() ServiceConfig {
 	return s.cfg
 }
 
+func (s *Service) authorizeDesktopDevice(ctx context.Context, user User, input DesktopClientInput, ipAddress string) (DesktopDevice, error) {
+	deviceID := normalizeDeviceID(input.DeviceID)
+	if deviceID == "" {
+		return DesktopDevice{}, ErrDesktopDeviceRequired
+	}
+	if !user.IsActive() {
+		return DesktopDevice{}, ErrUserDisabled
+	}
+
+	desktop := normalizeDesktopGrant(user.Desktop)
+	if !desktop.Enabled {
+		return DesktopDevice{}, ErrDesktopDisabled
+	}
+	if desktop.LicenseExpiresAt != nil && !desktop.LicenseExpiresAt.After(s.now()) {
+		return DesktopDevice{}, ErrDesktopLicenseExpired
+	}
+
+	device, err := s.repository.UpsertDesktopDevice(ctx, user, input, ipAddress, s.now())
+	if err != nil {
+		return DesktopDevice{}, err
+	}
+	if normalizeDesktopDeviceStatus(device.Status) == DesktopDeviceStatusDisabled {
+		return DesktopDevice{}, ErrDesktopDeviceDisabled
+	}
+
+	return device, nil
+}
+
 func (s *Service) mirrorCloudUser(ctx context.Context, cloudUser User) (User, error) {
 	role := normalizeRole(cloudUser.Role)
 	if role == "" {
@@ -497,19 +626,32 @@ func (s *Service) mirrorCloudUser(ctx context.Context, cloudUser User) (User, er
 }
 
 func (s *Service) createLoginSession(ctx context.Context, user User, r *http.Request) (AuthResult, error) {
+	return s.createSession(ctx, user, "", r)
+}
+
+func (s *Service) createCloudLoginSession(ctx context.Context, user User, cloudToken string, r *http.Request) (AuthResult, error) {
+	return s.createSession(ctx, user, cloudToken, r)
+}
+
+func (s *Service) createSession(ctx context.Context, user User, cloudToken string, r *http.Request) (AuthResult, error) {
 	token, err := newSessionToken()
 	if err != nil {
 		return AuthResult{}, err
 	}
 
 	expiresAt := s.now().Add(s.cfg.SessionTTL)
+	var cloudTokenHash *string
+	if trimmedCloudToken := strings.TrimSpace(cloudToken); trimmedCloudToken != "" {
+		cloudTokenHash = &trimmedCloudToken
+	}
 	session := Session{
-		ID:        ids.NewUUID(),
-		UserID:    user.ID,
-		TokenHash: HashToken(token),
-		UserAgent: optionalString(requestUserAgent(r)),
-		IPAddress: optionalString(requestIP(r)),
-		ExpiresAt: expiresAt,
+		ID:             ids.NewUUID(),
+		UserID:         user.ID,
+		TokenHash:      HashToken(token),
+		CloudTokenHash: cloudTokenHash,
+		UserAgent:      optionalString(requestUserAgent(r)),
+		IPAddress:      optionalString(requestIP(r)),
+		ExpiresAt:      expiresAt,
 	}
 
 	if err := s.repository.CreateSession(ctx, session); err != nil {
@@ -520,7 +662,7 @@ func (s *Service) createLoginSession(ctx context.Context, user User, r *http.Req
 	}
 
 	user.LastLoginAt = timePointer(s.now())
-	return AuthResult{User: user, Token: token, ExpiresAt: expiresAt}, nil
+	return AuthResult{User: user, Token: token, CloudToken: cloudToken, ExpiresAt: expiresAt}, nil
 }
 
 func (s *Service) ensureAnotherAdmin(ctx context.Context, targetID string) error {
@@ -638,6 +780,34 @@ func normalizePermissions(values []Permission) []Permission {
 	return items
 }
 
+func normalizeDesktopGrant(value DesktopGrant) DesktopGrant {
+	maxDevices := value.MaxDevices
+	if maxDevices <= 0 {
+		maxDevices = 1
+	}
+
+	return DesktopGrant{
+		Enabled:          value.Enabled,
+		LicenseExpiresAt: value.LicenseExpiresAt,
+		MaxDevices:       maxDevices,
+	}
+}
+
+func normalizeDesktopDeviceStatus(value DesktopDeviceStatus) DesktopDeviceStatus {
+	switch DesktopDeviceStatus(strings.ToLower(strings.TrimSpace(string(value)))) {
+	case DesktopDeviceStatusActive:
+		return DesktopDeviceStatusActive
+	case DesktopDeviceStatusDisabled:
+		return DesktopDeviceStatusDisabled
+	default:
+		return ""
+	}
+}
+
+func normalizeDeviceID(value string) string {
+	return strings.TrimSpace(value)
+}
+
 func normalizeRoleOrExisting(value *Role, existing Role) Role {
 	if value == nil {
 		return existing
@@ -709,4 +879,27 @@ func optionalString(value string) *string {
 
 func timePointer(value time.Time) *time.Time {
 	return &value
+}
+
+func desktopClientFromRequest(r *http.Request) DesktopClientInput {
+	deviceID := strings.TrimSpace(os.Getenv("WA_DESKTOP_DEVICE_ID"))
+	deviceName := strings.TrimSpace(os.Getenv("WA_DESKTOP_DEVICE_NAME"))
+	appVersion := strings.TrimSpace(os.Getenv("WA_DESKTOP_APP_VERSION"))
+	if r != nil {
+		if value := strings.TrimSpace(r.Header.Get("X-Desktop-Device-ID")); value != "" {
+			deviceID = value
+		}
+		if value := strings.TrimSpace(r.Header.Get("X-Desktop-Device-Name")); value != "" {
+			deviceName = value
+		}
+		if value := strings.TrimSpace(r.Header.Get("X-Desktop-App-Version")); value != "" {
+			appVersion = value
+		}
+	}
+
+	return DesktopClientInput{
+		DeviceID:   deviceID,
+		DeviceName: deviceName,
+		AppVersion: appVersion,
+	}
 }

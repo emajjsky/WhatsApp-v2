@@ -212,6 +212,14 @@ func New(cfg config.Config) (*App, error) {
 			_ = database.Close()
 			return nil, err
 		}
+		if cfg.Integrations.CloudAuthBaseURL != "" {
+			agentHandler.SetCloudProxy(agents.NewCloudProxy(
+				cfg.Integrations.CloudAuthBaseURL,
+				authService,
+				agentRepo,
+				chatRepo,
+			))
+		}
 
 		runnerClient := agents.NewRunnerClient(cfg.Integrations.AgentRunnerBaseURL)
 		agentAutomation, err = agents.NewAutomation(

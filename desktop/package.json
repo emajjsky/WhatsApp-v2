@@ -38,6 +38,13 @@
         "to": "runtime"
       },
       {
+        "from": "desktop-config.json",
+        "to": "desktop-config.json",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "../deploy/migrations",
         "to": "deploy/migrations"
       }

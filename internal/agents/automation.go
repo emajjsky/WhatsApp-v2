@@ -367,6 +367,207 @@ func (a *Automation) TranslateText(ctx context.Context, input TranslateTextInput
 	}, nil
 }
 
+func (a *Automation) GenerateDesktopDraft(ctx context.Context, input DesktopAgentDraftInput) (DesktopAgentDraftResult, error) {
+	if a == nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("agent automation is not configured")
+	}
+	if !a.runner.Configured() {
+		return DesktopAgentDraftResult{}, fmt.Errorf("agent runner is not configured (AGENT_RUNNER_BASE_URL)")
+	}
+
+	messageText := strings.TrimSpace(input.MessageText)
+	if messageText == "" {
+		return DesktopAgentDraftResult{}, fmt.Errorf("message_text is required")
+	}
+
+	systemConfig, err := a.resolveSystemAgentConfig(ctx, strings.TrimSpace(input.AgentID), AgentPurposeReply)
+	if err != nil || !systemConfig.Enabled {
+		return DesktopAgentDraftResult{}, fmt.Errorf("no reply agent is configured in admin backend")
+	}
+	rule := systemConfigRule(strings.TrimSpace(input.AccountID), systemConfig)
+
+	providerConfig, err := a.buildRunnerProvider(ctx, input.AccountID, rule)
+	if err != nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("load admin reply agent config failed: %w", err)
+	}
+
+	requestID := strings.TrimSpace(input.RequestID)
+	if requestID == "" {
+		requestID = ids.NewUUID()
+	}
+	response, err := a.runner.Run(ctx, RunnerRunRequest{
+		RequestID:        requestID,
+		AccountID:        strings.TrimSpace(input.AccountID),
+		ChatID:           strings.TrimSpace(input.ChatID),
+		TriggerMessageID: strings.TrimSpace(input.TriggerMessageID),
+		ChatTitle:        input.ChatTitle,
+		Rule: RunnerRule{
+			Name:                    rule.Name,
+			Enabled:                 true,
+			ReplyMode:               ReplyModeSuggest,
+			CooldownSeconds:         rule.CooldownSeconds,
+			MaxAutoRepliesPerThread: rule.MaxAutoRepliesPerThread,
+			TriggerFilter:           rule.TriggerFilter,
+			BlacklistFilter:         rule.BlacklistFilter,
+			PromptTemplate:          resolveRunnerPrompt(rule, providerConfig),
+			KnowledgeBinding:        rule.KnowledgeBinding,
+		},
+		Message: RunnerMessage{Text: messageText},
+		Context: RunnerContext{
+			ChatTitle:      input.ChatTitle,
+			RecentMessages: desktopMessagesToRunnerMessages(input.RecentMessages),
+		},
+		Provider: providerConfig,
+	})
+	if err != nil {
+		return DesktopAgentDraftResult{}, err
+	}
+
+	return desktopDraftResultFromRunner(requestID, systemConfig, response, a.now()), nil
+}
+
+func (a *Automation) GenerateDesktopDraftStream(
+	ctx context.Context,
+	input DesktopAgentDraftInput,
+	callbacks GenerateRunStreamCallbacks,
+) (DesktopAgentDraftResult, error) {
+	if a == nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("agent automation is not configured")
+	}
+	if !a.runner.Configured() {
+		return DesktopAgentDraftResult{}, fmt.Errorf("agent runner is not configured (AGENT_RUNNER_BASE_URL)")
+	}
+
+	messageText := strings.TrimSpace(input.MessageText)
+	if messageText == "" {
+		return DesktopAgentDraftResult{}, fmt.Errorf("message_text is required")
+	}
+
+	systemConfig, err := a.resolveSystemAgentConfig(ctx, strings.TrimSpace(input.AgentID), AgentPurposeReply)
+	if err != nil || !systemConfig.Enabled {
+		return DesktopAgentDraftResult{}, fmt.Errorf("no reply agent is configured in admin backend")
+	}
+	rule := systemConfigRule(strings.TrimSpace(input.AccountID), systemConfig)
+
+	providerConfig, err := a.buildRunnerProvider(ctx, input.AccountID, rule)
+	if err != nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("load admin reply agent config failed: %w", err)
+	}
+
+	requestID := strings.TrimSpace(input.RequestID)
+	if requestID == "" {
+		requestID = ids.NewUUID()
+	}
+	response, err := a.runner.RunStream(ctx, RunnerRunRequest{
+		RequestID:        requestID,
+		AccountID:        strings.TrimSpace(input.AccountID),
+		ChatID:           strings.TrimSpace(input.ChatID),
+		TriggerMessageID: strings.TrimSpace(input.TriggerMessageID),
+		ChatTitle:        input.ChatTitle,
+		Rule: RunnerRule{
+			Name:                    rule.Name,
+			Enabled:                 true,
+			ReplyMode:               ReplyModeSuggest,
+			CooldownSeconds:         rule.CooldownSeconds,
+			MaxAutoRepliesPerThread: rule.MaxAutoRepliesPerThread,
+			TriggerFilter:           rule.TriggerFilter,
+			BlacklistFilter:         rule.BlacklistFilter,
+			PromptTemplate:          resolveRunnerPrompt(rule, providerConfig),
+			KnowledgeBinding:        rule.KnowledgeBinding,
+		},
+		Message: RunnerMessage{Text: messageText},
+		Context: RunnerContext{
+			ChatTitle:      input.ChatTitle,
+			RecentMessages: desktopMessagesToRunnerMessages(input.RecentMessages),
+		},
+		Provider: providerConfig,
+	}, func(event RunnerRunStreamEvent) error {
+		if event.Type != "delta" || callbacks.OnDelta == nil {
+			return nil
+		}
+		return callbacks.OnDelta(event.Text)
+	})
+	if err != nil {
+		return DesktopAgentDraftResult{}, err
+	}
+
+	return desktopDraftResultFromRunner(requestID, systemConfig, response, a.now()), nil
+}
+
+func (a *Automation) TranslateDesktopText(ctx context.Context, input DesktopAgentTranslationInput) (TranslationView, error) {
+	return a.TranslateText(ctx, TranslateTextInput{
+		AccountID:          input.AccountID,
+		AgentID:            input.AgentID,
+		Text:               input.Text,
+		TargetLanguage:     input.TargetLanguage,
+		TargetLanguageName: input.TargetLanguageName,
+	})
+}
+
+func (a *Automation) AnalyzeDesktopStatusCard(ctx context.Context, input DesktopAgentStatusCardInput) (StatusCardView, error) {
+	if a == nil {
+		return StatusCardView{}, fmt.Errorf("agent automation is not configured")
+	}
+	if !a.runner.Configured() {
+		return StatusCardView{}, fmt.Errorf("agent runner is not configured (AGENT_RUNNER_BASE_URL)")
+	}
+
+	systemConfig, err := a.resolveSystemAgentConfig(ctx, strings.TrimSpace(input.AgentID), AgentPurposeStatusCard)
+	if err != nil || !systemConfig.Enabled {
+		return StatusCardView{}, fmt.Errorf("no status card agent is configured in admin backend")
+	}
+	rule := systemConfigRule(strings.TrimSpace(input.AccountID), systemConfig)
+
+	providerConfig, err := a.buildRunnerProvider(ctx, input.AccountID, rule)
+	if err != nil {
+		return StatusCardView{}, fmt.Errorf("load admin status card agent config failed: %w", err)
+	}
+
+	historyLimit := normalizeStatusCardHistoryLimit(input.ContextMessageLimit, systemConfig.ProviderConfig)
+	recentMessages := input.RecentMessages
+	if historyLimit > 0 && len(recentMessages) > historyLimit {
+		recentMessages = recentMessages[len(recentMessages)-historyLimit:]
+	}
+	if len(recentMessages) == 0 {
+		return StatusCardView{}, fmt.Errorf("chat has no messages to analyze")
+	}
+
+	requestID := strings.TrimSpace(input.RequestID)
+	if requestID == "" {
+		requestID = ids.NewUUID()
+	}
+	response, err := a.runner.AnalyzeStatusCard(ctx, RunnerStatusCardRequest{
+		RequestID:          requestID,
+		AccountID:          strings.TrimSpace(input.AccountID),
+		ChatID:             strings.TrimSpace(input.ChatID),
+		ChatTitle:          input.ChatTitle,
+		PromptTemplate:     resolveRunnerPrompt(rule, providerConfig),
+		StageLabels:        readConfigStringList(systemConfig.ProviderConfig, "stage_labels", defaultStatusCardStageLabels()),
+		CustomerTypeLabels: readConfigStringList(systemConfig.ProviderConfig, "customer_type_labels", defaultStatusCardCustomerTypeLabels()),
+		RiskLabels:         readConfigStringList(systemConfig.ProviderConfig, "risk_labels", defaultStatusCardRiskLabels()),
+		RecentMessages:     desktopMessagesToRunnerMessages(recentMessages),
+		Provider:           providerConfig,
+	})
+	if err != nil {
+		return StatusCardView{}, err
+	}
+
+	return StatusCardView{
+		AgentID:       systemConfig.ID,
+		AgentName:     systemConfig.Name,
+		CurrentStage:  strings.TrimSpace(response.CurrentStage),
+		CustomerTypes: normalizeStringList(response.CustomerTypes),
+		CurrentRisk:   strings.TrimSpace(response.CurrentRisk),
+		Summary:       strings.TrimSpace(response.Summary),
+		Evidence:      normalizeStringList(response.Evidence),
+		NextAction:    strings.TrimSpace(response.NextAction),
+		Confidence:    strings.TrimSpace(response.Confidence),
+		MessageCount:  len(recentMessages),
+		HistoryLimit:  historyLimit,
+		AnalyzedAt:    a.now(),
+	}, nil
+}
+
 func (a *Automation) AnalyzeStatusCard(ctx context.Context, input AnalyzeStatusCardInput) (StatusCardView, error) {
 	if a == nil {
 		return StatusCardView{}, fmt.Errorf("agent automation is not configured")
@@ -1147,6 +1348,62 @@ func tailMessages(messages []chats.MessageView, limit int) []chats.MessageView {
 		return messages
 	}
 	return messages[len(messages)-limit:]
+}
+
+func desktopMessagesToRunnerMessages(messages []DesktopAgentMessage) []RunnerRecentMessage {
+	result := make([]RunnerRecentMessage, 0, len(messages))
+	for _, item := range messages {
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			continue
+		}
+		role := strings.ToLower(strings.TrimSpace(item.Role))
+		if role != "agent" && role != "customer" {
+			role = "customer"
+		}
+		result = append(result, RunnerRecentMessage{
+			Role: role,
+			Text: text,
+		})
+	}
+
+	return result
+}
+
+func desktopDraftResultFromRunner(
+	requestID string,
+	config SystemAgentConfig,
+	response RunnerRunResponse,
+	completedAt time.Time,
+) DesktopAgentDraftResult {
+	status := RunStatusFailed
+	blockReason := ""
+	switch strings.TrimSpace(response.Status) {
+	case "blocked":
+		status = RunStatusBlocked
+		blockReason = strings.Join(normalizeReasons(response.BlockReasons), "; ")
+	case "ready_for_review", "dispatch_ready":
+		status = RunStatusReadyForReview
+	default:
+		blockReason = fmt.Sprintf("unsupported runner status %q", response.Status)
+	}
+	if strings.TrimSpace(response.Draft) == "" {
+		status = RunStatusFailed
+		if blockReason == "" {
+			blockReason = "agent runner returned empty draft"
+		}
+	}
+
+	return DesktopAgentDraftResult{
+		RequestID:   strings.TrimSpace(requestID),
+		AgentID:     config.ID,
+		AgentName:   config.Name,
+		Status:      status,
+		Draft:       strings.TrimSpace(response.Draft),
+		BlockReason: strings.TrimSpace(blockReason),
+		Provider:    response.Provider,
+		CompletedAt: completedAt,
+	}
 }
 
 func maxInt(left int, right int) int {

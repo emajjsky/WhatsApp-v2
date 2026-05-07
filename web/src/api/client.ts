@@ -169,6 +169,26 @@ export type UserRole = 'admin' | 'user'
 export type UserStatus = 'active' | 'disabled'
 export type UserPermission = 'accounts' | 'chats' | 'scripts' | 'exports'
 export type InvitationStatus = 'active' | 'disabled'
+export type DesktopDeviceStatus = 'active' | 'disabled'
+
+export interface DesktopGrant {
+  enabled: boolean
+  license_expires_at?: string
+  max_devices: number
+}
+
+export interface DesktopDeviceView {
+  id: string
+  user_id: string
+  device_id: string
+  device_name: string
+  app_version: string
+  status: DesktopDeviceStatus
+  last_ip_address?: string
+  last_seen_at: string
+  created_at: string
+  updated_at: string
+}
 
 export interface AuthUser {
   id: string
@@ -177,6 +197,7 @@ export interface AuthUser {
   role: UserRole
   status: UserStatus
   permissions?: UserPermission[]
+  desktop: DesktopGrant
   last_login_at?: string
   created_at: string
   updated_at: string
@@ -486,6 +507,7 @@ export interface CreateUserPayload {
   role: UserRole
   status: UserStatus
   permissions?: UserPermission[]
+  desktop?: DesktopGrant
 }
 
 export interface UpdateUserPayload {
@@ -493,6 +515,7 @@ export interface UpdateUserPayload {
   role?: UserRole
   status?: UserStatus
   permissions?: UserPermission[]
+  desktop?: DesktopGrant
 }
 
 export interface ResetPasswordPayload {
@@ -650,6 +673,24 @@ export async function resetUserPassword(userId: string, password: string) {
     method: 'POST',
     jsonBody: { password },
   })
+}
+
+export async function listDesktopDevices(userId: string) {
+  return request<{ devices: DesktopDeviceView[] }>(`/api/admin/users/${userId}/desktop-devices`)
+}
+
+export async function updateDesktopDeviceStatus(
+  userId: string,
+  deviceId: string,
+  status: DesktopDeviceStatus,
+) {
+  return request<{ device: DesktopDeviceView }>(
+    `/api/admin/users/${userId}/desktop-devices/${encodeURIComponent(deviceId)}/status`,
+    {
+      method: 'PATCH',
+      jsonBody: { status },
+    },
+  )
 }
 
 export async function listInvitations() {

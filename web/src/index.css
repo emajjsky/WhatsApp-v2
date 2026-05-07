@@ -3193,6 +3193,51 @@ a {
   padding: 0;
 }
 
+.desktop-grant-editor,
+.desktop-user-controls {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+}
+
+.desktop-grant-editor {
+  grid-template-columns: minmax(150px, 1fr) 92px minmax(170px, 1fr);
+}
+
+.desktop-user-controls {
+  grid-template-columns: 96px 62px 96px;
+}
+
+.desktop-user-controls input[type='number'] {
+  width: 100%;
+}
+
+.desktop-device-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.desktop-device-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 8px;
+  align-items: center;
+}
+
+.desktop-device-row strong,
+.desktop-device-row span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .admin-agent-panel {
   display: grid;
   gap: 10px;

@@ -1,0 +1,83 @@
+name: whatsapp-electron-cloud
+
+services:
+  postgres:
+    image: ${DOCKER_IMAGE_PREFIX:-}postgres:16-alpine
+    container_name: whatsapp-electron-cloud-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: whatsapp_electron_cloud
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - whatsapp_electron_cloud_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d whatsapp_electron_cloud"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  agent-runner:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.agent-runner
+      args:
+        PYTHON_IMAGE: ${DOCKER_IMAGE_PREFIX:-}python:3.12-slim
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      AGENT_RUNNER_HOST: 0.0.0.0
+      AGENT_RUNNER_PORT: 8090
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.api
+      args:
+        GO_IMAGE: ${DOCKER_IMAGE_PREFIX:-}golang:1.25-alpine
+        RUNTIME_IMAGE: ${DOCKER_IMAGE_PREFIX:-}alpine:3.20
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-runner:
+        condition: service_started
+    env_file:
+      - ../../.env
+    environment:
+      APP_ENV: electron-cloud
+      HTTP_HOST: 0.0.0.0
+      HTTP_PORT: 8080
+      DB_DRIVER: postgres
+      DB_DSN: postgres://postgres:postgres@postgres:5432/whatsapp_electron_cloud?sslmode=disable
+      DB_AUTO_MIGRATE: "true"
+      DB_MIGRATIONS_DIR: deploy/migrations
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-wa_electron_cloud_session}
+      AUTH_SESSION_TTL: ${AUTH_SESSION_TTL:-168h}
+      AUTH_REGISTRATION_ENABLED: ${AUTH_REGISTRATION_ENABLED:-true}
+      AUTH_BOOTSTRAP_ADMIN_EMAIL: ${AUTH_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}
+      AUTH_BOOTSTRAP_ADMIN_PASSWORD: ${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-admin123456}
+      AUTH_BOOTSTRAP_ADMIN_NAME: ${AUTH_BOOTSTRAP_ADMIN_NAME:-Administrator}
+      AUTH_SECURE_COOKIE: ${AUTH_SECURE_COOKIE:-false}
+      AGENT_RUNNER_BASE_URL: http://agent-runner:8090
+      AGENT_AUTO_SEND_ENABLED: "false"
+    volumes:
+      - whatsapp_electron_cloud_data:/app/data
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.web
+      args:
+        NODE_IMAGE: ${DOCKER_IMAGE_PREFIX:-}node:22-alpine
+        NGINX_IMAGE: ${DOCKER_IMAGE_PREFIX:-}nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "8088:80"
+
+volumes:
+  whatsapp_electron_cloud_postgres_data:
+  whatsapp_electron_cloud_data:
