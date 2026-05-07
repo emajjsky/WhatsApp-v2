@@ -86,6 +86,65 @@ INSERT INTO users (
 	return nil
 }
 
+func (r *Repository) UpsertMirrorUser(ctx context.Context, input MirrorUserInput) error {
+	userID := strings.TrimSpace(input.ID)
+	email := normalizeEmail(input.Email)
+	if userID == "" {
+		return fmt.Errorf("mirror user id is required")
+	}
+	if email == "" {
+		return fmt.Errorf("mirror user email is required")
+	}
+
+	displayName := strings.TrimSpace(input.DisplayName)
+	if displayName == "" {
+		displayName = email
+	}
+	role := normalizeRole(input.Role)
+	if role == "" {
+		role = RoleUser
+	}
+	status := normalizeStatus(input.Status)
+	if status == "" {
+		status = StatusActive
+	}
+	permissions := normalizePermissions(input.Permissions)
+	if role == RoleUser && len(permissions) == 0 {
+		permissions = append([]Permission(nil), DefaultUserPermissions...)
+	}
+
+	passwordHash := "cloud-auth-mirror"
+	const query = `
+INSERT INTO users (
+    id,
+    email,
+    password_hash,
+    display_name,
+    role,
+    status
+) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO UPDATE
+SET
+    email = EXCLUDED.email,
+    display_name = EXCLUDED.display_name,
+    role = EXCLUDED.role,
+    status = EXCLUDED.status,
+    updated_at = NOW()`
+
+	if _, err := r.db.ExecContext(ctx, query, userID, email, passwordHash, displayName, role, status); err != nil {
+		return fmt.Errorf("upsert mirror user %q: %w", email, err)
+	}
+	if role == RoleUser {
+		if err := r.SetUserPermissions(ctx, userID, permissions); err != nil {
+			return err
+		}
+	} else if _, err := r.db.ExecContext(ctx, `DELETE FROM user_permissions WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("clear admin mirror permissions for user %q: %w", userID, err)
+	}
+
+	return nil
+}
+
 func (r *Repository) SetUserPermissions(ctx context.Context, userID string, permissions []Permission) error {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {

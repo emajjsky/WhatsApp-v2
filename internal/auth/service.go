@@ -44,11 +44,16 @@ type ServiceConfig struct {
 type Service struct {
 	repository *Repository
 	cfg        ServiceConfig
+	cloud      *CloudClient
 	logger     *slog.Logger
 	now        func() time.Time
 }
 
 func NewService(repository *Repository, cfg ServiceConfig, logger *slog.Logger) (*Service, error) {
+	return NewServiceWithCloud(repository, cfg, nil, logger)
+}
+
+func NewServiceWithCloud(repository *Repository, cfg ServiceConfig, cloud *CloudClient, logger *slog.Logger) (*Service, error) {
 	if repository == nil {
 		return nil, fmt.Errorf("auth service requires a repository")
 	}
@@ -75,6 +80,7 @@ func NewService(repository *Repository, cfg ServiceConfig, logger *slog.Logger) 
 	return &Service{
 		repository: repository,
 		cfg:        cfg,
+		cloud:      cloud,
 		logger:     logger.With("component", "auth_service"),
 		now:        func() time.Time { return time.Now().UTC() },
 	}, nil
@@ -88,6 +94,11 @@ func (s *Service) Bootstrap(ctx context.Context) (User, error) {
 
 	var admin User
 	if count == 0 {
+		if s.cloud != nil {
+			s.logger.Info("cloud auth enabled; skipping local administrator bootstrap")
+			return User{}, nil
+		}
+
 		admin, err = s.CreateUser(ctx, CreateUserInput{
 			Email:       s.cfg.BootstrapAdminEmail,
 			Password:    s.cfg.BootstrapAdminPassword,
@@ -103,6 +114,10 @@ func (s *Service) Bootstrap(ctx context.Context) (User, error) {
 		admin, err = s.repository.FirstAdmin(ctx)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
+				if s.cloud != nil {
+					s.logger.Info("cloud auth enabled; local administrator is not required")
+					return User{}, nil
+				}
 				return User{}, fmt.Errorf("no administrator account exists")
 			}
 			return User{}, err
@@ -117,6 +132,18 @@ func (s *Service) Bootstrap(ctx context.Context) (User, error) {
 }
 
 func (s *Service) Register(ctx context.Context, input RegisterInput, r *http.Request) (AuthResult, error) {
+	if s.cloud != nil {
+		response, err := s.cloud.Register(ctx, input)
+		if err != nil {
+			return AuthResult{}, err
+		}
+		user, err := s.mirrorCloudUser(ctx, response.User)
+		if err != nil {
+			return AuthResult{}, err
+		}
+		return s.createLoginSession(ctx, user, r)
+	}
+
 	if !s.cfg.RegistrationEnabled {
 		return AuthResult{}, ErrRegistrationDisabled
 	}
@@ -160,6 +187,18 @@ func (s *Service) Login(ctx context.Context, input LoginInput, r *http.Request) 
 	password := strings.TrimSpace(input.Password)
 	if email == "" || password == "" {
 		return AuthResult{}, ErrInvalidCredentials
+	}
+
+	if s.cloud != nil {
+		response, err := s.cloud.Login(ctx, input)
+		if err != nil {
+			return AuthResult{}, err
+		}
+		user, err := s.mirrorCloudUser(ctx, response.User)
+		if err != nil {
+			return AuthResult{}, err
+		}
+		return s.createLoginSession(ctx, user, r)
 	}
 
 	user, err := s.repository.GetUserByEmail(ctx, email)
@@ -416,6 +455,45 @@ func (s *Service) UpdateInvitationCode(ctx context.Context, id string, input Upd
 
 func (s *Service) Config() ServiceConfig {
 	return s.cfg
+}
+
+func (s *Service) mirrorCloudUser(ctx context.Context, cloudUser User) (User, error) {
+	role := normalizeRole(cloudUser.Role)
+	if role == "" {
+		role = RoleUser
+	}
+	status := normalizeStatus(cloudUser.Status)
+	if status == "" {
+		status = StatusActive
+	}
+	permissions := normalizePermissions(cloudUser.Permissions)
+	if role == RoleUser && len(permissions) == 0 {
+		permissions = append([]Permission(nil), DefaultUserPermissions...)
+	}
+
+	input := MirrorUserInput{
+		ID:          strings.TrimSpace(cloudUser.ID),
+		Email:       normalizeEmail(cloudUser.Email),
+		DisplayName: strings.TrimSpace(cloudUser.DisplayName),
+		Role:        role,
+		Status:      status,
+		Permissions: permissions,
+	}
+	if input.ID == "" {
+		input.ID = ids.NewUUID()
+	}
+	if input.Email == "" {
+		return User{}, fmt.Errorf("cloud user email is required")
+	}
+	if input.DisplayName == "" {
+		input.DisplayName = input.Email
+	}
+
+	if err := s.repository.UpsertMirrorUser(ctx, input); err != nil {
+		return User{}, err
+	}
+
+	return s.repository.GetUserByID(ctx, input.ID)
 }
 
 func (s *Service) createLoginSession(ctx context.Context, user User, r *http.Request) (AuthResult, error) {

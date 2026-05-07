@@ -55,6 +55,7 @@ type AuthConfig struct {
 type IntegrationConfig struct {
 	AgentRunnerBaseURL   string
 	WhatsAppProxyURL     string
+	CloudAuthBaseURL     string
 	AgentAutoSendEnabled bool
 }
 
@@ -94,6 +95,7 @@ func Load() (Config, error) {
 		Integrations: IntegrationConfig{
 			AgentRunnerBaseURL:   strings.TrimSpace(os.Getenv("AGENT_RUNNER_BASE_URL")),
 			WhatsAppProxyURL:     strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
+			CloudAuthBaseURL:     strings.TrimSpace(os.Getenv("CLOUD_AUTH_BASE_URL")),
 			AgentAutoSendEnabled: boolEnv("AGENT_AUTO_SEND_ENABLED", false),
 		},
 	}
@@ -210,6 +212,12 @@ func (c Config) Validate() error {
 		parsed, err := url.Parse(c.Integrations.WhatsAppProxyURL)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 			return fmt.Errorf("WHATSAPP_PROXY_URL must be a valid absolute URL")
+		}
+	}
+	if c.Integrations.CloudAuthBaseURL != "" {
+		parsed, err := url.Parse(c.Integrations.CloudAuthBaseURL)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("CLOUD_AUTH_BASE_URL must be a valid absolute URL")
 		}
 	}
 

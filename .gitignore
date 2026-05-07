@@ -9,6 +9,10 @@ data/
 # Frontend build artifacts
 web/node_modules/
 web/dist/
+desktop/node_modules/
+desktop/runtime/
+desktop/release/
+desktop/dist/
 
 # Local toolchains and caches
 .cache/

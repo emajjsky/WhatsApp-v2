@@ -70,7 +70,7 @@ func New(cfg config.Config) (*App, error) {
 			_ = database.Close()
 			return nil, err
 		}
-		authService, err = auth.NewService(authRepo, auth.ServiceConfig{
+		authService, err = auth.NewServiceWithCloud(authRepo, auth.ServiceConfig{
 			CookieName:             cfg.Auth.CookieName,
 			SessionTTL:             cfg.Auth.SessionTTL,
 			RegistrationEnabled:    cfg.Auth.RegistrationEnabled,
@@ -78,7 +78,7 @@ func New(cfg config.Config) (*App, error) {
 			BootstrapAdminPassword: cfg.Auth.BootstrapAdminPassword,
 			BootstrapAdminName:     cfg.Auth.BootstrapAdminName,
 			SecureCookie:           cfg.Auth.SecureCookie,
-		}, logger)
+		}, auth.NewCloudClient(cfg.Integrations.CloudAuthBaseURL), logger)
 		if err != nil {
 			_ = database.Close()
 			return nil, err

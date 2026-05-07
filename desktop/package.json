@@ -1,0 +1,63 @@
+{
+  "name": "whatsapp-agent-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows desktop shell for WhatsApp Agent",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "build:web": "npm --prefix ../web run build",
+    "prepare:api": "powershell -ExecutionPolicy Bypass -File scripts/build-api.ps1",
+    "prepare:agent": "powershell -ExecutionPolicy Bypass -File scripts/prepare-agent-runner.ps1",
+    "prepare:postgres": "powershell -ExecutionPolicy Bypass -File scripts/prepare-postgres.ps1",
+    "prepare:runtime": "npm run build:web && npm run prepare:api && npm run prepare:agent && npm run prepare:postgres",
+    "dist:win": "npm run prepare:runtime && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^39.2.6",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.whatsappagent.desktop",
+    "productName": "WhatsApp Agent",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": "runtime",
+        "to": "runtime"
+      },
+      {
+        "from": "../deploy/migrations",
+        "to": "deploy/migrations"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

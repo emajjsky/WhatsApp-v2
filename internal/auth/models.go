@@ -104,6 +104,15 @@ type CreateUserInput struct {
 	Permissions []Permission `json:"permissions,omitempty"`
 }
 
+type MirrorUserInput struct {
+	ID          string       `json:"id"`
+	Email       string       `json:"email"`
+	DisplayName string       `json:"display_name"`
+	Role        Role         `json:"role"`
+	Status      Status       `json:"status"`
+	Permissions []Permission `json:"permissions,omitempty"`
+}
+
 type UpdateUserInput struct {
 	DisplayName *string       `json:"display_name,omitempty"`
 	Role        *Role         `json:"role,omitempty"`
