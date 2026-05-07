@@ -5,9 +5,21 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$go = Join-Path $RepoRoot ".tools/go/bin/go.exe"
-if (-not (Test-Path $go)) {
-  throw "Go toolchain not found: $go"
+$candidateGoPaths = @(
+  (Join-Path $RepoRoot ".tools/go/bin/go.exe"),
+  (Join-Path (Split-Path $RepoRoot -Parent) "whatsapp/.tools/go/bin/go.exe")
+)
+
+$go = $candidateGoPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $go) {
+  $pathGo = Get-Command "go.exe" -ErrorAction SilentlyContinue
+  if ($pathGo) {
+    $go = $pathGo.Source
+  }
+}
+
+if (-not $go) {
+  throw "Go toolchain not found. Install Go, or place it at .tools/go/bin/go.exe."
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
