@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS chat_status_cards (
     chat_id UUID PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
     account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    agent_id UUID REFERENCES system_agents(id) ON DELETE SET NULL,
+    agent_id UUID,
     agent_name TEXT NOT NULL DEFAULT '',
     current_stage TEXT NOT NULL DEFAULT '',
     customer_types JSONB NOT NULL DEFAULT '[]'::jsonb,
