@@ -112,6 +112,7 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"authenticated":        false,
 			"registration_enabled": h.service.Config().RegistrationEnabled,
+			"environment":          h.service.Config().Environment,
 		})
 		return
 	}
@@ -120,6 +121,7 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
 		"authenticated":        true,
 		"user":                 user,
 		"registration_enabled": h.service.Config().RegistrationEnabled,
+		"environment":          h.service.Config().Environment,
 	})
 }
 

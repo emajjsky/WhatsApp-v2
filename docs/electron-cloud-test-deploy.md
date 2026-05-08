@@ -17,10 +17,10 @@ Electron 云端版使用独立 Docker project、独立 PostgreSQL volume、独�
 
 Electron 方案分两部分：
 
-1. 云端：负责注册登录、邀请码、用户权限、桌面授权、设备管理、智能体配置、Agent 执行。
-2. 桌面端：负责本机 WhatsApp 登录、本地聊天数据、本地导出、把必要聊天上下文发送到云端 Agent。
+1. 云端：只负责注册登录、邀请码、用户权限、桌面授权、设备管理、智能体配置、Agent 执行。
+2. 桌面端：负责本机 WhatsApp 登录、本地聊天数据、本地导出，并把必要聊天上下文发到云端 Agent。
 
-模型 API Key、Coze/n8n/Webhook 地址等智能体配置只放在云端后台，不放在用户电脑里。
+模型 API Key、Coze、n8n、Webhook 地址等智能体配置只放在云端后台，不放在用户电脑里。
 
 ## 首次部署
 
@@ -82,32 +82,38 @@ docker compose -f deploy/docker/docker-compose.electron-cloud.yml up -d --build
 docker compose -f deploy/docker/docker-compose.electron-cloud.yml ps
 ```
 
-## 后台配置顺序
+## 云端后台
+
+`APP_ENV=electron-cloud` 时，云端 Web 只显示后台入口。服务器这边不需要 WhatsApp 登录、对话、话术和导出页面。
+
+后台配置顺序：
 
 1. 管理员登录 `http://188.166.248.178:8088`。
-2. 在后台创建邀请码。
-3. 用户用邀请码注册。
+2. 创建邀请码。
+3. 用户用邀请码在桌面端注册。
 4. 管理员在用户管理里打开该用户的桌面端权限。
 5. 设置该用户最大设备数和授权到期时间。
-6. 在后台配置回复 Agent、翻译 Agent、状态卡 Agent。
+6. 配置回复 Agent、翻译 Agent、状态卡 Agent。
 
-## 桌面安装包连接云端
+## 桌面安装包
 
-打包 Windows 安装包前，修改：
+打包 Windows 安装包前，确认：
 
 ```text
 desktop/desktop-config.json
 ```
 
-写入：
+示例：
 
 ```json
 {
-  "cloudAuthBaseUrl": "http://188.166.248.178:8088"
+  "cloudAuthBaseUrl": "http://188.166.248.178:8088",
+  "whatsAppProxyMode": "auto",
+  "whatsAppProxyUrl": ""
 }
 ```
 
-然后重新打包：
+打包：
 
 ```powershell
 cd F:/WhatsApp/whatsapp-electron/desktop
@@ -117,7 +123,45 @@ npm run dist:win
 生成文件：
 
 ```text
-desktop/release/WhatsApp Agent Setup 0.1.0.exe
+desktop/release/WhatsApp Agent Setup 0.1.6.exe
+```
+
+## 桌面端 WhatsApp 网络
+
+二维码不是本地随机生成，桌面端必须能从用户电脑连接 `web.whatsapp.com:443`。如果用户所在网络无法直连 WhatsApp Web，会出现 `failed to WebSocket dial`、`connectex`、`timeout` 一类错误。
+
+桌面端在“账号接入”页面支持三种模式：
+
+```text
+自动检测：优先使用系统代理；没有系统代理就直连。
+直连：适合海外网络或本机可以直接访问 WhatsApp 的用户。
+手动代理：适合需要指定 http/socks5 代理的用户。
+```
+
+用户通常不需要手改配置文件。配置文件只作为兜底排查使用：
+
+```text
+C:\Users\<用户名>\AppData\Roaming\whatsapp-agent-desktop\desktop-config.json
+```
+
+HTTP 代理示例：
+
+```json
+{
+  "cloudAuthBaseUrl": "http://188.166.248.178:8088",
+  "whatsAppProxyMode": "manual",
+  "whatsAppProxyUrl": "http://127.0.0.1:7890"
+}
+```
+
+SOCKS5 代理示例：
+
+```json
+{
+  "cloudAuthBaseUrl": "http://188.166.248.178:8088",
+  "whatsAppProxyMode": "manual",
+  "whatsAppProxyUrl": "socks5://127.0.0.1:7890"
+}
 ```
 
 ## Agent 调用方式
@@ -125,14 +169,16 @@ desktop/release/WhatsApp Agent Setup 0.1.0.exe
 桌面端前端仍然调用本地接口：
 
 ```text
+/api/agent-configs
 /api/agent-runs/generate/stream
 /api/agent-translations
 /api/agent-status-card
 ```
 
-当本地 API 检测到 `CLOUD_AUTH_BASE_URL` 后，会自动把聊天上下文转发到云端：
+本地 API 检测到 `CLOUD_AUTH_BASE_URL` 后，会自动代理到云端：
 
 ```text
+/api/agent-configs
 /api/desktop/agent-runs/generate/stream
 /api/desktop/agent-translations
 /api/desktop/agent-status-card

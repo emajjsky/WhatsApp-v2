@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell } = require('electron')
+const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require('electron')
 const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const http = require('node:http')
@@ -16,6 +16,7 @@ const POSTGRES_SERVICE_NAME = process.env.WA_DESKTOP_POSTGRES_SERVICE || 'WhatsA
 
 const children = new Set()
 let webServer
+let apiProcess
 let postgresServiceActive = false
 
 function repoRoot() {
@@ -30,22 +31,106 @@ function runtimeRoot() {
   return path.join(resourcesRoot(), 'runtime')
 }
 
-function desktopConfig() {
+function userDesktopConfigPath() {
+  return path.join(userDataRoot(), 'desktop-config.json')
+}
+
+function readJSONFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return {}
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function packagedDesktopConfig() {
   const candidates = [
     path.join(resourcesRoot(), 'desktop-config.json'),
     path.join(repoRoot(), 'desktop', 'desktop-config.json'),
   ]
   for (const filePath of candidates) {
-    if (!fs.existsSync(filePath)) {
-      continue
-    }
-    try {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'))
-    } catch {
-      return {}
+    const config = readJSONFile(filePath)
+    if (Object.keys(config).length > 0) {
+      return config
     }
   }
   return {}
+}
+
+function ensureUserDesktopConfig(baseConfig) {
+  ensureDir(userDataRoot())
+  const filePath = userDesktopConfigPath()
+  if (fs.existsSync(filePath)) {
+    return
+  }
+
+  const userConfig = {
+    cloudAuthBaseUrl: String(baseConfig.cloudAuthBaseUrl || ''),
+    whatsAppProxyMode: String(baseConfig.whatsAppProxyMode || 'auto'),
+    whatsAppProxyUrl: String(baseConfig.whatsAppProxyUrl || ''),
+  }
+  fs.writeFileSync(filePath, `${JSON.stringify(userConfig, null, 2)}\n`, 'utf8')
+}
+
+function desktopConfig() {
+  const packagedConfig = packagedDesktopConfig()
+  ensureUserDesktopConfig(packagedConfig)
+  return {
+    ...packagedConfig,
+    ...readJSONFile(userDesktopConfigPath()),
+  }
+}
+
+function configString(config, ...keys) {
+  for (const key of keys) {
+    const value = config[key]
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+  return ''
+}
+
+function publicDesktopConfig() {
+  const config = desktopConfig()
+  const mode = normalizeProxyMode(configString(config, 'whatsAppProxyMode', 'proxyMode'))
+  const manualProxyURL = configString(config, 'whatsAppProxyUrl', 'whatsappProxyUrl', 'whatsAppProxyURL', 'proxyUrl')
+  return {
+    cloudAuthBaseUrl: configString(config, 'cloudAuthBaseUrl'),
+    whatsAppProxyMode: mode,
+    whatsAppProxyUrl: manualProxyURL,
+    resolvedWhatsAppProxyUrl: '',
+  }
+}
+
+function writeDesktopConfig(patch) {
+  const current = desktopConfig()
+  const mode = normalizeProxyMode(
+    typeof patch.whatsAppProxyMode === 'string'
+      ? patch.whatsAppProxyMode
+      : configString(current, 'whatsAppProxyMode', 'proxyMode') || 'auto',
+  )
+  const next = {
+    ...current,
+    cloudAuthBaseUrl:
+      typeof patch.cloudAuthBaseUrl === 'string' ? patch.cloudAuthBaseUrl.trim() : configString(current, 'cloudAuthBaseUrl'),
+    whatsAppProxyMode: mode,
+    whatsAppProxyUrl: typeof patch.whatsAppProxyUrl === 'string' ? patch.whatsAppProxyUrl.trim() : publicDesktopConfig().whatsAppProxyUrl,
+  }
+  fs.writeFileSync(userDesktopConfigPath(), `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  return publicDesktopConfig()
+}
+
+function normalizeProxyMode(value) {
+  const mode = String(value || '').trim().toLowerCase()
+  if (mode === 'manual' || mode === 'direct' || mode === 'auto') {
+    return mode
+  }
+  return 'auto'
 }
 
 function webRoot() {
@@ -254,6 +339,7 @@ async function startPostgresFixed() {
   const postgresExe = requiredFile(path.join(pgBin, 'postgres.exe'), 'PostgreSQL postgres.exe')
   const initdbExe = requiredFile(path.join(pgBin, 'initdb.exe'), 'PostgreSQL initdb.exe')
   const createdbExe = requiredFile(path.join(pgBin, 'createdb.exe'), 'PostgreSQL createdb.exe')
+  const psqlExe = requiredFile(path.join(pgBin, 'psql.exe'), 'PostgreSQL psql.exe')
   const pgData = path.join(userDataRoot(), 'postgres-data')
 
   ensureDir(pgData)
@@ -283,15 +369,85 @@ async function startPostgresFixed() {
     }
   }
 
+  await ensurePostgresDatabaseSafe(psqlExe, createdbExe)
+}
+
+async function ensurePostgresDatabase(psqlExe, createdbExe) {
+  const env = { ...process.env, PGCLIENTENCODING: 'UTF8' }
+  const exists = await runOnce(
+    'postgres-db-check',
+    psqlExe,
+    [
+      '-h',
+      '127.0.0.1',
+      '-p',
+      String(POSTGRES_PORT),
+      '-U',
+      'postgres',
+      '-d',
+      'postgres',
+      '-tAc',
+      `SELECT 1 FROM pg_database WHERE datname='${DATABASE_NAME}'`,
+    ],
+    { env },
+  )
+  if (exists.code === 0 && exists.stdout.trim() === '1') {
+    return
+  }
+
   const created = await runOnce(
     'postgres-createdb',
     createdbExe,
     ['-h', '127.0.0.1', '-p', String(POSTGRES_PORT), '-U', 'postgres', DATABASE_NAME],
-    { env: { ...process.env, PGCLIENTENCODING: 'UTF8' } },
+    { env },
   )
-  if (created.code !== 0 && !/already exists/i.test(`${created.stderr}\n${created.stdout}`)) {
+  if (created.code !== 0) {
+    const combined = `${created.stderr}\n${created.stdout}`
+    if (/already exists|已存在|宸茬粡瀛樺湪|涓?瀛樺湪/i.test(combined)) {
+      return
+    }
     throw new Error(`Create local database failed: ${created.stderr || created.stdout}`)
   }
+}
+
+async function ensurePostgresDatabaseSafe(psqlExe, createdbExe) {
+  const env = { ...process.env, PGCLIENTENCODING: 'UTF8' }
+  if (await postgresDatabaseExists(psqlExe, env)) {
+    return
+  }
+
+  const created = await runOnce(
+    'postgres-createdb',
+    createdbExe,
+    ['-h', '127.0.0.1', '-p', String(POSTGRES_PORT), '-U', 'postgres', DATABASE_NAME],
+    { env },
+  )
+  if (created.code === 0 || (await postgresDatabaseExists(psqlExe, env))) {
+    return
+  }
+
+  throw new Error(`Create local database failed: ${created.stderr || created.stdout}`)
+}
+
+async function postgresDatabaseExists(psqlExe, env) {
+  const exists = await runOnce(
+    'postgres-db-check',
+    psqlExe,
+    [
+      '-h',
+      '127.0.0.1',
+      '-p',
+      String(POSTGRES_PORT),
+      '-U',
+      'postgres',
+      '-d',
+      'postgres',
+      '-tAc',
+      `SELECT 1 FROM pg_database WHERE datname='${DATABASE_NAME}'`,
+    ],
+    { env },
+  )
+  return exists.code === 0 && exists.stdout.trim() === '1'
 }
 
 function mustUsePostgresService() {
@@ -359,6 +515,63 @@ function resultError(result) {
   return result.error ? result.error.message : 'unknown error'
 }
 
+function openPathOrShowError(filePath) {
+  shell.openPath(filePath).then((errorMessage) => {
+    if (errorMessage) {
+      dialog.showErrorBox('Open path failed', `${filePath}\n\n${errorMessage}`)
+    }
+  })
+}
+
+function configureAppMenu() {
+  const template = [
+    {
+      label: 'Desktop',
+      submenu: [
+        {
+          label: 'Open config file',
+          click: () => {
+            ensureUserDesktopConfig(packagedDesktopConfig())
+            openPathOrShowError(userDesktopConfigPath())
+          },
+        },
+        {
+          label: 'Open logs folder',
+          click: () => {
+            ensureDir(logRoot())
+            openPathOrShowError(logRoot())
+          },
+        },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [{ role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }],
+    },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+function registerDesktopIPC() {
+  ipcMain.handle('desktop-config:get', async () => desktopRuntimeConfigView())
+  ipcMain.handle('desktop-config:save', async (_event, patch) => {
+    writeDesktopConfig(patch && typeof patch === 'object' ? patch : {})
+    await restartAPI()
+    return desktopRuntimeConfigView()
+  })
+}
+
+async function desktopRuntimeConfigView() {
+  const config = publicDesktopConfig()
+  return {
+    ...config,
+    resolvedWhatsAppProxyUrl: await resolveWhatsAppProxyURL(),
+  }
+}
+
 function startAgentRunner() {
   const pythonExe = requiredFile(path.join(runtimeRoot(), 'python', 'python.exe'), 'Python 运行时')
   requiredFile(path.join(runtimeRoot(), 'agent_runner', 'app.py'), 'agent_runner')
@@ -374,12 +587,66 @@ function startAgentRunner() {
   return waitForHTTP(`http://127.0.0.1:${AGENT_PORT}/healthz`, 30000)
 }
 
-function startAPI() {
+async function resolveWhatsAppProxyURL() {
+  const config = desktopConfig()
+  const mode = normalizeProxyMode(configString(config, 'whatsAppProxyMode', 'proxyMode'))
+  if (mode === 'direct') {
+    return ''
+  }
+
+  const manualProxyURL = configString(config, 'whatsAppProxyUrl', 'whatsappProxyUrl', 'whatsAppProxyURL', 'proxyUrl')
+  if (mode === 'manual') {
+    return manualProxyURL
+  }
+
+  return (await detectSystemProxyURL('https://web.whatsapp.com/')) || ''
+}
+
+async function detectSystemProxyURL(targetURL) {
+  try {
+    const defaultSession = session.defaultSession
+    if (!defaultSession) {
+      return ''
+    }
+
+    const proxy = await defaultSession.resolveProxy(targetURL)
+    return firstProxyURL(proxy)
+  } catch (error) {
+    appendLog('desktop-network', `Failed to detect system proxy: ${error.message}\n`)
+    return ''
+  }
+}
+
+function firstProxyURL(proxyRules) {
+  for (const part of String(proxyRules || '').split(';')) {
+    const rule = part.trim()
+    if (!rule || /^DIRECT$/i.test(rule)) {
+      continue
+    }
+
+    const match = /^(PROXY|HTTPS|SOCKS|SOCKS5)\s+(.+)$/i.exec(rule)
+    if (!match) {
+      continue
+    }
+
+    const endpoint = match[2].trim()
+    if (!endpoint) {
+      continue
+    }
+
+    const scheme = /^SOCKS/i.test(match[1]) ? 'socks5' : 'http'
+    return `${scheme}://${endpoint}`
+  }
+  return ''
+}
+
+async function startAPI() {
   const identity = desktopIdentity()
   const config = desktopConfig()
+  const whatsAppProxyURL = process.env.WHATSAPP_PROXY_URL || (await resolveWhatsAppProxyURL())
   const apiExe = requiredFile(path.join(runtimeRoot(), 'api', 'api-server.exe'), '本地 API 服务')
   ensureDir(dataRoot())
-  spawnManaged('api-server', apiExe, [], {
+  apiProcess = spawnManaged('api-server', apiExe, [], {
     cwd: userDataRoot(),
     env: {
       ...process.env,
@@ -399,6 +666,7 @@ function startAPI() {
       AUTH_SECURE_COOKIE: 'false',
       AGENT_RUNNER_BASE_URL: `http://127.0.0.1:${AGENT_PORT}`,
       CLOUD_AUTH_BASE_URL: process.env.CLOUD_AUTH_BASE_URL || config.cloudAuthBaseUrl || '',
+      WHATSAPP_PROXY_URL: whatsAppProxyURL,
       WA_DESKTOP_DEVICE_ID: identity.deviceID,
       WA_DESKTOP_DEVICE_NAME: identity.deviceName,
       WA_DESKTOP_APP_VERSION: app.getVersion(),
@@ -408,6 +676,28 @@ function startAPI() {
     },
   })
   return waitForHTTP(`http://127.0.0.1:${API_PORT}/healthz`, 45000)
+}
+
+async function restartAPI() {
+  if (apiProcess) {
+    const current = apiProcess
+    apiProcess = undefined
+    try {
+      current.kill()
+    } catch {
+      // ignore shutdown races
+    }
+    if (current.exitCode === null) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 3000)
+        current.once('exit', () => {
+          clearTimeout(timer)
+          resolve()
+        })
+      })
+    }
+  }
+  await startAPI()
 }
 
 function contentType(filePath) {
@@ -521,6 +811,8 @@ async function createWindow() {
 async function boot() {
   ensureDir(logRoot())
   ensureDir(dataRoot())
+  configureAppMenu()
+  registerDesktopIPC()
   await startPostgresFixed()
   await startAgentRunner()
   await startAPI()

@@ -1,7 +1,7 @@
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { type UserPermission } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from './Icon'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 const baseNavItems: Array<{
   to: string
@@ -15,21 +15,19 @@ const baseNavItems: Array<{
   { to: '/exports', label: '导出', icon: 'export', permission: 'exports' },
 ]
 
-const adminNavItems = [
-  { to: '/admin', label: '后台', icon: 'admin' as IconName },
-]
+const adminNavItems = [{ to: '/admin', label: '后台', icon: 'admin' as IconName }]
 
 export function AppShell() {
   const auth = useAuth()
   const navigate = useNavigate()
   const userPermissions = new Set<UserPermission>(auth.user?.permissions ?? [])
-  const visibleBaseNavItems =
-    auth.user?.role === 'admin'
+  const visibleBaseNavItems = auth.cloudAdminOnly
+    ? []
+    : auth.user?.role === 'admin'
       ? baseNavItems
       : baseNavItems.filter((item) => userPermissions.has(item.permission))
-  const navItems = auth.user?.role === 'admin'
-    ? [...visibleBaseNavItems, ...adminNavItems]
-    : visibleBaseNavItems
+  const navItems =
+    auth.user?.role === 'admin' ? [...visibleBaseNavItems, ...adminNavItems] : visibleBaseNavItems
 
   async function handleLogout() {
     await auth.logout()

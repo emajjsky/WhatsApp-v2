@@ -38,6 +38,7 @@ var (
 )
 
 type ServiceConfig struct {
+	Environment            string
 	CookieName             string
 	SessionTTL             time.Duration
 	RegistrationEnabled    bool

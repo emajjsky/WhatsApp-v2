@@ -71,6 +71,7 @@ func New(cfg config.Config) (*App, error) {
 			return nil, err
 		}
 		authService, err = auth.NewServiceWithCloud(authRepo, auth.ServiceConfig{
+			Environment:            cfg.Environment,
 			CookieName:             cfg.Auth.CookieName,
 			SessionTTL:             cfg.Auth.SessionTTL,
 			RegistrationEnabled:    cfg.Auth.RegistrationEnabled,

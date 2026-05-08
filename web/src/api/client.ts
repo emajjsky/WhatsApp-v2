@@ -207,6 +207,7 @@ export interface AuthSessionResponse {
   authenticated: boolean
   user?: AuthUser
   registration_enabled: boolean
+  environment?: string
 }
 
 export interface LoginPayload {

@@ -201,6 +201,32 @@ func (p *CloudProxy) HandleStatusCard(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status_card": response.StatusCard})
 }
 
+func (p *CloudProxy) HandleAvailableSystemConfigs(w http.ResponseWriter, r *http.Request) {
+	req, err := p.newCloudRequest(r.Context(), r, http.MethodGet, "/api/agent-configs", nil)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.URL.RawQuery = r.URL.RawQuery
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, fmt.Sprintf("call cloud agent configs: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		httpx.WriteError(w, resp.StatusCode, decodeCloudError(resp).Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 func (p *CloudProxy) prepareDraftPayload(r *http.Request) (DesktopAgentDraftInput, preparedManualRun, error) {
 	var payload struct {
 		ChatID              string  `json:"chat_id"`
@@ -328,7 +354,7 @@ func (p *CloudProxy) postJSON(ctx context.Context, r *http.Request, route string
 		return fmt.Errorf("encode cloud agent request: %w", err)
 	}
 
-	req, err := p.newCloudRequest(ctx, r, route, bytes.NewReader(body))
+	req, err := p.newCloudRequest(ctx, r, http.MethodPost, route, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -364,7 +390,7 @@ func (p *CloudProxy) postStream(
 		return DesktopAgentDraftResult{}, fmt.Errorf("encode cloud agent stream request: %w", err)
 	}
 
-	req, err := p.newCloudRequest(ctx, r, route, bytes.NewReader(body))
+	req, err := p.newCloudRequest(ctx, r, http.MethodPost, route, bytes.NewReader(body))
 	if err != nil {
 		return DesktopAgentDraftResult{}, err
 	}
@@ -418,13 +444,13 @@ func (p *CloudProxy) postStream(
 	return DesktopAgentDraftResult{}, fmt.Errorf("cloud agent stream ended before completion")
 }
 
-func (p *CloudProxy) newCloudRequest(ctx context.Context, r *http.Request, route string, body io.Reader) (*http.Request, error) {
+func (p *CloudProxy) newCloudRequest(ctx context.Context, r *http.Request, method string, route string, body io.Reader) (*http.Request, error) {
 	endpoint, err := url.JoinPath(p.baseURL, route)
 	if err != nil {
 		return nil, fmt.Errorf("build cloud agent URL: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
 		return nil, fmt.Errorf("create cloud agent request: %w", err)
 	}

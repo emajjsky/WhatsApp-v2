@@ -314,6 +314,10 @@ func (h *Handler) handleAvailableSystemConfigs(w http.ResponseWriter, r *http.Re
 		httpx.WriteMethodNotAllowed(w, http.MethodGet)
 		return
 	}
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAvailableSystemConfigs(w, r)
+		return
+	}
 
 	items, err := h.service.ListAvailableSystemConfigs(
 		r.Context(),

@@ -21,6 +21,8 @@ interface AuthContextValue {
   user?: AuthUser
   authenticated: boolean
   registrationEnabled: boolean
+  environment?: string
+  cloudAdminOnly: boolean
   loading: boolean
   login: (payload: LoginPayload) => Promise<void>
   register: (payload: RegisterPayload) => Promise<void>
@@ -33,12 +35,14 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser>()
   const [registrationEnabled, setRegistrationEnabled] = useState(false)
+  const [environment, setEnvironment] = useState<string>()
   const [loading, setLoading] = useState(true)
 
   async function refresh() {
     const response = await getAuthSession()
     setUser(response.authenticated ? response.user : undefined)
     setRegistrationEnabled(response.registration_enabled)
+    setEnvironment(response.environment)
   }
 
   useEffect(() => {
@@ -53,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         setUser(response.authenticated ? response.user : undefined)
         setRegistrationEnabled(response.registration_enabled)
+        setEnvironment(response.environment)
       } finally {
         if (!cancelled) {
           setLoading(false)
@@ -72,6 +77,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       authenticated: Boolean(user),
       registrationEnabled,
+      environment,
+      cloudAdminOnly: environment === 'electron-cloud',
       loading,
       login: async (payload) => {
         const response = await loginRequest(payload)
@@ -87,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       refresh,
     }),
-    [loading, registrationEnabled, user],
+    [environment, loading, registrationEnabled, user],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
@@ -126,6 +133,9 @@ export function RequireAdmin() {
     return <Navigate to="/login" replace />
   }
   if (auth.user?.role !== 'admin') {
+    if (auth.cloudAdminOnly) {
+      return <div className="auth-loading">当前账号没有后台权限</div>
+    }
     return <Navigate to="/accounts" replace />
   }
 
@@ -139,7 +149,7 @@ export function PublicOnly({ children }: { children: ReactNode }) {
     return <div className="auth-loading">正在加载...</div>
   }
   if (auth.authenticated) {
-    return <Navigate to="/accounts" replace />
+    return <Navigate to={auth.cloudAdminOnly ? '/admin' : '/accounts'} replace />
   }
 
   return <>{children}</>
