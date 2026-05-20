@@ -169,7 +169,7 @@ def _build_user_message(request: ProviderRequest) -> str:
     lines.append("[客户消息]")
     lines.append(request.customer_message.strip() or "")
     lines.append("")
-    lines.append("请生成给客户的下一条回复，只输出回复正文。")
+    lines.append("请严格按照系统提示词要求生成回复；如果系统提示词要求 JSON，则只输出可解析 JSON。")
 
     return "\n".join(lines).strip()
 

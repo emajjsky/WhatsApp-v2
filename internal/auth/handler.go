@@ -11,7 +11,8 @@ import (
 )
 
 type Handler struct {
-	service *Service
+	service         *Service
+	cloudAdminProxy *CloudAdminProxy
 }
 
 func NewHandler(service *Service) (*Handler, error) {
@@ -20,6 +21,10 @@ func NewHandler(service *Service) (*Handler, error) {
 	}
 
 	return &Handler{service: service}, nil
+}
+
+func (h *Handler) SetCloudAdminProxy(proxy *CloudAdminProxy) {
+	h.cloudAdminProxy = proxy
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -193,6 +198,11 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
+	if h.cloudAdminProxy != nil {
+		h.cloudAdminProxy.Forward(w, r)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		users, err := h.service.ListUsers(r.Context())
@@ -221,6 +231,11 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request) {
+	if h.cloudAdminProxy != nil {
+		h.cloudAdminProxy.Forward(w, r)
+		return
+	}
+
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin/users/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
@@ -294,6 +309,11 @@ func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleInvitations(w http.ResponseWriter, r *http.Request) {
+	if h.cloudAdminProxy != nil {
+		h.cloudAdminProxy.Forward(w, r)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		items, err := h.service.ListInvitationCodes(r.Context())
@@ -322,6 +342,11 @@ func (h *Handler) handleInvitations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleInvitationByID(w http.ResponseWriter, r *http.Request) {
+	if h.cloudAdminProxy != nil {
+		h.cloudAdminProxy.Forward(w, r)
+		return
+	}
+
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin/invitations/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) != 1 || strings.TrimSpace(parts[0]) == "" {

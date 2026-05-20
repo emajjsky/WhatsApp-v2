@@ -58,6 +58,12 @@ type TranslationState = {
   translation?: TranslationView
 }
 
+type AssistantReplyOption = {
+  title: string
+  strategy?: string
+  content: string
+}
+
 type StoredMessageTranslation = {
   cached_at: string
   translation: TranslationView
@@ -130,6 +136,8 @@ export function ChatsPage() {
   const [composeNotice, setComposeNotice] = useState<string>()
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [assistantRun, setAssistantRun] = useState<AgentRunView>()
+  const [assistantRawDraft, setAssistantRawDraft] = useState('')
+  const [assistantReplyOptions, setAssistantReplyOptions] = useState<AssistantReplyOption[]>([])
   const [assistantDraft, setAssistantDraft] = useState('')
   const [messageTranslations, setMessageTranslations] =
     useState<Record<string, TranslationState>>(loadMessageTranslationCache)
@@ -354,6 +362,8 @@ export function ChatsPage() {
 
   useEffect(() => {
     setAssistantRun(undefined)
+    setAssistantRawDraft('')
+    setAssistantReplyOptions([])
     setAssistantDraft('')
     setTranslatedDraft('')
     setAssistantNotice(undefined)
@@ -725,6 +735,8 @@ export function ChatsPage() {
     setAssistantNotice(undefined)
     setError(undefined)
     setAssistantRun(undefined)
+    setAssistantRawDraft('')
+    setAssistantReplyOptions([])
     setAssistantDraft('')
     setTranslatedDraft('')
 
@@ -734,6 +746,7 @@ export function ChatsPage() {
         return
       }
 
+      let streamedDraft = ''
       await streamGenerateAgentRun(
         {
           chat_id: selectedChatId,
@@ -746,17 +759,30 @@ export function ChatsPage() {
             setAssistantRun(run)
           },
           onDelta: (text) => {
-            setAssistantDraft((current) => current + text)
+            streamedDraft += text
+            setAssistantRawDraft(streamedDraft)
           },
           onComplete: (run) => {
             setAssistantRun(run)
-            setAssistantDraft((current) => run.output_draft ?? current)
-            setAssistantNotice(getAssistantRunNotice(run))
+            const finalDraft = run.output_draft ?? streamedDraft
+            const options = parseAssistantReplyOptions(finalDraft)
+            setAssistantRawDraft(finalDraft)
+            setAssistantReplyOptions(options)
+            setAssistantDraft(options.length ? '' : finalDraft)
+            setAssistantNotice(
+              options.length
+                ? getAssistantRunNotice(run)
+                : `${getAssistantRunNotice(run)} 未识别到三方案 JSON，已放入草稿。`,
+            )
           },
           onError: (message, run) => {
             if (run) {
               setAssistantRun(run)
-              setAssistantDraft((current) => run.output_draft ?? current)
+              const finalDraft = run.output_draft ?? streamedDraft
+              const options = parseAssistantReplyOptions(finalDraft)
+              setAssistantRawDraft(finalDraft)
+              setAssistantReplyOptions(options)
+              setAssistantDraft(options.length ? '' : finalDraft)
             }
             setAssistantNotice(message)
           },
@@ -797,7 +823,6 @@ export function ChatsPage() {
         message_text: outboundDraft,
       })
       setAssistantRun(response.run)
-      setAssistantDraft(response.run.output_draft ?? assistantDraft)
       setAssistantNotice('Agent 草稿已发送。')
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
@@ -995,22 +1020,76 @@ export function ChatsPage() {
         <section className="panel chat-main-panel whatsapp-chat-main">
           {selectedChat && history ? (
             <>
-              <div className="chat-stage-header whatsapp-chat-stage-header">
-                <div className="whatsapp-chat-contact">
-                  <div className="whatsapp-chat-avatar large" aria-hidden="true">
-                    {getChatAvatarLabel(getChatDisplayName(history.chat))}
+              <section className="chat-status-strip whatsapp-chat-status-strip">
+                <div className="chat-status-strip-header">
+                  <div className="assistant-title-stack">
+                    <span className="assistant-section-label">用户状态卡</span>
+                    {statusCard ? (
+                      <span className="assistant-muted-count">{statusCard.message_count} 条记录</span>
+                    ) : (
+                      <span className="assistant-muted-count">{history.messages.length} 条已加载消息</span>
+                    )}
                   </div>
-                  <div>
-                    <h3>{getChatDisplayName(history.chat)}</h3>
-                    <p className="subtle-text">{history.chat.wa_chat_jid}</p>
+                  <div className="chat-status-actions">
+                    <StatusBadge status={history.chat.chat_type} />
+                    <button
+                      className="secondary-button assistant-mini-button"
+                      type="button"
+                      onClick={() => void handleAnalyzeStatusCard()}
+                      disabled={!canAnalyzeStatusCard}
+                    >
+                      {statusCardBusy ? '分析中...' : statusCard ? '重分析' : '分析'}
+                    </button>
                   </div>
                 </div>
 
-                <div className="chat-stage-meta whatsapp-chat-stage-meta">
-                  <StatusBadge status={history.chat.chat_type} />
-                  <span>{history.messages.length} 条已加载消息</span>
-                </div>
-              </div>
+                {agentConfigsLoading ? (
+                  <div className="warning-banner">加载中...</div>
+                ) : !activeStatusCardAgent ? (
+                  <div className="warning-banner">未启用状态卡智能体。</div>
+                ) : statusCard ? (
+                  <div className="chat-status-grid">
+                    <div className="assistant-status-metrics compact">
+                      <StatusMetric label="当前阶段" value={statusCard.current_stage || '未判断'} />
+                      <StatusMetric
+                        label="当前风险"
+                        value={statusCard.current_risk || '未判断'}
+                        tone={getRiskTone(statusCard.current_risk)}
+                      />
+                    </div>
+                    <div className="assistant-status-group compact">
+                      <span>客户类型</span>
+                      <div className="assistant-chip-row">
+                        {(statusCard.customer_types.length ? statusCard.customer_types : ['未判断']).map((item) => (
+                          <span className="toolbar-chip" key={item}>
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="assistant-status-text-scroll">
+                      {statusCard.summary ? <p className="assistant-status-summary">{statusCard.summary}</p> : null}
+                      {statusCard.next_action ? (
+                        <div className="assistant-next-action inline">
+                          <span>下一步</span>
+                          <p>{statusCard.next_action}</p>
+                        </div>
+                      ) : null}
+                      {statusCard.evidence.length ? (
+                        <ul className="assistant-evidence-list">
+                          {statusCard.evidence.slice(0, 3).map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="assistant-status-empty">未分析</p>
+                )}
+
+                {statusCardNotice ? <div className="warning-banner">{statusCardNotice}</div> : null}
+              </section>
 
               <div className="whatsapp-history-toolbar">
                 {history.has_more ? (
@@ -1198,6 +1277,8 @@ export function ChatsPage() {
                   onChange={(event) => {
                     setSelectedReplyAgentId(event.target.value)
                     setAssistantRun(undefined)
+                    setAssistantRawDraft('')
+                    setAssistantReplyOptions([])
                     setAssistantDraft('')
                     setTranslatedDraft('')
                   }}
@@ -1233,6 +1314,15 @@ export function ChatsPage() {
                   }}
                 />
               </label>
+
+              <button
+                className="secondary-button assistant-header-generate"
+                type="button"
+                onClick={() => void handleGenerateAssistantDraft()}
+                disabled={!canGenerateAssistantDraft}
+              >
+                {assistantBusy ? '生成中...' : '生成回复建议'}
+              </button>
             </div>
           </div>
 
@@ -1246,17 +1336,6 @@ export function ChatsPage() {
                     <div className="warning-banner">未启用回复智能体。</div>
                   )}
 
-                  {replyAgents.length ? (
-                    <button
-                      className="secondary-button assistant-action-button"
-                      type="button"
-                      onClick={() => void handleGenerateAssistantDraft()}
-                      disabled={!canGenerateAssistantDraft}
-                    >
-                      {assistantBusy ? '生成中...' : '生成回复建议'}
-                    </button>
-                  ) : null}
-
                   {assistantRun ? (
                     <div className="assistant-chip-row">
                       <StatusBadge status={assistantRun.status} />
@@ -1264,9 +1343,51 @@ export function ChatsPage() {
                   ) : null}
                 </section>
 
+                <section className="assistant-card assistant-options-card">
+                  <div className="assistant-card-header-row">
+                    <span className="assistant-section-label">回复方案</span>
+                    {assistantReplyOptions.length ? (
+                      <span className="assistant-muted-count">{assistantReplyOptions.length} 个策略</span>
+                    ) : null}
+                  </div>
+
+                  {assistantReplyOptions.length ? (
+                    <div className="assistant-option-list">
+                      {assistantReplyOptions.map((option, index) => (
+                        <article className="assistant-option-card" key={`${option.title}-${index}`}>
+                          <div className="assistant-option-header">
+                            <div>
+                              <strong>{option.title || `回复方案 ${index + 1}`}</strong>
+                              {option.strategy ? <span>{option.strategy}</span> : null}
+                            </div>
+                            <button
+                              className="secondary-button assistant-mini-button"
+                              type="button"
+                              onClick={() => {
+                                setAssistantDraft(option.content)
+                                setTranslatedDraft('')
+                                setAssistantNotice(`已采纳${option.title || `方案 ${index + 1}`}。`)
+                              }}
+                            >
+                              采纳
+                            </button>
+                          </div>
+                          <p>{option.content}</p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="assistant-status-empty">
+                      {assistantBusy || assistantRawDraft ? '正在等待标准 JSON 输出...' : '生成后显示三套回复策略。'}
+                    </p>
+                  )}
+                </section>
+              </div>
+
+              <div className="assistant-draft-column">
                 <section className="assistant-card assistant-draft-card">
                   <div className="assistant-card-header-row">
-                    <span className="assistant-section-label">草稿</span>
+                    <span className="assistant-section-label">采纳区</span>
                     <div className="assistant-inline-actions">
                       <button
                         className="secondary-button assistant-mini-button"
@@ -1291,7 +1412,7 @@ export function ChatsPage() {
                     ref={assistantDraftRef}
                     value={assistantDraft}
                     onChange={(event) => setAssistantDraft(event.target.value)}
-                    placeholder="生成后会出现在这里"
+                    placeholder="点击左侧方案的采纳，或直接在这里编辑草稿"
                     rows={7}
                   />
                   <div className="assistant-translation-row">
@@ -1336,73 +1457,6 @@ export function ChatsPage() {
                   {assistantNotice ? <div className="success-banner">{assistantNotice}</div> : null}
                 </section>
               </div>
-
-              <div className="assistant-status-column">
-                <section className="assistant-card assistant-status-card">
-                  <div className="assistant-card-header-row">
-                    <div className="assistant-title-stack">
-                      <span className="assistant-section-label">用户状态卡</span>
-                      {statusCard ? (
-                        <span className="assistant-muted-count">{statusCard.message_count} 条记录</span>
-                      ) : null}
-                    </div>
-                    <button
-                      className="secondary-button assistant-mini-button"
-                      type="button"
-                      onClick={() => void handleAnalyzeStatusCard()}
-                      disabled={!canAnalyzeStatusCard}
-                    >
-                      {statusCardBusy ? '分析中...' : statusCard ? '重分析' : '分析'}
-                    </button>
-                  </div>
-
-                  {agentConfigsLoading ? (
-                    <div className="warning-banner">加载中...</div>
-                  ) : !activeStatusCardAgent ? (
-                    <div className="warning-banner">未启用状态卡智能体。</div>
-                  ) : statusCard ? (
-                    <div className="assistant-status-body">
-                      <div className="assistant-status-metrics">
-                        <StatusMetric label="当前阶段" value={statusCard.current_stage || '未判断'} />
-                        <StatusMetric
-                          label="当前风险"
-                          value={statusCard.current_risk || '未判断'}
-                          tone={getRiskTone(statusCard.current_risk)}
-                        />
-                      </div>
-                      <div className="assistant-status-group">
-                        <span>客户类型</span>
-                        <div className="assistant-chip-row">
-                          {(statusCard.customer_types.length ? statusCard.customer_types : ['未判断']).map((item) => (
-                            <span className="toolbar-chip" key={item}>
-                              {item}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      {statusCard.summary ? <p className="assistant-status-summary">{statusCard.summary}</p> : null}
-                      {statusCard.evidence.length ? (
-                        <ul className="assistant-evidence-list">
-                          {statusCard.evidence.slice(0, 3).map((item) => (
-                            <li key={item}>{item}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                      {statusCard.next_action ? (
-                        <div className="assistant-next-action">
-                          <span>下一步</span>
-                          <p>{statusCard.next_action}</p>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="assistant-status-empty">未分析</p>
-                  )}
-
-                  {statusCardNotice ? <div className="warning-banner">{statusCardNotice}</div> : null}
-                </section>
-              </div>
-
             </div>
           ) : (
             <EmptyPanel title="先选一个会话" description="右侧助手会基于当前聊天上下文工作。" />
@@ -1874,6 +1928,92 @@ function resolveLanguageOption(code?: string, name?: string) {
 
 function getOutboundDraft(chineseDraft: string, translatedText: string) {
   return (translatedText.trim() || chineseDraft.trim())
+}
+
+function parseAssistantReplyOptions(rawDraft: string): AssistantReplyOption[] {
+  const text = rawDraft.trim()
+  if (!text) {
+    return []
+  }
+
+  const decoded = parseJsonObjectFromText(text)
+  const source = decoded?.replies ?? decoded?.reply_options ?? decoded?.options
+  if (Array.isArray(source)) {
+    return source
+      .map((item, index) => normalizeAssistantReplyOption(item, index))
+      .filter((item): item is AssistantReplyOption => Boolean(item?.content))
+      .slice(0, 3)
+  }
+
+  return parseFallbackReplyOptions(text)
+}
+
+function parseJsonObjectFromText(text: string): Record<string, unknown> | undefined {
+  try {
+    const decoded = JSON.parse(text)
+    return isPlainRecord(decoded) ? decoded : undefined
+  } catch {
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start < 0 || end <= start) {
+      return undefined
+    }
+    try {
+      const decoded = JSON.parse(text.slice(start, end + 1))
+      return isPlainRecord(decoded) ? decoded : undefined
+    } catch {
+      return undefined
+    }
+  }
+}
+
+function normalizeAssistantReplyOption(value: unknown, index: number): AssistantReplyOption | undefined {
+  if (typeof value === 'string') {
+    const content = value.trim()
+    return content ? { title: `回复方案 ${index + 1}`, content } : undefined
+  }
+  if (!isPlainRecord(value)) {
+    return undefined
+  }
+
+  const content = readStringField(value, ['content', 'reply', 'text', 'message'])
+  if (!content) {
+    return undefined
+  }
+
+  return {
+    title: readStringField(value, ['title', 'name']) || `回复方案 ${index + 1}`,
+    strategy: readStringField(value, ['strategy', 'reason', 'angle']),
+    content,
+  }
+}
+
+function parseFallbackReplyOptions(text: string): AssistantReplyOption[] {
+  const matches = Array.from(
+    text.matchAll(/(?:^|\n)\s*(?:回复方案|方案)\s*([1-3一二三])\s*[：:]\s*([\s\S]*?)(?=\n\s*(?:回复方案|方案)\s*[1-3一二三]\s*[：:]|$)/g),
+  )
+
+  return matches
+    .map((match, index) => ({
+      title: `回复方案 ${index + 1}`,
+      content: (match[2] ?? '').trim(),
+    }))
+    .filter((item) => item.content)
+    .slice(0, 3)
+}
+
+function readStringField(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+  return ''
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function formatDateTime(value?: string) {

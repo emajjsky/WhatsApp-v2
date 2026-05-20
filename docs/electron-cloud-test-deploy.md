@@ -123,7 +123,7 @@ npm run dist:win
 生成文件：
 
 ```text
-desktop/release/WhatsApp Agent Setup 0.1.6.exe
+desktop/release/WhatsApp Agent Setup 0.1.8.exe
 ```
 
 ## 桌面端 WhatsApp 网络

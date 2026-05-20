@@ -261,6 +261,11 @@ func (h *Handler) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSystemConfigs(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminSystemConfigs(w, r)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		items, err := h.service.ListSystemConfigs(r.Context())
@@ -290,6 +295,11 @@ func (h *Handler) handleSystemConfigs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleSystemConfigByID(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminSystemConfigs(w, r)
+		return
+	}
+
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin/agent-configs/")
 	id := strings.Trim(path, "/")
 	if id == "" {

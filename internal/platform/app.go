@@ -96,6 +96,9 @@ func New(cfg config.Config) (*App, error) {
 			_ = database.Close()
 			return nil, err
 		}
+		if cfg.Integrations.CloudAuthBaseURL != "" {
+			authHandler.SetCloudAdminProxy(auth.NewCloudAdminProxy(cfg.Integrations.CloudAuthBaseURL, authService))
+		}
 
 		accountRepo, err := accounts.NewRepository(database.DB())
 		if err != nil {

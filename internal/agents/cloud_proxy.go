@@ -227,6 +227,36 @@ func (p *CloudProxy) HandleAvailableSystemConfigs(w http.ResponseWriter, r *http
 	_, _ = io.Copy(w, resp.Body)
 }
 
+func (p *CloudProxy) HandleAdminSystemConfigs(w http.ResponseWriter, r *http.Request) {
+	req, err := p.newCloudRequest(r.Context(), r, r.Method, r.URL.Path, r.Body)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.URL.RawQuery = r.URL.RawQuery
+	if contentType := strings.TrimSpace(r.Header.Get("Content-Type")); contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if accept := strings.TrimSpace(r.Header.Get("Accept")); accept != "" {
+		req.Header.Set("Accept", accept)
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, fmt.Sprintf("call cloud admin agent configs: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 func (p *CloudProxy) prepareDraftPayload(r *http.Request) (DesktopAgentDraftInput, preparedManualRun, error) {
 	var payload struct {
 		ChatID              string  `json:"chat_id"`
