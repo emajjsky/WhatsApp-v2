@@ -64,6 +64,18 @@ type AssistantReplyOption = {
   content: string
 }
 
+type AssistantWorkspaceState = {
+  run?: AgentRunView
+  rawDraft: string
+  replyOptions: AssistantReplyOption[]
+  adoptedReplyIndex?: number
+  draft: string
+  translatedDraft: string
+  targetLanguage: string
+  targetLanguageName: string
+  notice?: string
+}
+
 type StoredMessageTranslation = {
   cached_at: string
   translation: TranslationView
@@ -90,6 +102,9 @@ const languageOptions = [
   { code: 'fr', name: '法语' },
   { code: 'pt', name: '葡萄牙语' },
 ]
+
+const defaultDraftLanguage = languageOptions[0]
+const defaultAssistantContextLimit = 20
 
 const attachmentActions: Array<{
   key: AttachmentAction
@@ -128,7 +143,6 @@ export function ChatsPage() {
   const deferredSearch = useDeferredValue(search)
   const [selectedChatId, setSelectedChatId] = useState<string>()
   const [history, setHistory] = useState<MessageHistoryResponse>()
-  const [listLoading, setListLoading] = useState(true)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [sending, setSending] = useState(false)
   const [draftMessage, setDraftMessage] = useState('')
@@ -138,15 +152,16 @@ export function ChatsPage() {
   const [assistantRun, setAssistantRun] = useState<AgentRunView>()
   const [assistantRawDraft, setAssistantRawDraft] = useState('')
   const [assistantReplyOptions, setAssistantReplyOptions] = useState<AssistantReplyOption[]>([])
+  const [adoptedReplyIndex, setAdoptedReplyIndex] = useState<number>()
   const [assistantDraft, setAssistantDraft] = useState('')
   const [messageTranslations, setMessageTranslations] =
     useState<Record<string, TranslationState>>(loadMessageTranslationCache)
-  const [draftTargetLanguage, setDraftTargetLanguage] = useState('en')
-  const [draftTargetLanguageName, setDraftTargetLanguageName] = useState('英语')
+  const [draftTargetLanguage, setDraftTargetLanguage] = useState(defaultDraftLanguage.code)
+  const [draftTargetLanguageName, setDraftTargetLanguageName] = useState(defaultDraftLanguage.name)
   const [translatedDraft, setTranslatedDraft] = useState('')
   const [draftTranslationBusy, setDraftTranslationBusy] = useState(false)
   const [assistantContextEnabled, setAssistantContextEnabled] = useState(true)
-  const [assistantContextLimit, setAssistantContextLimit] = useState(12)
+  const [assistantContextLimit, setAssistantContextLimit] = useState(defaultAssistantContextLimit)
   const [replyAgents, setReplyAgents] = useState<SystemAgentConfigView[]>([])
   const [translationAgents, setTranslationAgents] = useState<SystemAgentConfigView[]>([])
   const [statusCardAgents, setStatusCardAgents] = useState<SystemAgentConfigView[]>([])
@@ -160,6 +175,8 @@ export function ChatsPage() {
   const [assistantNotice, setAssistantNotice] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
   const assistantDraftRef = useRef<HTMLTextAreaElement>(null)
+  const assistantWorkspaceCacheRef = useRef<Record<string, AssistantWorkspaceState>>({})
+  const activeAssistantChatIdRef = useRef<string | undefined>(undefined)
   const composeAttachmentRef = useRef<HTMLDivElement>(null)
   const documentInputRef = useRef<HTMLInputElement>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
@@ -182,6 +199,84 @@ export function ChatsPage() {
     timeline.scrollTop = timeline.scrollHeight
     keepTimelinePinnedRef.current = true
   }, [])
+
+  const emptyAssistantWorkspace = useCallback(
+    (): AssistantWorkspaceState => ({
+      rawDraft: '',
+      replyOptions: [],
+      adoptedReplyIndex: undefined,
+      draft: '',
+      translatedDraft: '',
+      targetLanguage: defaultDraftLanguage.code,
+      targetLanguageName: defaultDraftLanguage.name,
+    }),
+    [],
+  )
+
+  const restoreAssistantWorkspace = useCallback((state: AssistantWorkspaceState) => {
+    setAssistantRun(state.run)
+    setAssistantRawDraft(state.rawDraft)
+    setAssistantReplyOptions(state.replyOptions)
+    setAdoptedReplyIndex(state.adoptedReplyIndex)
+    setAssistantDraft(state.draft)
+    setTranslatedDraft(state.translatedDraft)
+    setDraftTargetLanguage(state.targetLanguage)
+    setDraftTargetLanguageName(state.targetLanguageName)
+    setAssistantNotice(state.notice)
+  }, [])
+
+  const updateAssistantWorkspaceCache = useCallback((patch: Partial<AssistantWorkspaceState>) => {
+    const chatId = activeAssistantChatIdRef.current
+    if (!chatId) {
+      return
+    }
+    const current = assistantWorkspaceCacheRef.current[chatId] ?? emptyAssistantWorkspace()
+    assistantWorkspaceCacheRef.current[chatId] = {
+      ...current,
+      ...patch,
+    }
+  }, [emptyAssistantWorkspace])
+
+  const setAssistantRunState = useCallback((run?: AgentRunView) => {
+    setAssistantRun(run)
+    updateAssistantWorkspaceCache({ run })
+  }, [updateAssistantWorkspaceCache])
+
+  const setAssistantRawDraftState = useCallback((rawDraft: string) => {
+    setAssistantRawDraft(rawDraft)
+    updateAssistantWorkspaceCache({ rawDraft })
+  }, [updateAssistantWorkspaceCache])
+
+  const setAssistantReplyOptionsState = useCallback((replyOptions: AssistantReplyOption[]) => {
+    setAssistantReplyOptions(replyOptions)
+    updateAssistantWorkspaceCache({ replyOptions })
+  }, [updateAssistantWorkspaceCache])
+
+  const setAdoptedReplyIndexState = useCallback((nextAdoptedReplyIndex?: number) => {
+    setAdoptedReplyIndex(nextAdoptedReplyIndex)
+    updateAssistantWorkspaceCache({ adoptedReplyIndex: nextAdoptedReplyIndex })
+  }, [updateAssistantWorkspaceCache])
+
+  const setAssistantDraftState = useCallback((draft: string) => {
+    setAssistantDraft(draft)
+    updateAssistantWorkspaceCache({ draft })
+  }, [updateAssistantWorkspaceCache])
+
+  const setTranslatedDraftState = useCallback((nextTranslatedDraft: string) => {
+    setTranslatedDraft(nextTranslatedDraft)
+    updateAssistantWorkspaceCache({ translatedDraft: nextTranslatedDraft })
+  }, [updateAssistantWorkspaceCache])
+
+  const setDraftTargetLanguageState = useCallback((targetLanguage: string, targetLanguageName: string) => {
+    setDraftTargetLanguage(targetLanguage)
+    setDraftTargetLanguageName(targetLanguageName)
+    updateAssistantWorkspaceCache({ targetLanguage, targetLanguageName })
+  }, [updateAssistantWorkspaceCache])
+
+  const setAssistantNoticeState = useCallback((notice?: string) => {
+    setAssistantNotice(notice)
+    updateAssistantWorkspaceCache({ notice })
+  }, [updateAssistantWorkspaceCache])
 
   const loadAccountsList = useCallback(async () => {
     try {
@@ -223,7 +318,6 @@ export function ChatsPage() {
   const loadChatsList = useCallback(
     async (background = false) => {
       if (!background) {
-        setListLoading(true)
         setError(undefined)
       }
 
@@ -249,9 +343,7 @@ export function ChatsPage() {
           setError(loadError instanceof Error ? loadError.message : '加载会话失败')
         }
       } finally {
-        if (!background) {
-          setListLoading(false)
-        }
+        // Chat list refresh is silent after removing the header counter.
       }
     },
     [deferredSearch, selectedAccountId, selectedChatType],
@@ -361,15 +453,15 @@ export function ChatsPage() {
   }, [loadHistory, loadSavedStatusCard, selectedChatId])
 
   useEffect(() => {
-    setAssistantRun(undefined)
-    setAssistantRawDraft('')
-    setAssistantReplyOptions([])
-    setAssistantDraft('')
-    setTranslatedDraft('')
-    setAssistantNotice(undefined)
+    activeAssistantChatIdRef.current = selectedChatId
+    restoreAssistantWorkspace(
+      selectedChatId
+        ? assistantWorkspaceCacheRef.current[selectedChatId] ?? emptyAssistantWorkspace()
+        : emptyAssistantWorkspace(),
+    )
     setComposeNotice(undefined)
     setAttachmentMenuOpen(false)
-  }, [selectedChatId])
+  }, [emptyAssistantWorkspace, restoreAssistantWorkspace, selectedChatId])
 
   useEffect(() => {
     if (!attachmentMenuOpen) {
@@ -655,8 +747,7 @@ export function ChatsPage() {
           response.translation.source_language_code,
           response.translation.source_language_name,
         )
-        setDraftTargetLanguage(option.code)
-        setDraftTargetLanguageName(option.name)
+        setDraftTargetLanguageState(option.code, option.name)
       }
     } catch (translateError) {
       setMessageTranslations((current) => ({
@@ -675,13 +766,13 @@ export function ChatsPage() {
       return
     }
     if (translationAgents.length === 0) {
-      setAssistantNotice('管理员后台还没有启用翻译智能体')
+      setAssistantNoticeState('管理员后台还没有启用翻译智能体')
       return
     }
 
     const option = resolveLanguageOption(draftTargetLanguage, draftTargetLanguageName)
     setDraftTranslationBusy(true)
-    setTranslatedDraft('')
+    setTranslatedDraftState('')
 
     try {
       const response = await translateText({
@@ -690,10 +781,10 @@ export function ChatsPage() {
         target_language: option.code,
         target_language_name: option.name,
       })
-      setTranslatedDraft(response.translation.translated_text)
-      setAssistantNotice(`已翻译成${option.name}。`)
+      setTranslatedDraftState(response.translation.translated_text)
+      setAssistantNoticeState(`已翻译成${option.name}。`)
     } catch (translateError) {
-      setAssistantNotice(translateError instanceof Error ? translateError.message : '翻译草稿失败')
+      setAssistantNoticeState(translateError instanceof Error ? translateError.message : '翻译草稿失败')
     } finally {
       setDraftTranslationBusy(false)
     }
@@ -732,17 +823,18 @@ export function ChatsPage() {
     }
 
     setAssistantBusy(true)
-    setAssistantNotice(undefined)
+    setAssistantNoticeState(undefined)
     setError(undefined)
-    setAssistantRun(undefined)
-    setAssistantRawDraft('')
-    setAssistantReplyOptions([])
-    setAssistantDraft('')
-    setTranslatedDraft('')
+    setAssistantRunState(undefined)
+    setAssistantRawDraftState('')
+    setAssistantReplyOptionsState([])
+    setAdoptedReplyIndexState(undefined)
+    setAssistantDraftState('')
+    setTranslatedDraftState('')
 
     try {
       if (!selectedReplyAgentId) {
-        setAssistantNotice('请先选择回复智能体')
+        setAssistantNoticeState('请先选择回复智能体')
         return
       }
 
@@ -756,20 +848,20 @@ export function ChatsPage() {
         },
         {
           onStart: (run) => {
-            setAssistantRun(run)
+            setAssistantRunState(run)
           },
           onDelta: (text) => {
             streamedDraft += text
-            setAssistantRawDraft(streamedDraft)
+            setAssistantRawDraftState(streamedDraft)
           },
           onComplete: (run) => {
-            setAssistantRun(run)
+            setAssistantRunState(run)
             const finalDraft = run.output_draft ?? streamedDraft
             const options = parseAssistantReplyOptions(finalDraft)
-            setAssistantRawDraft(finalDraft)
-            setAssistantReplyOptions(options)
-            setAssistantDraft(options.length ? '' : finalDraft)
-            setAssistantNotice(
+            setAssistantRawDraftState(finalDraft)
+            setAssistantReplyOptionsState(options)
+            setAssistantDraftState(options.length ? '' : finalDraft)
+            setAssistantNoticeState(
               options.length
                 ? getAssistantRunNotice(run)
                 : `${getAssistantRunNotice(run)} 未识别到三方案 JSON，已放入草稿。`,
@@ -777,14 +869,14 @@ export function ChatsPage() {
           },
           onError: (message, run) => {
             if (run) {
-              setAssistantRun(run)
+              setAssistantRunState(run)
               const finalDraft = run.output_draft ?? streamedDraft
               const options = parseAssistantReplyOptions(finalDraft)
-              setAssistantRawDraft(finalDraft)
-              setAssistantReplyOptions(options)
-              setAssistantDraft(options.length ? '' : finalDraft)
+              setAssistantRawDraftState(finalDraft)
+              setAssistantReplyOptionsState(options)
+              setAssistantDraftState(options.length ? '' : finalDraft)
             }
-            setAssistantNotice(message)
+            setAssistantNoticeState(message)
           },
         },
       )
@@ -805,7 +897,7 @@ export function ChatsPage() {
     }
 
     setDraftMessage(content)
-    setAssistantNotice('已写回输入框，发送前还能继续改。')
+    setAssistantNoticeState('已写回输入框，发送前还能继续改。')
   }
 
   async function handleSendAssistantDraft() {
@@ -815,15 +907,15 @@ export function ChatsPage() {
     }
 
     setAssistantSending(true)
-    setAssistantNotice(undefined)
+    setAssistantNoticeState(undefined)
     setError(undefined)
 
     try {
       const response = await sendAgentRun(assistantRun.id, {
         message_text: outboundDraft,
       })
-      setAssistantRun(response.run)
-      setAssistantNotice('Agent 草稿已发送。')
+      setAssistantRunState(response.run)
+      setAssistantNoticeState('Agent 草稿已发送。')
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
       void loadHistory(selectedChatId, true)
@@ -926,18 +1018,23 @@ export function ChatsPage() {
     history && !canSendInCurrentChat
       ? getChatSendBlockedReason(history.chat.wa_chat_jid, history.chat.chat_type)
       : undefined
+  const assistantStageLabel =
+    adoptedReplyIndex !== undefined
+      ? '已采纳'
+      : assistantReplyOptions.length > 0
+        ? '待采纳'
+        : '待生成'
+  const assistantStageTone =
+    adoptedReplyIndex !== undefined
+      ? 'adopted'
+      : assistantReplyOptions.length > 0
+        ? 'ready'
+        : 'pending'
 
   return (
     <div className="page page-chats whatsapp-chat-page">
       <section className="chat-frame whatsapp-chat-frame">
         <aside className="panel chat-sidebar-panel whatsapp-chat-sidebar">
-          <div className="whatsapp-chat-sidebar-header">
-            <div>
-              <h2>聊天</h2>
-            </div>
-            <span className="subtle-text">{listLoading ? '同步中...' : `${chats.length} 个会话`}</span>
-          </div>
-
           <label className="field whatsapp-chat-search-field">
             <span className="visually-hidden">搜索会话</span>
             <input
@@ -1021,61 +1118,67 @@ export function ChatsPage() {
           {selectedChat && history ? (
             <>
               <section className="chat-status-strip whatsapp-chat-status-strip">
-                <div className="chat-status-strip-header">
-                  <div className="assistant-title-stack">
-                    <span className="assistant-section-label">用户状态卡</span>
-                    {statusCard ? (
-                      <span className="assistant-muted-count">{statusCard.message_count} 条记录</span>
-                    ) : (
-                      <span className="assistant-muted-count">{history.messages.length} 条已加载消息</span>
-                    )}
-                  </div>
-                  <div className="chat-status-actions">
-                    <StatusBadge status={history.chat.chat_type} />
-                    <button
-                      className="secondary-button assistant-mini-button"
-                      type="button"
-                      onClick={() => void handleAnalyzeStatusCard()}
-                      disabled={!canAnalyzeStatusCard}
-                    >
-                      {statusCardBusy ? '分析中...' : statusCard ? '重分析' : '分析'}
-                    </button>
-                  </div>
-                </div>
-
                 {agentConfigsLoading ? (
                   <div className="warning-banner">加载中...</div>
                 ) : !activeStatusCardAgent ? (
                   <div className="warning-banner">未启用状态卡智能体。</div>
-                ) : statusCard ? (
-                  <div className="chat-status-grid">
-                    <div className="assistant-status-metrics compact">
-                      <StatusMetric label="当前阶段" value={statusCard.current_stage || '未判断'} />
+                ) : (
+                  <div className="chat-status-card-grid">
+                    <div className="chat-status-top-row">
+                      <div className="chat-status-title-row">
+                        <span>用户状态卡</span>
+                        {statusCard ? (
+                          <span>{statusCard.message_count} 条记录</span>
+                        ) : (
+                          <span>{history.messages.length} 条已加载消息</span>
+                        )}
+                      </div>
+                      <StatusBadge status={history.chat.chat_type} />
+                      <button
+                        className="primary-button assistant-mini-button chat-status-analyze-button"
+                        type="button"
+                        onClick={() => void handleAnalyzeStatusCard()}
+                        disabled={!canAnalyzeStatusCard}
+                      >
+                        {statusCardBusy ? '分析中...' : statusCard ? '重分析' : '分析'}
+                      </button>
+                    </div>
+                    <div className="chat-status-overview-row">
+                      <StatusMetric label="当前阶段" value={statusCard?.current_stage || '未判断'} />
                       <StatusMetric
                         label="当前风险"
-                        value={statusCard.current_risk || '未判断'}
-                        tone={getRiskTone(statusCard.current_risk)}
+                        value={statusCard?.current_risk || '未判断'}
+                        tone={getRiskTone(statusCard?.current_risk || '')}
                       />
-                    </div>
-                    <div className="assistant-status-group compact">
-                      <span>客户类型</span>
-                      <div className="assistant-chip-row">
-                        {(statusCard.customer_types.length ? statusCard.customer_types : ['未判断']).map((item) => (
-                          <span className="toolbar-chip" key={item}>
-                            {item}
-                          </span>
-                        ))}
+                      <div className="assistant-status-metric assistant-status-type-metric">
+                        <span>客户类型</span>
+                        <div className="assistant-chip-row">
+                          {(statusCard?.customer_types.length ? statusCard.customer_types : ['未判断']).map(
+                            (item) => (
+                              <span className="toolbar-chip" key={item}>
+                                {item}
+                              </span>
+                            ),
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="assistant-status-text-scroll">
-                      {statusCard.summary ? <p className="assistant-status-summary">{statusCard.summary}</p> : null}
-                      {statusCard.next_action ? (
-                        <div className="assistant-next-action inline">
-                          <span>下一步</span>
-                          <p>{statusCard.next_action}</p>
-                        </div>
+                      {statusCard?.summary ? (
+                        <p className="assistant-status-summary">
+                          <strong>摘要</strong>
+                          <span>{statusCard.summary}</span>
+                        </p>
+                      ) : (
+                        <p className="assistant-status-empty">点击分析后显示客户状态摘要。</p>
+                      )}
+                      {statusCard?.next_action ? (
+                        <p className="assistant-status-summary">
+                          <strong>建议</strong>
+                          <span>{statusCard.next_action}</span>
+                        </p>
                       ) : null}
-                      {statusCard.evidence.length ? (
+                      {statusCard?.evidence.length ? (
                         <ul className="assistant-evidence-list">
                           {statusCard.evidence.slice(0, 3).map((item) => (
                             <li key={item}>{item}</li>
@@ -1084,8 +1187,6 @@ export function ChatsPage() {
                       ) : null}
                     </div>
                   </div>
-                ) : (
-                  <p className="assistant-status-empty">未分析</p>
                 )}
 
                 {statusCardNotice ? <div className="warning-banner">{statusCardNotice}</div> : null}
@@ -1266,21 +1367,20 @@ export function ChatsPage() {
 
         <aside className="panel chat-assistant-panel whatsapp-chat-assistant">
           <div className="whatsapp-assistant-header">
-            <div className="assistant-header-title">
-              <h3>AI 助手</h3>
-            </div>
             <div className="assistant-header-controls">
+              <span className="assistant-toolbar-title">选择智能体客服</span>
               {replyAgents.length ? (
                 <select
                   className="assistant-header-select"
                   value={selectedReplyAgentId}
                   onChange={(event) => {
                     setSelectedReplyAgentId(event.target.value)
-                    setAssistantRun(undefined)
-                    setAssistantRawDraft('')
-                    setAssistantReplyOptions([])
-                    setAssistantDraft('')
-                    setTranslatedDraft('')
+                    setAssistantRunState(undefined)
+                    setAssistantRawDraftState('')
+                    setAssistantReplyOptionsState([])
+                    setAdoptedReplyIndexState(undefined)
+                    setAssistantDraftState('')
+                    setTranslatedDraftState('')
                   }}
                   disabled={assistantBusy}
                 >
@@ -1290,7 +1390,9 @@ export function ChatsPage() {
                     </option>
                   ))}
                 </select>
-              ) : null}
+              ) : (
+                <span className="assistant-header-empty">未配置</span>
+              )}
 
               <label className="checkbox-row assistant-context-toggle">
                 <input
@@ -1302,6 +1404,7 @@ export function ChatsPage() {
               </label>
 
               <label className="field compact-field assistant-context-limit-field">
+                <span>历史对话（轮）</span>
                 <input
                   type="number"
                   min={1}
@@ -1310,13 +1413,13 @@ export function ChatsPage() {
                   disabled={!assistantContextEnabled}
                   onChange={(event) => {
                     const next = Number(event.target.value)
-                    setAssistantContextLimit(Number.isFinite(next) ? next : 12)
+                    setAssistantContextLimit(Number.isFinite(next) ? next : defaultAssistantContextLimit)
                   }}
                 />
               </label>
 
               <button
-                className="secondary-button assistant-header-generate"
+                className="primary-button assistant-header-generate"
                 type="button"
                 onClick={() => void handleGenerateAssistantDraft()}
                 disabled={!canGenerateAssistantDraft}
@@ -1329,7 +1432,7 @@ export function ChatsPage() {
           {selectedChat && history ? (
             <div className="assistant-panel-body whatsapp-assistant-body">
               <div className="assistant-reply-column">
-                <section className="assistant-card assistant-reply-card">
+                <section className="assistant-run-strip">
                   {agentConfigsLoading ? (
                     <div className="warning-banner">加载中...</div>
                   ) : replyAgents.length ? null : (
@@ -1346,40 +1449,81 @@ export function ChatsPage() {
                 <section className="assistant-card assistant-options-card">
                   <div className="assistant-card-header-row">
                     <span className="assistant-section-label">回复方案</span>
-                    {assistantReplyOptions.length ? (
-                      <span className="assistant-muted-count">{assistantReplyOptions.length} 个策略</span>
-                    ) : null}
+                    <span className={`assistant-stage-pill stage-${assistantStageTone}`}>
+                      {assistantStageLabel}
+                    </span>
                   </div>
 
                   {assistantReplyOptions.length ? (
                     <div className="assistant-option-list">
-                      {assistantReplyOptions.map((option, index) => (
-                        <article className="assistant-option-card" key={`${option.title}-${index}`}>
+                      {[0, 1, 2].map((index) => {
+                        const option = assistantReplyOptions[index]
+                        const isAdopted = adoptedReplyIndex === index
+                        return option ? (
+                          <article
+                            className={`assistant-option-card${isAdopted ? ' adopted' : ''}`}
+                            key={`${option.title}-${index}`}
+                          >
+                            <div className="assistant-option-header">
+                              <div>
+                                <strong>{option.title || `回复方案 ${index + 1}`}</strong>
+                                {option.strategy ? <span>{option.strategy}</span> : null}
+                              </div>
+                              <button
+                                className={`secondary-button assistant-mini-button assistant-adopt-button${isAdopted ? ' adopted' : ''}`}
+                                type="button"
+                                onClick={() => {
+                                  setAssistantDraftState(option.content)
+                                  setTranslatedDraftState('')
+                                  setAdoptedReplyIndexState(index)
+                                  setAssistantNoticeState(`已采纳${option.title || `方案 ${index + 1}`}。`)
+                                }}
+                                disabled={isAdopted}
+                              >
+                                {isAdopted ? '已采纳' : '采纳'}
+                              </button>
+                            </div>
+                            <p>{option.content}</p>
+                          </article>
+                        ) : (
+                          <article className="assistant-option-card assistant-option-placeholder-card" key={index}>
+                            <div className="assistant-option-header">
+                              <div>
+                                <strong>{`回复方案 ${index + 1}`}</strong>
+                                <span>待生成</span>
+                              </div>
+                              <button className="secondary-button assistant-mini-button" type="button" disabled>
+                                待生成
+                              </button>
+                            </div>
+                            <p>生成后显示第 {index + 1} 套回复策略。</p>
+                          </article>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="assistant-option-list assistant-option-placeholder-list">
+                      {[0, 1, 2].map((index) => (
+                        <article className="assistant-option-card assistant-option-placeholder-card" key={index}>
                           <div className="assistant-option-header">
                             <div>
-                              <strong>{option.title || `回复方案 ${index + 1}`}</strong>
-                              {option.strategy ? <span>{option.strategy}</span> : null}
+                              <strong>{`回复方案 ${index + 1}`}</strong>
+                              <span>{assistantBusy || assistantRawDraft ? '待生成内容' : '待生成'}</span>
                             </div>
-                            <button
-                              className="secondary-button assistant-mini-button"
-                              type="button"
-                              onClick={() => {
-                                setAssistantDraft(option.content)
-                                setTranslatedDraft('')
-                                setAssistantNotice(`已采纳${option.title || `方案 ${index + 1}`}。`)
-                              }}
-                            >
-                              采纳
+                            <button className="secondary-button assistant-mini-button" type="button" disabled>
+                              待生成
                             </button>
                           </div>
-                          <p>{option.content}</p>
+                          <p>
+                            {index === 0
+                              ? assistantBusy || assistantRawDraft
+                                ? '正在等待标准 JSON 输出...'
+                                : '生成后显示第一套回复策略。'
+                              : `生成后显示第 ${index + 1} 套回复策略。`}
+                          </p>
                         </article>
                       ))}
                     </div>
-                  ) : (
-                    <p className="assistant-status-empty">
-                      {assistantBusy || assistantRawDraft ? '正在等待标准 JSON 输出...' : '生成后显示三套回复策略。'}
-                    </p>
                   )}
                 </section>
               </div>
@@ -1388,30 +1532,18 @@ export function ChatsPage() {
                 <section className="assistant-card assistant-draft-card">
                   <div className="assistant-card-header-row">
                     <span className="assistant-section-label">采纳区</span>
-                    <div className="assistant-inline-actions">
-                      <button
-                        className="secondary-button assistant-mini-button"
-                        type="button"
-                        onClick={handleWriteAssistantDraft}
-                        disabled={!canUseAssistantDraft}
-                      >
-                        写回
-                      </button>
-                      <button
-                        className="primary-button assistant-mini-button"
-                        type="button"
-                        onClick={() => void handleSendAssistantDraft()}
-                        disabled={!canUseAssistantDraft || !canSendInCurrentChat || assistantSending}
-                      >
-                        {assistantSending ? '发送中...' : '发送'}
-                      </button>
-                    </div>
+                    <span className={`assistant-stage-pill stage-${assistantStageTone}`}>
+                      {assistantStageLabel}
+                    </span>
                   </div>
                   <textarea
                     className="assistant-draft-box"
                     ref={assistantDraftRef}
                     value={assistantDraft}
-                    onChange={(event) => setAssistantDraft(event.target.value)}
+                    onChange={(event) => {
+                      setAssistantDraftState(event.target.value)
+                      setAdoptedReplyIndexState(undefined)
+                    }}
                     placeholder="点击左侧方案的采纳，或直接在这里编辑草稿"
                     rows={7}
                   />
@@ -1422,9 +1554,8 @@ export function ChatsPage() {
                         value={draftTargetLanguage}
                         onChange={(event) => {
                           const option = resolveLanguageOption(event.target.value)
-                          setDraftTargetLanguage(option.code)
-                          setDraftTargetLanguageName(option.name)
-                          setTranslatedDraft('')
+                          setDraftTargetLanguageState(option.code, option.name)
+                          setTranslatedDraftState('')
                         }}
                       >
                         {languageOptions.map((option) => (
@@ -1435,7 +1566,7 @@ export function ChatsPage() {
                       </select>
                     </label>
                     <button
-                      className="secondary-button assistant-action-button"
+                      className="primary-button assistant-action-button"
                       type="button"
                       onClick={() => void translateDraftToTarget()}
                       disabled={!assistantDraft.trim() || translationAgents.length === 0 || draftTranslationBusy}
@@ -1443,14 +1574,31 @@ export function ChatsPage() {
                       {draftTranslationBusy ? '翻译中...' : '翻译草稿'}
                     </button>
                   </div>
-                  {translatedDraft ? (
-                    <textarea
-                      className="assistant-draft-box assistant-translated-draft"
-                      value={translatedDraft}
-                      onChange={(event) => setTranslatedDraft(event.target.value)}
-                      rows={5}
-                    />
-                  ) : null}
+                  <textarea
+                    className="assistant-draft-box assistant-translated-draft"
+                    value={translatedDraft}
+                    onChange={(event) => setTranslatedDraftState(event.target.value)}
+                    placeholder="翻译结果会显示在这里，也可以直接编辑。"
+                    rows={5}
+                  />
+                  <div className="assistant-submit-actions">
+                    <button
+                      className="secondary-button assistant-mini-button"
+                      type="button"
+                      onClick={handleWriteAssistantDraft}
+                      disabled={!canUseAssistantDraft}
+                    >
+                      写回
+                    </button>
+                    <button
+                      className="primary-button assistant-mini-button"
+                      type="button"
+                      onClick={() => void handleSendAssistantDraft()}
+                      disabled={!canUseAssistantDraft || !canSendInCurrentChat || assistantSending}
+                    >
+                      {assistantSending ? '发送中...' : '发送'}
+                    </button>
+                  </div>
                   {assistantRun?.block_reason ? (
                     <div className="warning-banner">{assistantRun.block_reason}</div>
                   ) : null}

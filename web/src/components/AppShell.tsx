@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { type UserPermission } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -20,6 +21,7 @@ const adminNavItems = [{ to: '/admin', label: '后台', icon: 'admin' as IconNam
 export function AppShell() {
   const auth = useAuth()
   const navigate = useNavigate()
+  const [appVersion, setAppVersion] = useState('')
   const userPermissions = new Set<UserPermission>(auth.user?.permissions ?? [])
   const visibleBaseNavItems = auth.cloudAdminOnly
     ? []
@@ -33,6 +35,35 @@ export function AppShell() {
     await auth.logout()
     navigate('/login', { replace: true })
   }
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadAppVersion() {
+      const desktopRuntime = (
+        window as Window & { desktopRuntime?: { appVersion?: () => Promise<string> } }
+      ).desktopRuntime
+      if (!desktopRuntime?.appVersion) {
+        return
+      }
+
+      try {
+        const version = await desktopRuntime.appVersion()
+        if (!cancelled) {
+          setAppVersion(version)
+        }
+      } catch {
+        if (!cancelled) {
+          setAppVersion('')
+        }
+      }
+    }
+
+    void loadAppVersion()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <div className="app-shell">
@@ -57,6 +88,7 @@ export function AppShell() {
         </nav>
 
         <section className="sidebar-note sidebar-note-compact">
+          {appVersion ? <span className="sidebar-version">v{appVersion}</span> : null}
           <button
             className="secondary-button sidebar-logout"
             type="button"

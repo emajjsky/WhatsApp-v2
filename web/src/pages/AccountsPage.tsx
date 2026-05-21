@@ -18,6 +18,7 @@ declare global {
   interface Window {
     desktopRuntime?: {
       platform: string
+      appVersion?: () => Promise<string>
       getConfig?: () => Promise<DesktopRuntimeConfig>
       saveConfig?: (config: Partial<DesktopRuntimeConfig>) => Promise<DesktopRuntimeConfig>
     }

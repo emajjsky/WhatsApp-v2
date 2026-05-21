@@ -556,6 +556,7 @@ function configureAppMenu() {
 }
 
 function registerDesktopIPC() {
+  ipcMain.handle('desktop-app:version', () => app.getVersion())
   ipcMain.handle('desktop-config:get', async () => desktopRuntimeConfigView())
   ipcMain.handle('desktop-config:save', async (_event, patch) => {
     writeDesktopConfig(patch && typeof patch === 'object' ? patch : {})
