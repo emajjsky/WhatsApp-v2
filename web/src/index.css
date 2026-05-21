@@ -1865,7 +1865,7 @@ a {
 
 .chat-status-top-row {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) auto auto;
+  grid-template-columns: minmax(130px, 1fr) auto auto auto;
   gap: 6px;
   align-items: center;
   min-width: 0;
@@ -1886,15 +1886,37 @@ a {
 }
 
 .chat-status-analyze-button {
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
   background: #25d366;
   border-color: #25d366;
   color: #063b22;
+  font-size: 10.5px;
   font-weight: 900;
 }
 
 .chat-status-analyze-button:hover:not(:disabled) {
   background: #22c55e;
   border-color: #22c55e;
+}
+
+.chat-status-collapse-button {
+  min-height: 24px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.chat-status-collapse-button .app-icon {
+  width: 13px;
+  height: 13px;
+  transition: transform 0.16s ease;
+}
+
+.rotate-180 {
+  transform: rotate(180deg);
 }
 
 .assistant-status-text-scroll {

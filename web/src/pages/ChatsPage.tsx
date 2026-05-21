@@ -80,6 +80,10 @@ type AssistantWorkspaceState = {
   notice?: string
 }
 
+type StoredAssistantWorkspace = AssistantWorkspaceState & {
+  cached_at: string
+}
+
 type StoredMessageTranslation = {
   cached_at: string
   translation: TranslationView
@@ -124,6 +128,8 @@ const attachmentActions: Array<{
 
 const messageTranslationCacheStorageKey = 'whatsapp.messageTranslations.v1'
 const messageTranslationCacheLimit = 800
+const assistantWorkspaceStorageKey = 'whatsapp.assistantWorkspace.v1'
+const assistantWorkspaceCacheLimit = 160
 
 function getAssistantRunNotice(run: AgentRunView) {
   if (run.status === 'ready_for_review') {
@@ -174,13 +180,16 @@ export function ChatsPage() {
   const [statusCard, setStatusCard] = useState<StatusCardView>()
   const [statusCardBusy, setStatusCardBusy] = useState(false)
   const [statusCardNotice, setStatusCardNotice] = useState<string>()
+  const [statusCardCollapsed, setStatusCardCollapsed] = useState(false)
   const [agentConfigsLoading, setAgentConfigsLoading] = useState(true)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [assistantSending, setAssistantSending] = useState(false)
   const [assistantNotice, setAssistantNotice] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
   const assistantDraftRef = useRef<HTMLTextAreaElement>(null)
-  const assistantWorkspaceCacheRef = useRef<Record<string, AssistantWorkspaceState>>({})
+  const assistantWorkspaceCacheRef = useRef<Record<string, StoredAssistantWorkspace>>(
+    readStoredAssistantWorkspaceCache(),
+  )
   const activeAssistantChatIdRef = useRef<string | undefined>(undefined)
   const composeAttachmentRef = useRef<HTMLDivElement>(null)
   const documentInputRef = useRef<HTMLInputElement>(null)
@@ -241,7 +250,9 @@ export function ChatsPage() {
     assistantWorkspaceCacheRef.current[chatId] = {
       ...current,
       ...patch,
+      cached_at: new Date().toISOString(),
     }
+    writeStoredAssistantWorkspaceCache(trimStoredAssistantWorkspaceCache(assistantWorkspaceCacheRef.current))
   }, [emptyAssistantWorkspace])
 
   const setAssistantRunState = useCallback((run?: AgentRunView) => {
@@ -912,8 +923,12 @@ export function ChatsPage() {
     }
 
     setDraftMessage(content)
-    const logged = await recordAssistantUsage('writeback')
-    setAssistantNoticeState(logged ? '已写回输入框，发送前还能继续改。' : '已写回输入框，AI使用记录保存失败。')
+    const logResult = await recordAssistantUsage('writeback')
+    setAssistantNoticeState(
+      logResult.ok
+        ? '已写回输入框，发送前还能继续改。'
+        : `已写回输入框，${logResult.error || 'AI使用记录保存失败。'}`,
+    )
   }
 
   async function handleSendAssistantDraft() {
@@ -931,8 +946,12 @@ export function ChatsPage() {
         message_text: outboundDraft,
       })
       setAssistantRunState(response.run)
-      const logged = await recordAssistantUsage('send')
-      setAssistantNoticeState(logged ? 'Agent 草稿已发送。' : 'Agent 草稿已发送，AI使用记录保存失败。')
+      const logResult = await recordAssistantUsage('send')
+      setAssistantNoticeState(
+        logResult.ok
+          ? 'Agent 草稿已发送。'
+          : `Agent 草稿已发送，${logResult.error || 'AI使用记录保存失败。'}`,
+      )
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
       void loadHistory(selectedChatId, true)
@@ -946,7 +965,7 @@ export function ChatsPage() {
 
   async function recordAssistantUsage(action: AssistantUsageAction) {
     if (!history || !selectedChat) {
-      return false
+      return { ok: false, error: 'AI使用记录保存失败。' }
     }
 
     const payload = buildAssistantUsagePayload({
@@ -965,15 +984,20 @@ export function ChatsPage() {
       draftTargetLanguageName,
     })
     if (!payload) {
-      return false
+      return { ok: false, error: 'AI使用记录保存失败。' }
     }
 
     try {
       await createAssistantUsageLog(payload)
-      return true
+      return { ok: true }
     } catch (logError) {
       console.warn('failed to record assistant usage', logError)
-      return false
+      return {
+        ok: false,
+        error: logError instanceof Error
+          ? `AI使用记录保存失败：${logError.message}`
+          : 'AI使用记录保存失败：未知错误',
+      }
     }
   }
 
@@ -1174,6 +1198,16 @@ export function ChatsPage() {
                       </div>
                       <StatusBadge status={history.chat.chat_type} />
                       <button
+                        className="secondary-button assistant-mini-button chat-status-collapse-button"
+                        type="button"
+                        onClick={() => setStatusCardCollapsed((current) => !current)}
+                        aria-expanded={!statusCardCollapsed}
+                        title={statusCardCollapsed ? '展开摘要和建议' : '收起摘要和建议'}
+                      >
+                        <Icon name="chevronDown" className={statusCardCollapsed ? '' : 'rotate-180'} />
+                        <span>{statusCardCollapsed ? '展开' : '收起'}</span>
+                      </button>
+                      <button
                         className="primary-button assistant-mini-button chat-status-analyze-button"
                         type="button"
                         onClick={() => void handleAnalyzeStatusCard()}
@@ -1202,29 +1236,31 @@ export function ChatsPage() {
                         </div>
                       </div>
                     </div>
-                    <div className="assistant-status-text-scroll">
-                      {statusCard?.summary ? (
-                        <p className="assistant-status-summary">
-                          <strong>摘要</strong>
-                          <span>{statusCard.summary}</span>
-                        </p>
-                      ) : (
-                        <p className="assistant-status-empty">点击分析后显示客户状态摘要。</p>
-                      )}
-                      {statusCard?.next_action ? (
-                        <p className="assistant-status-summary">
-                          <strong>建议</strong>
-                          <span>{statusCard.next_action}</span>
-                        </p>
-                      ) : null}
-                      {statusCard?.evidence.length ? (
-                        <ul className="assistant-evidence-list">
-                          {statusCard.evidence.slice(0, 3).map((item) => (
-                            <li key={item}>{item}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
+                    {!statusCardCollapsed ? (
+                      <div className="assistant-status-text-scroll">
+                        {statusCard?.summary ? (
+                          <p className="assistant-status-summary">
+                            <strong>摘要</strong>
+                            <span>{statusCard.summary}</span>
+                          </p>
+                        ) : (
+                          <p className="assistant-status-empty">点击分析后显示客户状态摘要。</p>
+                        )}
+                        {statusCard?.next_action ? (
+                          <p className="assistant-status-summary">
+                            <strong>建议</strong>
+                            <span>{statusCard.next_action}</span>
+                          </p>
+                        ) : null}
+                        {statusCard?.evidence.length ? (
+                          <ul className="assistant-evidence-list">
+                            {statusCard.evidence.slice(0, 3).map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 )}
 
@@ -1559,7 +1595,7 @@ export function ChatsPage() {
                     onChange={(event) => {
                       setAssistantDraftState(event.target.value)
                       setAdoptedReplyIndexState(undefined)
-                      setTranslatedSourceDraftState('')
+                      setTranslatedDraftState('')
                     }}
                     placeholder="点击左侧方案的采纳，或直接在这里编辑草稿"
                     rows={7}
@@ -1573,7 +1609,6 @@ export function ChatsPage() {
                           const option = resolveLanguageOption(event.target.value)
                           setDraftTargetLanguageState(option.code, option.name)
                           setTranslatedDraftState('')
-                          setTranslatedSourceDraftState('')
                         }}
                       >
                         {languageOptions.map((option) => (
@@ -1955,6 +1990,70 @@ function loadMessageTranslationCache(): Record<string, TranslationState> {
   )
 }
 
+function readStoredAssistantWorkspaceCache(): Record<string, StoredAssistantWorkspace> {
+  if (typeof window === 'undefined') {
+    return {}
+  }
+
+  try {
+    const raw = window.localStorage.getItem(assistantWorkspaceStorageKey)
+    if (!raw) {
+      return {}
+    }
+    const decoded = JSON.parse(raw)
+    if (!isPlainRecord(decoded)) {
+      return {}
+    }
+
+    return Object.fromEntries(
+      Object.entries(decoded).filter((entry): entry is [string, StoredAssistantWorkspace] => {
+        const value = entry[1]
+        if (!isPlainRecord(value)) {
+          return false
+        }
+        const candidate = value as Partial<StoredAssistantWorkspace>
+        return (
+          typeof candidate.cached_at === 'string' &&
+          typeof candidate.rawDraft === 'string' &&
+          Array.isArray(candidate.replyOptions) &&
+          typeof candidate.draft === 'string' &&
+          typeof candidate.translatedDraft === 'string' &&
+          typeof candidate.translatedSourceDraft === 'string' &&
+          typeof candidate.targetLanguage === 'string' &&
+          typeof candidate.targetLanguageName === 'string'
+        )
+      }),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function writeStoredAssistantWorkspaceCache(cache: Record<string, StoredAssistantWorkspace>) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(assistantWorkspaceStorageKey, JSON.stringify(cache))
+  } catch {
+    // Keep the current in-memory assistant workspace even if local persistence is unavailable.
+  }
+}
+
+function trimStoredAssistantWorkspaceCache(cache: Record<string, StoredAssistantWorkspace>) {
+  const entries = Object.entries(cache)
+  if (entries.length <= assistantWorkspaceCacheLimit) {
+    return cache
+  }
+
+  return Object.fromEntries(
+    entries
+      .sort((left, right) => left[1].cached_at.localeCompare(right[1].cached_at))
+      .slice(-assistantWorkspaceCacheLimit),
+  )
+}
+
 function persistMessageTranslation(key: string, translation: TranslationView) {
   if (!key) {
     return
@@ -2125,15 +2224,18 @@ function buildAssistantUsagePayload({
   draftTargetLanguage: string
   draftTargetLanguageName: string
 }): CreateAssistantUsageLogPayload | undefined {
-  const finalDraft = (translatedSourceDraft.trim() || assistantDraft.trim())
+  const sourceDraft = translatedSourceDraft.trim()
+  const draftContent = assistantDraft.trim()
   const translatedContent = translatedDraft.trim()
-  if (!finalDraft && !translatedContent) {
+  if (!sourceDraft && !draftContent && !translatedContent) {
     return undefined
   }
 
-  const latestMessage = findLatestCustomerMessage(history.messages)
+  const triggerMessages = findPendingCustomerMessages(history.messages)
+  const latestMessage = triggerMessages[triggerMessages.length - 1] ?? findLatestCustomerMessage(history.messages)
   const adoptedOption =
     adoptedReplyIndex !== undefined ? assistantReplyOptions[adoptedReplyIndex] : undefined
+  const outboundContent = translatedContent || draftContent || sourceDraft
   const account = accounts.find((item) => item.id === history.chat.account_id)
   const agent = replyAgents.find((item) => item.id === selectedReplyAgentId)
   const mediaRef = latestMessage ? formatMessageMediaRef(latestMessage) : ''
@@ -2155,17 +2257,44 @@ function buildAssistantUsagePayload({
       (latestMessage ? fallbackMessageCopy(latestMessage.message_type) : ''),
     latest_message_media_ref: mediaRef,
     latest_message_received_at: latestMessage?.sent_at,
+    trigger_messages: triggerMessages.map(formatAssistantUsageTriggerMessage),
     agent_id: agent?.id || selectedReplyAgentId,
     agent_name: agent?.name || '',
     adopted_option_index: adoptedReplyIndex !== undefined ? adoptedReplyIndex + 1 : undefined,
     adopted_option_content: adoptedOption?.content || '',
-    translation_source_content: translatedSourceDraft.trim() || assistantDraft.trim(),
-    final_draft_content: finalDraft || translatedContent,
+    translation_source_content: sourceDraft,
+    final_draft_content: outboundContent,
     translated_content: translatedContent,
     target_language: translatedContent
       ? `${draftTargetLanguageName || draftTargetLanguage}(${draftTargetLanguage})`
       : '',
     action_type: action,
+  }
+}
+
+function findPendingCustomerMessages(messages: MessageView[]) {
+  const pending: MessageView[] = []
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message.from_me) {
+      break
+    }
+    pending.unshift(message)
+  }
+
+  return pending
+}
+
+function formatAssistantUsageTriggerMessage(message: MessageView) {
+  return {
+    id: message.id,
+    wa_message_id: message.wa_message_id,
+    sender_jid: message.sender_jid,
+    sender_name: message.sender_name?.trim() || undefined,
+    message_type: message.message_type,
+    text_content: message.text_content?.trim() || undefined,
+    media_ref: formatMessageMediaRef(message) || undefined,
+    sent_at: message.sent_at,
   }
 }
 

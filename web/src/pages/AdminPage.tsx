@@ -862,7 +862,7 @@ function AssistantUsageLogPanel() {
                   <span>{log.action_type === 'send' ? '发送' : '写回'}</span>
                   <small>{formatDateTime(log.created_at)}</small>
                 </div>
-                <p>{log.latest_message_text || log.latest_message_media_ref || log.latest_message_type || '无当前消息'}</p>
+                <p>{formatUsageLogTriggerMessages(log)}</p>
                 <p>采纳：{log.adopted_option_content || '无'}</p>
                 <p>翻译原文：{log.translation_source_content || '无'}</p>
                 <p>发送内容：{log.translated_content || log.final_draft_content}</p>
@@ -1622,6 +1622,20 @@ function formatDateTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function formatUsageLogTriggerMessages(log: AssistantUsageLogView) {
+  if (log.trigger_messages?.length) {
+    return log.trigger_messages
+      .map((message, index) => {
+        const sender = message.sender_name || message.sender_jid || `客户消息 ${index + 1}`
+        const content = message.text_content || message.media_ref || message.message_type || '无文本内容'
+        return `${index + 1}. ${sender}：${content}`
+      })
+      .join('\n')
+  }
+
+  return log.latest_message_text || log.latest_message_media_ref || log.latest_message_type || '无当前消息'
 }
 
 function todayDateInput() {

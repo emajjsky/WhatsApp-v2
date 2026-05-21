@@ -243,6 +243,7 @@ type AssistantUsageLog struct {
 	LatestMessageText       string
 	LatestMessageMediaRef   string
 	LatestMessageReceivedAt *time.Time
+	TriggerMessages         []AssistantUsageTriggerMessage
 	AgentID                 string
 	AgentName               string
 	AdoptedOptionIndex      *int
@@ -269,6 +270,7 @@ type AssistantUsageLogView struct {
 	LatestMessageText       string               `json:"latest_message_text"`
 	LatestMessageMediaRef   string               `json:"latest_message_media_ref"`
 	LatestMessageReceivedAt *time.Time           `json:"latest_message_received_at,omitempty"`
+	TriggerMessages         []AssistantUsageTriggerMessage `json:"trigger_messages"`
 	AgentID                 string               `json:"agent_id"`
 	AgentName               string               `json:"agent_name"`
 	AdoptedOptionIndex      *int                 `json:"adopted_option_index,omitempty"`
@@ -293,6 +295,7 @@ type CreateAssistantUsageLogInput struct {
 	LatestMessageText       string               `json:"latest_message_text"`
 	LatestMessageMediaRef   string               `json:"latest_message_media_ref"`
 	LatestMessageReceivedAt *time.Time           `json:"latest_message_received_at,omitempty"`
+	TriggerMessages         []AssistantUsageTriggerMessage `json:"trigger_messages"`
 	AgentID                 string               `json:"agent_id"`
 	AgentName               string               `json:"agent_name"`
 	AdoptedOptionIndex      *int                 `json:"adopted_option_index,omitempty"`
@@ -302,6 +305,17 @@ type CreateAssistantUsageLogInput struct {
 	TranslatedContent       string               `json:"translated_content"`
 	TargetLanguage          string               `json:"target_language"`
 	ActionType              AssistantUsageAction `json:"action_type"`
+}
+
+type AssistantUsageTriggerMessage struct {
+	ID          string    `json:"id"`
+	WAMessageID string    `json:"wa_message_id"`
+	SenderJID   string    `json:"sender_jid"`
+	SenderName  string    `json:"sender_name,omitempty"`
+	MessageType string    `json:"message_type"`
+	TextContent string    `json:"text_content,omitempty"`
+	MediaRef    string    `json:"media_ref,omitempty"`
+	SentAt      time.Time `json:"sent_at"`
 }
 
 type AssistantUsageLogFilters struct {

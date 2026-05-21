@@ -1015,6 +1015,11 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 }
 
 func (r *Repository) CreateUsageLog(ctx context.Context, item AssistantUsageLog) error {
+	triggerMessages, err := mustMarshalJSON(item.TriggerMessages)
+	if err != nil {
+		return err
+	}
+
 	const query = `
 INSERT INTO assistant_usage_logs (
     id,
@@ -1029,6 +1034,7 @@ INSERT INTO assistant_usage_logs (
     latest_message_text,
     latest_message_media_ref,
     latest_message_received_at,
+    trigger_messages,
     agent_id,
     agent_name,
     adopted_option_index,
@@ -1042,7 +1048,7 @@ INSERT INTO assistant_usage_logs (
     created_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-    $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+    $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
 )`
 
 	if _, err := r.db.ExecContext(
@@ -1060,6 +1066,7 @@ INSERT INTO assistant_usage_logs (
 		item.LatestMessageText,
 		item.LatestMessageMediaRef,
 		item.LatestMessageReceivedAt,
+		triggerMessages,
 		item.AgentID,
 		item.AgentName,
 		item.AdoptedOptionIndex,
@@ -1106,6 +1113,7 @@ SELECT
     aul.latest_message_text,
     aul.latest_message_media_ref,
     aul.latest_message_received_at,
+    COALESCE(aul.trigger_messages, '[]'::jsonb),
     aul.agent_id,
     aul.agent_name,
     aul.adopted_option_index,
@@ -1134,6 +1142,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 			item                    AssistantUsageLogView
 			latestMessageReceivedAt sql.NullTime
 			adoptedOptionIndex      sql.NullInt64
+			triggerMessages          []byte
 			logDate                 time.Time
 		)
 
@@ -1150,6 +1159,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 			&item.LatestMessageText,
 			&item.LatestMessageMediaRef,
 			&latestMessageReceivedAt,
+			&triggerMessages,
 			&item.AgentID,
 			&item.AgentName,
 			&adoptedOptionIndex,
@@ -1167,6 +1177,12 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 
 		item.LatestMessageReceivedAt = nullableTime(latestMessageReceivedAt)
 		item.AdoptedOptionIndex = nullableInt(adoptedOptionIndex)
+		if err := json.Unmarshal(triggerMessages, &item.TriggerMessages); err != nil {
+			return nil, 0, fmt.Errorf("decode assistant usage trigger messages: %w", err)
+		}
+		if item.TriggerMessages == nil {
+			item.TriggerMessages = []AssistantUsageTriggerMessage{}
+		}
 		item.LogDate = logDate.Format("2006-01-02")
 		items = append(items, item)
 	}

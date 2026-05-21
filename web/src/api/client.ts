@@ -391,6 +391,7 @@ export interface AssistantUsageLogView {
   latest_message_text: string
   latest_message_media_ref: string
   latest_message_received_at?: string
+  trigger_messages: AssistantUsageTriggerMessage[]
   agent_id: string
   agent_name: string
   adopted_option_index?: number
@@ -402,6 +403,17 @@ export interface AssistantUsageLogView {
   action_type: AssistantUsageAction
   log_date: string
   created_at: string
+}
+
+export interface AssistantUsageTriggerMessage {
+  id: string
+  wa_message_id: string
+  sender_jid: string
+  sender_name?: string
+  message_type: MessageType
+  text_content?: string
+  media_ref?: string
+  sent_at: string
 }
 
 export interface AssistantUsageLogListResponse {
@@ -512,6 +524,7 @@ export interface CreateAssistantUsageLogPayload {
   latest_message_text?: string
   latest_message_media_ref?: string
   latest_message_received_at?: string
+  trigger_messages?: AssistantUsageTriggerMessage[]
   agent_id?: string
   agent_name?: string
   adopted_option_index?: number

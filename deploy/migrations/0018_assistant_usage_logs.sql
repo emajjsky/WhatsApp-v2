@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS assistant_usage_logs (
     latest_message_text TEXT NOT NULL DEFAULT '',
     latest_message_media_ref TEXT NOT NULL DEFAULT '',
     latest_message_received_at TIMESTAMPTZ,
+    trigger_messages JSONB NOT NULL DEFAULT '[]'::jsonb,
     agent_id TEXT NOT NULL DEFAULT '',
     agent_name TEXT NOT NULL DEFAULT '',
     adopted_option_index INTEGER,

@@ -549,6 +549,7 @@ func (s *Service) CreateUsageLog(ctx context.Context, input CreateAssistantUsage
 		LatestMessageText:       limitText(input.LatestMessageText, 8000),
 		LatestMessageMediaRef:   limitText(input.LatestMessageMediaRef, 2000),
 		LatestMessageReceivedAt: input.LatestMessageReceivedAt,
+		TriggerMessages:         normalizeUsageTriggerMessages(input.TriggerMessages),
 		AgentID:                 limitText(input.AgentID, 500),
 		AgentName:               limitText(input.AgentName, 500),
 		AdoptedOptionIndex:      input.AdoptedOptionIndex,
@@ -756,6 +757,7 @@ func mapUsageLogToView(item AssistantUsageLog) AssistantUsageLogView {
 		LatestMessageText:       item.LatestMessageText,
 		LatestMessageMediaRef:   item.LatestMessageMediaRef,
 		LatestMessageReceivedAt: item.LatestMessageReceivedAt,
+		TriggerMessages:         item.TriggerMessages,
 		AgentID:                 item.AgentID,
 		AgentName:               item.AgentName,
 		AdoptedOptionIndex:      item.AdoptedOptionIndex,
@@ -768,6 +770,28 @@ func mapUsageLogToView(item AssistantUsageLog) AssistantUsageLogView {
 		LogDate:                 item.LogDate.Format("2006-01-02"),
 		CreatedAt:               item.CreatedAt,
 	}
+}
+
+func normalizeUsageTriggerMessages(items []AssistantUsageTriggerMessage) []AssistantUsageTriggerMessage {
+	result := make([]AssistantUsageTriggerMessage, 0, len(items))
+	for _, item := range items {
+		normalized := AssistantUsageTriggerMessage{
+			ID:          limitText(item.ID, 500),
+			WAMessageID: limitText(item.WAMessageID, 500),
+			SenderJID:   limitText(item.SenderJID, 500),
+			SenderName:  limitText(item.SenderName, 500),
+			MessageType: limitText(item.MessageType, 80),
+			TextContent: limitText(item.TextContent, 8000),
+			MediaRef:    limitText(item.MediaRef, 2000),
+			SentAt:      item.SentAt,
+		}
+		if normalized.ID == "" && normalized.WAMessageID == "" && normalized.TextContent == "" && normalized.MediaRef == "" {
+			continue
+		}
+		result = append(result, normalized)
+	}
+
+	return result
 }
 
 func limitText(value string, maxRunes int) string {
