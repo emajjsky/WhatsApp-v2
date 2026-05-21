@@ -257,6 +257,53 @@ func (p *CloudProxy) HandleAdminSystemConfigs(w http.ResponseWriter, r *http.Req
 	_, _ = io.Copy(w, resp.Body)
 }
 
+func (p *CloudProxy) HandleCreateUsageLog(w http.ResponseWriter, r *http.Request) {
+	req, err := p.newCloudRequest(r.Context(), r, http.MethodPost, "/api/assistant-usage-logs", r.Body)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if contentType := strings.TrimSpace(r.Header.Get("Content-Type")); contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	} else {
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	}
+	req.Header.Set("Accept", "application/json")
+
+	p.forwardCloudResponse(w, req, "call cloud assistant usage log")
+}
+
+func (p *CloudProxy) HandleAdminUsageLogs(w http.ResponseWriter, r *http.Request) {
+	req, err := p.newCloudRequest(r.Context(), r, r.Method, r.URL.Path, r.Body)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.URL.RawQuery = r.URL.RawQuery
+	if accept := strings.TrimSpace(r.Header.Get("Accept")); accept != "" {
+		req.Header.Set("Accept", accept)
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
+
+	p.forwardCloudResponse(w, req, "call cloud assistant usage logs")
+}
+
+func (p *CloudProxy) forwardCloudResponse(w http.ResponseWriter, req *http.Request, errPrefix string) {
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadGateway, fmt.Sprintf("%s: %v", errPrefix, err))
+		return
+	}
+	defer resp.Body.Close()
+
+	if contentType := strings.TrimSpace(resp.Header.Get("Content-Type")); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 func (p *CloudProxy) prepareDraftPayload(r *http.Request) (DesktopAgentDraftInput, preparedManualRun, error) {
 	var payload struct {
 		ChatID              string  `json:"chat_id"`

@@ -376,6 +376,40 @@ export interface AgentRunListResponse {
   offset: number
 }
 
+export type AssistantUsageAction = 'writeback' | 'send'
+
+export interface AssistantUsageLogView {
+  id: string
+  user_id: string
+  ws_account_id: string
+  ws_account_name: string
+  chat_id: string
+  customer_id: string
+  customer_nickname: string
+  latest_message_id: string
+  latest_message_type: string
+  latest_message_text: string
+  latest_message_media_ref: string
+  latest_message_received_at?: string
+  agent_id: string
+  agent_name: string
+  adopted_option_index?: number
+  adopted_option_content: string
+  final_draft_content: string
+  translated_content: string
+  target_language: string
+  action_type: AssistantUsageAction
+  log_date: string
+  created_at: string
+}
+
+export interface AssistantUsageLogListResponse {
+  logs: AssistantUsageLogView[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export interface AuditEntry {
   id: string
   actor_type: 'user' | 'system' | 'agent'
@@ -464,6 +498,27 @@ export interface TranslateTextPayload {
   text: string
   target_language: string
   target_language_name?: string
+}
+
+export interface CreateAssistantUsageLogPayload {
+  ws_account_id: string
+  ws_account_name?: string
+  chat_id: string
+  customer_id?: string
+  customer_nickname?: string
+  latest_message_id?: string
+  latest_message_type?: string
+  latest_message_text?: string
+  latest_message_media_ref?: string
+  latest_message_received_at?: string
+  agent_id?: string
+  agent_name?: string
+  adopted_option_index?: number
+  adopted_option_content?: string
+  final_draft_content: string
+  translated_content?: string
+  target_language?: string
+  action_type: AssistantUsageAction
 }
 
 export interface TranslationView {
@@ -1032,6 +1087,55 @@ export async function listAgentRuns(params?: {
 
   const queryString = searchParams.toString()
   return request<AgentRunListResponse>(`/api/agent-runs${queryString ? `?${queryString}` : ''}`)
+}
+
+export async function createAssistantUsageLog(payload: CreateAssistantUsageLogPayload) {
+  return request<{ log: AssistantUsageLogView }>('/api/assistant-usage-logs', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function listAssistantUsageLogs(params?: {
+  logDate?: string
+  userId?: string
+  accountId?: string
+  chatId?: string
+  agentId?: string
+  action?: AssistantUsageAction | ''
+  limit?: number
+  offset?: number
+}) {
+  const searchParams = new URLSearchParams()
+  if (params?.logDate) {
+    searchParams.set('log_date', params.logDate)
+  }
+  if (params?.userId) {
+    searchParams.set('user_id', params.userId)
+  }
+  if (params?.accountId) {
+    searchParams.set('account_id', params.accountId)
+  }
+  if (params?.chatId) {
+    searchParams.set('chat_id', params.chatId)
+  }
+  if (params?.agentId) {
+    searchParams.set('agent_id', params.agentId)
+  }
+  if (params?.action) {
+    searchParams.set('action', params.action)
+  }
+  if (params?.limit) {
+    searchParams.set('limit', String(params.limit))
+  }
+  if (params?.offset) {
+    searchParams.set('offset', String(params.offset))
+  }
+
+  const queryString = searchParams.toString()
+  return request<AssistantUsageLogListResponse>(
+    `/api/admin/assistant-usage-logs${queryString ? `?${queryString}` : ''}`,
+  )
 }
 
 export async function listSystemAgentConfigs() {

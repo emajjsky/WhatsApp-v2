@@ -421,7 +421,7 @@ a {
 }
 
 .whatsapp-chat-page {
-  padding: 10px;
+  padding: 8px;
 }
 
 .page-exports {
@@ -931,8 +931,8 @@ a {
 
 .chat-frame {
   display: grid;
-  grid-template-columns: minmax(250px, 310px) minmax(500px, 1fr) minmax(500px, 610px);
-  gap: 8px;
+  grid-template-columns: minmax(220px, 290px) minmax(460px, 0.9fr) minmax(580px, 1.22fr);
+  gap: 7px;
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -940,7 +940,7 @@ a {
 }
 
 .whatsapp-chat-frame {
-  gap: 10px;
+  gap: 8px;
 }
 
 .chat-sidebar-panel,
@@ -2185,13 +2185,13 @@ a {
   background: linear-gradient(180deg, #fbfcfc, #f7f9f8);
   border-color: rgba(17, 27, 33, 0.08);
   box-shadow: 0 10px 28px rgba(15, 20, 18, 0.05);
-  padding: 10px;
+  padding: 8px;
 }
 
 .whatsapp-assistant-header {
   display: block;
-  margin-bottom: 6px;
-  padding-bottom: 7px;
+  margin-bottom: 5px;
+  padding-bottom: 6px;
   border-bottom: 1px solid rgba(17, 27, 33, 0.06);
 }
 
@@ -2210,9 +2210,11 @@ a {
 
 .assistant-header-controls {
   min-width: 0;
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  gap: 6px;
   align-items: center;
+  width: 100%;
 }
 
 .assistant-toolbar-title {
@@ -2264,7 +2266,7 @@ a {
 
 .assistant-context-limit-field {
   display: grid;
-  flex: 0 0 48px;
+  flex: 0 0 44px;
   gap: 2px;
 }
 
@@ -2273,11 +2275,11 @@ a {
 }
 
 .assistant-context-limit-field input {
-  width: 48px;
-  min-height: 29px;
-  padding: 4px 5px;
+  width: 44px;
+  min-height: 26px;
+  padding: 3px 4px;
   text-align: center;
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .whatsapp-assistant-body {
@@ -2289,8 +2291,8 @@ a {
   overflow: hidden;
   padding-right: 0;
   display: grid;
-  grid-template-columns: minmax(250px, 0.94fr) minmax(300px, 1.12fr);
-  gap: 10px;
+  grid-template-columns: minmax(200px, 0.82fr) minmax(340px, 1.18fr);
+  gap: 8px;
   align-items: stretch;
   overscroll-behavior: contain;
 }
@@ -2303,7 +2305,7 @@ a {
   overflow: hidden;
   padding-right: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
   align-content: stretch;
   overscroll-behavior: contain;
 }
@@ -2395,28 +2397,28 @@ a {
 }
 
 .assistant-mini-button {
-  min-height: 26px;
-  padding: 4px 8px;
-  font-size: 11px;
+  min-height: 24px;
+  padding: 3px 7px;
+  font-size: 10.5px;
 }
 
 .assistant-header-select {
   min-width: 0;
-  width: clamp(180px, 22vw, 260px);
-  max-width: 260px;
-  flex: 0 1 260px;
-  min-height: 29px;
-  padding: 4px 8px;
-  border-radius: 8px;
+  width: 100%;
+  max-width: none;
+  flex: none;
+  min-height: 26px;
+  padding: 3px 7px;
+  border-radius: 7px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.9);
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
 .assistant-header-select option {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .assistant-status-card {
@@ -2665,17 +2667,17 @@ a {
 
 .assistant-draft-box {
   width: 100%;
-  min-height: 218px;
-  max-height: 240px;
+  min-height: 206px;
+  max-height: 232px;
   resize: none;
   overflow-y: auto;
-  padding: 9px 10px;
-  border-radius: 10px;
+  padding: 8px 9px;
+  border-radius: 9px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.78);
   color: var(--text);
-  font-size: 11.5px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .assistant-draft-card .assistant-draft-box {
@@ -2687,8 +2689,8 @@ a {
 .assistant-context-controls,
 .assistant-translation-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(92px, 116px);
-  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) minmax(84px, 108px);
+  gap: 5px;
   align-items: end;
 }
 
@@ -2702,8 +2704,8 @@ a {
 }
 
 .assistant-translated-draft {
-  min-height: 168px;
-  max-height: 190px;
+  min-height: 160px;
+  max-height: 184px;
   background: #f7fbf9;
 }
 
@@ -3665,6 +3667,98 @@ a {
   white-space: nowrap;
 }
 
+.admin-usage-log-panel {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+}
+
+.admin-usage-log-toolbar {
+  display: grid;
+  grid-template-columns: 150px minmax(160px, 1fr) minmax(160px, 1fr) 120px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.admin-usage-log-list {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.admin-usage-log-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.usage-log-main,
+.usage-log-meta {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.usage-log-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.usage-log-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-log-title-row span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e8f5ee;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.usage-log-title-row small,
+.usage-log-meta span {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.usage-log-main p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.usage-log-main p:first-of-type {
+  color: var(--text-soft);
+}
+
+.usage-log-meta {
+  align-content: start;
+  font-size: 12px;
+}
+
+.usage-log-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .admin-agent-panel {
   display: grid;
   gap: 10px;
@@ -4197,16 +4291,16 @@ a {
   }
 
   .chat-frame {
-    grid-template-columns: minmax(235px, 292px) minmax(500px, 1fr) minmax(430px, 540px);
-    gap: 6px;
+    grid-template-columns: minmax(220px, 270px) minmax(400px, 0.82fr) minmax(640px, 1.36fr);
+    gap: 4px;
   }
 
   .assistant-panel-body {
-    grid-template-columns: minmax(230px, 0.92fr) minmax(280px, 1.08fr);
+    grid-template-columns: minmax(200px, 0.82fr) minmax(340px, 1.18fr);
   }
 
   .whatsapp-chat-page {
-    padding: 6px;
+    padding: 5px;
   }
 
   .whatsapp-chat-sidebar {
@@ -4419,7 +4513,7 @@ a {
   }
 
   .whatsapp-chat-assistant {
-    padding: 7px;
+    padding: 6px;
   }
 
   .whatsapp-assistant-header,
@@ -4427,33 +4521,34 @@ a {
   .assistant-card,
   .assistant-chip-row,
   .assistant-translation-panel {
-    gap: 7px;
+    gap: 6px;
   }
 
   .assistant-card {
-    padding: 8px;
-    border-radius: 10px;
+    padding: 7px;
+    border-radius: 9px;
   }
 
   .assistant-action-button {
-    min-height: 30px;
-    padding: 7px 9px;
+    min-height: 26px;
+    padding: 5px 8px;
+    font-size: 10.5px;
   }
 
   .assistant-context-controls,
   .assistant-translation-row {
-    grid-template-columns: minmax(0, 1fr) minmax(78px, 112px);
-    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) minmax(72px, 102px);
+    gap: 5px;
   }
 
   .assistant-draft-box {
-    min-height: 240px;
-    max-height: 320px;
-    padding: 8px 9px;
+    min-height: 220px;
+    max-height: 300px;
+    padding: 7px 8px;
   }
 
   .assistant-translated-draft {
-    min-height: 124px;
+    min-height: 112px;
   }
 
   .agent-config-layout {
@@ -4780,16 +4875,16 @@ a {
   }
 
   .chat-frame {
-    grid-template-columns: minmax(220px, 270px) minmax(430px, 0.9fr) minmax(480px, 560px);
-    gap: 6px;
+    grid-template-columns: minmax(220px, 260px) minmax(410px, 0.88fr) minmax(500px, 1.18fr);
+    gap: 5px;
   }
 
   .assistant-panel-body {
-    grid-template-columns: minmax(220px, 0.92fr) minmax(260px, 1.08fr);
+    grid-template-columns: minmax(210px, 0.88fr) minmax(290px, 1.12fr);
   }
 
   .whatsapp-chat-page {
-    padding: 4px;
+    padding: 5px;
   }
 
   .whatsapp-chat-sidebar {
@@ -4991,7 +5086,8 @@ a {
   }
 
   .assistant-header-controls {
-    gap: 6px;
+    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+    gap: 5px;
   }
 
   .assistant-context-toggle {
@@ -5001,19 +5097,19 @@ a {
 
   .assistant-context-limit-field input,
   .assistant-header-select {
-    min-height: 26px;
-    padding: 4px 6px;
-    font-size: 12px;
+    min-height: 24px;
+    padding: 3px 6px;
+    font-size: 11.5px;
   }
 
   .assistant-header-select {
-    width: clamp(160px, 20vw, 230px);
-    max-width: 230px;
+    width: 100%;
+    max-width: none;
   }
 
   .assistant-panel-body {
-    grid-template-columns: minmax(216px, 0.92fr) minmax(260px, 1.08fr);
-    gap: 6px;
+    grid-template-columns: minmax(210px, 0.88fr) minmax(300px, 1.12fr);
+    gap: 5px;
   }
 
   .assistant-card {
@@ -5035,23 +5131,23 @@ a {
   .assistant-action-button {
     min-height: 26px;
     padding: 5px 8px;
-    font-size: 11px;
+    font-size: 10.5px;
   }
 
   .assistant-context-controls,
   .assistant-translation-row {
-    grid-template-columns: minmax(0, 1fr) minmax(66px, 88px);
+    grid-template-columns: minmax(0, 1fr) minmax(72px, 96px);
     gap: 5px;
   }
 
   .assistant-draft-box {
-    min-height: 220px;
+    min-height: 210px;
     padding: 6px 7px;
     line-height: 1.42;
   }
 
   .assistant-translated-draft {
-    min-height: 110px;
+    min-height: 104px;
   }
 
   .agent-page-header {
@@ -5165,7 +5261,7 @@ a {
 
 @media (max-width: 1280px) {
   .chat-frame {
-    grid-template-columns: minmax(270px, 320px) minmax(0, 1fr);
+    grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
     align-items: start;
   }
 
@@ -5210,7 +5306,7 @@ a {
   }
 
   .assistant-panel-body {
-    grid-template-columns: minmax(230px, 0.92fr) minmax(280px, 1.08fr);
+    grid-template-columns: minmax(210px, 0.9fr) minmax(290px, 1.1fr);
     align-items: stretch;
   }
 
@@ -5322,7 +5418,9 @@ a {
   }
 
   .admin-provider-grid,
-  .admin-purpose-switch {
+  .admin-purpose-switch,
+  .admin-usage-log-toolbar,
+  .admin-usage-log-row {
     grid-template-columns: 1fr;
   }
 

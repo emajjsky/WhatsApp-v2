@@ -59,6 +59,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-runs/generate/stream", h.handleGenerateRunStream)
 	mux.HandleFunc("/api/agent-translations", h.handleTranslateText)
 	mux.HandleFunc("/api/agent-status-card", h.handleStatusCard)
+	mux.HandleFunc("/api/assistant-usage-logs", h.handleUsageLogs)
+	mux.HandleFunc("/api/admin/assistant-usage-logs", h.handleAdminUsageLogs)
 	mux.HandleFunc("/api/desktop/agent-runs/generate", h.handleDesktopGenerateDraft)
 	mux.HandleFunc("/api/desktop/agent-runs/generate/stream", h.handleDesktopGenerateDraftStream)
 	mux.HandleFunc("/api/desktop/agent-translations", h.handleDesktopTranslateText)
@@ -339,6 +341,56 @@ func (h *Handler) handleAvailableSystemConfigs(w http.ResponseWriter, r *http.Re
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"configs": items})
+}
+
+func (h *Handler) handleUsageLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleCreateUsageLog(w, r)
+		return
+	}
+
+	var input CreateAssistantUsageLogInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	log, err := h.service.CreateUsageLog(r.Context(), input)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"log": log})
+}
+
+func (h *Handler) handleAdminUsageLogs(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminUsageLogs(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		httpx.WriteMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+
+	filters, err := parseUsageLogFilters(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.service.ListUsageLogs(r.Context(), filters)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) handleRuns(w http.ResponseWriter, r *http.Request) {
@@ -873,6 +925,36 @@ func parseRunFilters(r *http.Request) (RunListFilters, error) {
 		RuleID:    strings.TrimSpace(r.URL.Query().Get("rule_id")),
 		ChatID:    strings.TrimSpace(r.URL.Query().Get("chat_id")),
 		Status:    RunStatus(strings.TrimSpace(r.URL.Query().Get("status"))),
+		Limit:     limit,
+		Offset:    offset,
+	}, nil
+}
+
+func parseUsageLogFilters(r *http.Request) (AssistantUsageLogFilters, error) {
+	limit := 50
+	offset := 0
+	var err error
+
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		limit, err = strconv.Atoi(rawLimit)
+		if err != nil {
+			return AssistantUsageLogFilters{}, fmt.Errorf("limit must be a number")
+		}
+	}
+	if rawOffset := strings.TrimSpace(r.URL.Query().Get("offset")); rawOffset != "" {
+		offset, err = strconv.Atoi(rawOffset)
+		if err != nil {
+			return AssistantUsageLogFilters{}, fmt.Errorf("offset must be a number")
+		}
+	}
+
+	return AssistantUsageLogFilters{
+		LogDate:   strings.TrimSpace(r.URL.Query().Get("log_date")),
+		UserID:    strings.TrimSpace(r.URL.Query().Get("user_id")),
+		AccountID: strings.TrimSpace(r.URL.Query().Get("account_id")),
+		ChatID:    strings.TrimSpace(r.URL.Query().Get("chat_id")),
+		AgentID:   strings.TrimSpace(r.URL.Query().Get("agent_id")),
+		Action:    AssistantUsageAction(strings.TrimSpace(r.URL.Query().Get("action"))),
 		Limit:     limit,
 		Offset:    offset,
 	}, nil

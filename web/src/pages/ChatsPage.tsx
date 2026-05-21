@@ -8,6 +8,7 @@ import {
 } from 'react'
 import {
   analyzeStatusCard,
+  createAssistantUsageLog,
   getChatMessages,
   getMediaAssetUrl,
   getStatusCard,
@@ -20,6 +21,8 @@ import {
   streamGenerateAgentRun,
   subscribeLiveUpdates,
   translateText,
+  type AssistantUsageAction,
+  type CreateAssistantUsageLogPayload,
   type AccountView,
   type AgentRunView,
   type ChatHeader,
@@ -71,6 +74,7 @@ type AssistantWorkspaceState = {
   adoptedReplyIndex?: number
   draft: string
   translatedDraft: string
+  translatedSourceDraft: string
   targetLanguage: string
   targetLanguageName: string
   notice?: string
@@ -159,6 +163,7 @@ export function ChatsPage() {
   const [draftTargetLanguage, setDraftTargetLanguage] = useState(defaultDraftLanguage.code)
   const [draftTargetLanguageName, setDraftTargetLanguageName] = useState(defaultDraftLanguage.name)
   const [translatedDraft, setTranslatedDraft] = useState('')
+  const [translatedSourceDraft, setTranslatedSourceDraft] = useState('')
   const [draftTranslationBusy, setDraftTranslationBusy] = useState(false)
   const [assistantContextEnabled, setAssistantContextEnabled] = useState(true)
   const [assistantContextLimit, setAssistantContextLimit] = useState(defaultAssistantContextLimit)
@@ -207,6 +212,7 @@ export function ChatsPage() {
       adoptedReplyIndex: undefined,
       draft: '',
       translatedDraft: '',
+      translatedSourceDraft: '',
       targetLanguage: defaultDraftLanguage.code,
       targetLanguageName: defaultDraftLanguage.name,
     }),
@@ -220,6 +226,7 @@ export function ChatsPage() {
     setAdoptedReplyIndex(state.adoptedReplyIndex)
     setAssistantDraft(state.draft)
     setTranslatedDraft(state.translatedDraft)
+    setTranslatedSourceDraft(state.translatedSourceDraft)
     setDraftTargetLanguage(state.targetLanguage)
     setDraftTargetLanguageName(state.targetLanguageName)
     setAssistantNotice(state.notice)
@@ -265,6 +272,11 @@ export function ChatsPage() {
   const setTranslatedDraftState = useCallback((nextTranslatedDraft: string) => {
     setTranslatedDraft(nextTranslatedDraft)
     updateAssistantWorkspaceCache({ translatedDraft: nextTranslatedDraft })
+  }, [updateAssistantWorkspaceCache])
+
+  const setTranslatedSourceDraftState = useCallback((nextTranslatedSourceDraft: string) => {
+    setTranslatedSourceDraft(nextTranslatedSourceDraft)
+    updateAssistantWorkspaceCache({ translatedSourceDraft: nextTranslatedSourceDraft })
   }, [updateAssistantWorkspaceCache])
 
   const setDraftTargetLanguageState = useCallback((targetLanguage: string, targetLanguageName: string) => {
@@ -771,13 +783,15 @@ export function ChatsPage() {
     }
 
     const option = resolveLanguageOption(draftTargetLanguage, draftTargetLanguageName)
+    const sourceDraft = assistantDraft.trim()
     setDraftTranslationBusy(true)
     setTranslatedDraftState('')
+    setTranslatedSourceDraftState(sourceDraft)
 
     try {
       const response = await translateText({
         account_id: history.chat.account_id,
-        text: assistantDraft.trim(),
+        text: sourceDraft,
         target_language: option.code,
         target_language_name: option.name,
       })
@@ -831,6 +845,7 @@ export function ChatsPage() {
     setAdoptedReplyIndexState(undefined)
     setAssistantDraftState('')
     setTranslatedDraftState('')
+    setTranslatedSourceDraftState('')
 
     try {
       if (!selectedReplyAgentId) {
@@ -890,14 +905,15 @@ export function ChatsPage() {
     }
   }
 
-  function handleWriteAssistantDraft() {
+  async function handleWriteAssistantDraft() {
     const content = getOutboundDraft(assistantDraft, translatedDraft)
     if (!content) {
       return
     }
 
     setDraftMessage(content)
-    setAssistantNoticeState('已写回输入框，发送前还能继续改。')
+    const logged = await recordAssistantUsage('writeback')
+    setAssistantNoticeState(logged ? '已写回输入框，发送前还能继续改。' : '已写回输入框，AI使用记录保存失败。')
   }
 
   async function handleSendAssistantDraft() {
@@ -915,7 +931,8 @@ export function ChatsPage() {
         message_text: outboundDraft,
       })
       setAssistantRunState(response.run)
-      setAssistantNoticeState('Agent 草稿已发送。')
+      const logged = await recordAssistantUsage('send')
+      setAssistantNoticeState(logged ? 'Agent 草稿已发送。' : 'Agent 草稿已发送，AI使用记录保存失败。')
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
       void loadHistory(selectedChatId, true)
@@ -924,6 +941,39 @@ export function ChatsPage() {
       setError(sendError instanceof Error ? sendError.message : '发送 Agent 草稿失败')
     } finally {
       setAssistantSending(false)
+    }
+  }
+
+  async function recordAssistantUsage(action: AssistantUsageAction) {
+    if (!history || !selectedChat) {
+      return false
+    }
+
+    const payload = buildAssistantUsagePayload({
+      action,
+      history,
+      selectedChat,
+      accounts,
+      replyAgents,
+      selectedReplyAgentId,
+      assistantReplyOptions,
+      adoptedReplyIndex,
+      assistantDraft,
+      translatedDraft,
+      translatedSourceDraft,
+      draftTargetLanguage,
+      draftTargetLanguageName,
+    })
+    if (!payload) {
+      return false
+    }
+
+    try {
+      await createAssistantUsageLog(payload)
+      return true
+    } catch (logError) {
+      console.warn('failed to record assistant usage', logError)
+      return false
     }
   }
 
@@ -1370,6 +1420,7 @@ export function ChatsPage() {
                     setAdoptedReplyIndexState(undefined)
                     setAssistantDraftState('')
                     setTranslatedDraftState('')
+                    setTranslatedSourceDraftState('')
                   }}
                   disabled={assistantBusy}
                 >
@@ -1455,6 +1506,7 @@ export function ChatsPage() {
                                 onClick={() => {
                                   setAssistantDraftState(option.content)
                                   setTranslatedDraftState('')
+                                  setTranslatedSourceDraftState('')
                                   setAdoptedReplyIndexState(index)
                                   setAssistantNoticeState(`已采纳${option.title || `方案 ${index + 1}`}。`)
                                 }}
@@ -1507,6 +1559,7 @@ export function ChatsPage() {
                     onChange={(event) => {
                       setAssistantDraftState(event.target.value)
                       setAdoptedReplyIndexState(undefined)
+                      setTranslatedSourceDraftState('')
                     }}
                     placeholder="点击左侧方案的采纳，或直接在这里编辑草稿"
                     rows={7}
@@ -1520,6 +1573,7 @@ export function ChatsPage() {
                           const option = resolveLanguageOption(event.target.value)
                           setDraftTargetLanguageState(option.code, option.name)
                           setTranslatedDraftState('')
+                          setTranslatedSourceDraftState('')
                         }}
                       >
                         {languageOptions.map((option) => (
@@ -2040,6 +2094,108 @@ function resolveLanguageOption(code?: string, name?: string) {
 
 function getOutboundDraft(chineseDraft: string, translatedText: string) {
   return (translatedText.trim() || chineseDraft.trim())
+}
+
+function buildAssistantUsagePayload({
+  action,
+  history,
+  selectedChat,
+  accounts,
+  replyAgents,
+  selectedReplyAgentId,
+  assistantReplyOptions,
+  adoptedReplyIndex,
+  assistantDraft,
+  translatedDraft,
+  translatedSourceDraft,
+  draftTargetLanguage,
+  draftTargetLanguageName,
+}: {
+  action: AssistantUsageAction
+  history: MessageHistoryResponse
+  selectedChat: ChatSummary
+  accounts: AccountView[]
+  replyAgents: SystemAgentConfigView[]
+  selectedReplyAgentId: string
+  assistantReplyOptions: AssistantReplyOption[]
+  adoptedReplyIndex?: number
+  assistantDraft: string
+  translatedDraft: string
+  translatedSourceDraft: string
+  draftTargetLanguage: string
+  draftTargetLanguageName: string
+}): CreateAssistantUsageLogPayload | undefined {
+  const finalDraft = (translatedSourceDraft.trim() || assistantDraft.trim())
+  const translatedContent = translatedDraft.trim()
+  if (!finalDraft && !translatedContent) {
+    return undefined
+  }
+
+  const latestMessage = findLatestCustomerMessage(history.messages)
+  const adoptedOption =
+    adoptedReplyIndex !== undefined ? assistantReplyOptions[adoptedReplyIndex] : undefined
+  const account = accounts.find((item) => item.id === history.chat.account_id)
+  const agent = replyAgents.find((item) => item.id === selectedReplyAgentId)
+  const mediaRef = latestMessage ? formatMessageMediaRef(latestMessage) : ''
+  const customerID = latestMessage?.sender_jid || selectedChat.wa_chat_jid
+  const customerNickname =
+    latestMessage?.sender_name?.trim() ||
+    (history.chat.title?.trim() || selectedChat.title?.trim() || getChatDisplayName(selectedChat))
+
+  return {
+    ws_account_id: history.chat.account_id,
+    ws_account_name: account?.display_name || '',
+    chat_id: history.chat.id,
+    customer_id: customerID,
+    customer_nickname: customerNickname,
+    latest_message_id: latestMessage?.id || '',
+    latest_message_type: latestMessage?.message_type || '',
+    latest_message_text:
+      latestMessage?.text_content?.trim() ||
+      (latestMessage ? fallbackMessageCopy(latestMessage.message_type) : ''),
+    latest_message_media_ref: mediaRef,
+    latest_message_received_at: latestMessage?.sent_at,
+    agent_id: agent?.id || selectedReplyAgentId,
+    agent_name: agent?.name || '',
+    adopted_option_index: adoptedReplyIndex !== undefined ? adoptedReplyIndex + 1 : undefined,
+    adopted_option_content: adoptedOption?.content || '',
+    final_draft_content: finalDraft || translatedContent,
+    translated_content: translatedContent,
+    target_language: translatedContent
+      ? `${draftTargetLanguageName || draftTargetLanguage}(${draftTargetLanguage})`
+      : '',
+    action_type: action,
+  }
+}
+
+function findLatestCustomerMessage(messages: MessageView[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (!messages[index].from_me) {
+      return messages[index]
+    }
+  }
+
+  return messages[messages.length - 1]
+}
+
+function formatMessageMediaRef(message: MessageView) {
+  if (!message.media.length) {
+    return ''
+  }
+
+  return message.media
+    .map((media) =>
+      [
+        media.media_type,
+        media.id,
+        media.storage_key,
+        media.file_name,
+        media.mime_type,
+      ]
+        .filter(Boolean)
+        .join(':'),
+    )
+    .join(' | ')
 }
 
 function parseAssistantReplyOptions(rawDraft: string): AssistantReplyOption[] {

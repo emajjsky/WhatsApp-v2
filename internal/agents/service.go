@@ -519,6 +519,111 @@ func (s *Service) ListRuns(ctx context.Context, filters RunListFilters) (RunList
 	}, nil
 }
 
+func (s *Service) CreateUsageLog(ctx context.Context, input CreateAssistantUsageLogInput) (AssistantUsageLogView, error) {
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return AssistantUsageLogView{}, err
+	}
+
+	action := normalizeAssistantUsageAction(input.ActionType)
+	if action == "" {
+		return AssistantUsageLogView{}, fmt.Errorf("unsupported action_type %q", input.ActionType)
+	}
+
+	finalDraft := strings.TrimSpace(input.FinalDraftContent)
+	if finalDraft == "" && strings.TrimSpace(input.TranslatedContent) == "" {
+		return AssistantUsageLogView{}, fmt.Errorf("final_draft_content is required")
+	}
+
+	now := s.now()
+	item := AssistantUsageLog{
+		ID:                      ids.NewUUID(),
+		UserID:                  user.ID,
+		WSAccountID:             limitText(input.WSAccountID, 500),
+		WSAccountName:           limitText(input.WSAccountName, 500),
+		ChatID:                  limitText(input.ChatID, 500),
+		CustomerID:              limitText(input.CustomerID, 500),
+		CustomerNickname:        limitText(input.CustomerNickname, 500),
+		LatestMessageID:         limitText(input.LatestMessageID, 500),
+		LatestMessageType:       limitText(input.LatestMessageType, 80),
+		LatestMessageText:       limitText(input.LatestMessageText, 8000),
+		LatestMessageMediaRef:   limitText(input.LatestMessageMediaRef, 2000),
+		LatestMessageReceivedAt: input.LatestMessageReceivedAt,
+		AgentID:                 limitText(input.AgentID, 500),
+		AgentName:               limitText(input.AgentName, 500),
+		AdoptedOptionIndex:      input.AdoptedOptionIndex,
+		AdoptedOptionContent:    limitText(input.AdoptedOptionContent, 8000),
+		FinalDraftContent:       limitText(finalDraft, 12000),
+		TranslatedContent:       limitText(input.TranslatedContent, 12000),
+		TargetLanguage:          limitText(input.TargetLanguage, 120),
+		ActionType:              action,
+		LogDate:                 time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC),
+		CreatedAt:               now,
+	}
+
+	if item.AdoptedOptionIndex != nil && *item.AdoptedOptionIndex < 0 {
+		return AssistantUsageLogView{}, fmt.Errorf("adopted_option_index must be 0 or greater")
+	}
+
+	if err := s.repository.CreateUsageLog(ctx, item); err != nil {
+		return AssistantUsageLogView{}, err
+	}
+
+	return mapUsageLogToView(item), nil
+}
+
+func (s *Service) ListUsageLogs(ctx context.Context, filters AssistantUsageLogFilters) (AssistantUsageLogListResult, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return AssistantUsageLogListResult{}, err
+	}
+
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	offset := filters.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	action := normalizeAssistantUsageAction(filters.Action)
+	if filters.Action != "" && action == "" {
+		return AssistantUsageLogListResult{}, fmt.Errorf("unsupported action %q", filters.Action)
+	}
+
+	logDate := strings.TrimSpace(filters.LogDate)
+	if logDate != "" {
+		if _, err := time.Parse("2006-01-02", logDate); err != nil {
+			return AssistantUsageLogListResult{}, fmt.Errorf("log_date must use YYYY-MM-DD")
+		}
+	}
+
+	items, total, err := s.repository.ListUsageLogs(ctx, AssistantUsageLogFilters{
+		LogDate:   logDate,
+		UserID:    strings.TrimSpace(filters.UserID),
+		AccountID: strings.TrimSpace(filters.AccountID),
+		ChatID:    strings.TrimSpace(filters.ChatID),
+		AgentID:   strings.TrimSpace(filters.AgentID),
+		Action:    action,
+		Limit:     limit,
+		Offset:    offset,
+	})
+	if err != nil {
+		return AssistantUsageLogListResult{}, err
+	}
+
+	return AssistantUsageLogListResult{
+		Logs:   items,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
+	}, nil
+}
+
 func (s *Service) ensureAccountExists(ctx context.Context, accountID string) error {
 	if s.accountLookup == nil {
 		return nil
@@ -623,6 +728,58 @@ func normalizeRunStatus(value RunStatus) RunStatus {
 	default:
 		return ""
 	}
+}
+
+func normalizeAssistantUsageAction(value AssistantUsageAction) AssistantUsageAction {
+	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case string(AssistantUsageActionWriteback):
+		return AssistantUsageActionWriteback
+	case string(AssistantUsageActionSend):
+		return AssistantUsageActionSend
+	default:
+		return ""
+	}
+}
+
+func mapUsageLogToView(item AssistantUsageLog) AssistantUsageLogView {
+	return AssistantUsageLogView{
+		ID:                      item.ID,
+		UserID:                  item.UserID,
+		WSAccountID:             item.WSAccountID,
+		WSAccountName:           item.WSAccountName,
+		ChatID:                  item.ChatID,
+		CustomerID:              item.CustomerID,
+		CustomerNickname:        item.CustomerNickname,
+		LatestMessageID:         item.LatestMessageID,
+		LatestMessageType:       item.LatestMessageType,
+		LatestMessageText:       item.LatestMessageText,
+		LatestMessageMediaRef:   item.LatestMessageMediaRef,
+		LatestMessageReceivedAt: item.LatestMessageReceivedAt,
+		AgentID:                 item.AgentID,
+		AgentName:               item.AgentName,
+		AdoptedOptionIndex:      item.AdoptedOptionIndex,
+		AdoptedOptionContent:    item.AdoptedOptionContent,
+		FinalDraftContent:       item.FinalDraftContent,
+		TranslatedContent:       item.TranslatedContent,
+		TargetLanguage:          item.TargetLanguage,
+		ActionType:              item.ActionType,
+		LogDate:                 item.LogDate.Format("2006-01-02"),
+		CreatedAt:               item.CreatedAt,
+	}
+}
+
+func limitText(value string, maxRunes int) string {
+	trimmed := strings.TrimSpace(value)
+	if maxRunes <= 0 {
+		return trimmed
+	}
+
+	runes := []rune(trimmed)
+	if len(runes) <= maxRunes {
+		return trimmed
+	}
+
+	return string(runes[:maxRunes])
 }
 
 func normalizeMatchMode(value MatchMode) MatchMode {

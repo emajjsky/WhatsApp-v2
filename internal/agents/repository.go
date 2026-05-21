@@ -1014,6 +1014,166 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 	return items, total, nil
 }
 
+func (r *Repository) CreateUsageLog(ctx context.Context, item AssistantUsageLog) error {
+	const query = `
+INSERT INTO assistant_usage_logs (
+    id,
+    user_id,
+    ws_account_id,
+    ws_account_name,
+    chat_id,
+    customer_id,
+    customer_nickname,
+    latest_message_id,
+    latest_message_type,
+    latest_message_text,
+    latest_message_media_ref,
+    latest_message_received_at,
+    agent_id,
+    agent_name,
+    adopted_option_index,
+    adopted_option_content,
+    final_draft_content,
+    translated_content,
+    target_language,
+    action_type,
+    log_date,
+    created_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+    $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
+)`
+
+	if _, err := r.db.ExecContext(
+		ctx,
+		query,
+		item.ID,
+		item.UserID,
+		item.WSAccountID,
+		item.WSAccountName,
+		item.ChatID,
+		item.CustomerID,
+		item.CustomerNickname,
+		item.LatestMessageID,
+		item.LatestMessageType,
+		item.LatestMessageText,
+		item.LatestMessageMediaRef,
+		item.LatestMessageReceivedAt,
+		item.AgentID,
+		item.AgentName,
+		item.AdoptedOptionIndex,
+		item.AdoptedOptionContent,
+		item.FinalDraftContent,
+		item.TranslatedContent,
+		item.TargetLanguage,
+		item.ActionType,
+		item.LogDate,
+		item.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("create assistant usage log %q: %w", item.ID, err)
+	}
+
+	return nil
+}
+
+func (r *Repository) ListUsageLogs(ctx context.Context, filters AssistantUsageLogFilters) ([]AssistantUsageLogView, int, error) {
+	whereClause, args := buildUsageLogWhere(ctx, filters)
+
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM assistant_usage_logs aul WHERE %s`, whereClause)
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count assistant usage logs: %w", err)
+	}
+
+	listArgs := append([]any{}, args...)
+	listArgs = append(listArgs, filters.Limit, filters.Offset)
+	limitIndex := len(args) + 1
+	offsetIndex := len(args) + 2
+
+	query := fmt.Sprintf(`
+SELECT
+    aul.id,
+    aul.user_id,
+    aul.ws_account_id,
+    aul.ws_account_name,
+    aul.chat_id,
+    aul.customer_id,
+    aul.customer_nickname,
+    aul.latest_message_id,
+    aul.latest_message_type,
+    aul.latest_message_text,
+    aul.latest_message_media_ref,
+    aul.latest_message_received_at,
+    aul.agent_id,
+    aul.agent_name,
+    aul.adopted_option_index,
+    aul.adopted_option_content,
+    aul.final_draft_content,
+    aul.translated_content,
+    aul.target_language,
+    aul.action_type,
+    aul.log_date,
+    aul.created_at
+FROM assistant_usage_logs aul
+WHERE %s
+ORDER BY aul.created_at DESC, aul.id DESC
+LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
+
+	rows, err := r.db.QueryContext(ctx, query, listArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list assistant usage logs: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]AssistantUsageLogView, 0, filters.Limit)
+	for rows.Next() {
+		var (
+			item                    AssistantUsageLogView
+			latestMessageReceivedAt sql.NullTime
+			adoptedOptionIndex      sql.NullInt64
+			logDate                 time.Time
+		)
+
+		if err := rows.Scan(
+			&item.ID,
+			&item.UserID,
+			&item.WSAccountID,
+			&item.WSAccountName,
+			&item.ChatID,
+			&item.CustomerID,
+			&item.CustomerNickname,
+			&item.LatestMessageID,
+			&item.LatestMessageType,
+			&item.LatestMessageText,
+			&item.LatestMessageMediaRef,
+			&latestMessageReceivedAt,
+			&item.AgentID,
+			&item.AgentName,
+			&adoptedOptionIndex,
+			&item.AdoptedOptionContent,
+			&item.FinalDraftContent,
+			&item.TranslatedContent,
+			&item.TargetLanguage,
+			&item.ActionType,
+			&logDate,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan assistant usage log row: %w", err)
+		}
+
+		item.LatestMessageReceivedAt = nullableTime(latestMessageReceivedAt)
+		item.AdoptedOptionIndex = nullableInt(adoptedOptionIndex)
+		item.LogDate = logDate.Format("2006-01-02")
+		items = append(items, item)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate assistant usage logs: %w", err)
+	}
+
+	return items, total, nil
+}
+
 func buildRuleWhere(ctx context.Context, filters RuleListFilters) (string, []any) {
 	conditions := []string{"1 = 1"}
 	args := make([]any, 0, 2)
@@ -1070,6 +1230,42 @@ func buildRunWhere(ctx context.Context, filters RunListFilters) (string, []any) 
 	return strings.Join(conditions, " AND "), args
 }
 
+func buildUsageLogWhere(ctx context.Context, filters AssistantUsageLogFilters) (string, []any) {
+	conditions := []string{"1 = 1"}
+	args := make([]any, 0, 6)
+
+	if filters.LogDate != "" {
+		args = append(args, filters.LogDate)
+		conditions = append(conditions, fmt.Sprintf("aul.log_date = $%d::date", len(args)))
+	}
+	if filters.UserID != "" {
+		args = append(args, filters.UserID)
+		conditions = append(conditions, fmt.Sprintf("aul.user_id = $%d", len(args)))
+	}
+	if filters.AccountID != "" {
+		args = append(args, filters.AccountID)
+		conditions = append(conditions, fmt.Sprintf("aul.ws_account_id = $%d", len(args)))
+	}
+	if filters.ChatID != "" {
+		args = append(args, filters.ChatID)
+		conditions = append(conditions, fmt.Sprintf("aul.chat_id = $%d", len(args)))
+	}
+	if filters.AgentID != "" {
+		args = append(args, filters.AgentID)
+		conditions = append(conditions, fmt.Sprintf("aul.agent_id = $%d", len(args)))
+	}
+	if filters.Action != "" {
+		args = append(args, filters.Action)
+		conditions = append(conditions, fmt.Sprintf("aul.action_type = $%d", len(args)))
+	}
+	if scopeCondition, scopeArgs := usageLogScopeCondition(ctx, len(args)+1); scopeCondition != "" {
+		conditions = append(conditions, scopeCondition)
+		args = append(args, scopeArgs...)
+	}
+
+	return strings.Join(conditions, " AND "), args
+}
+
 func agentAccountScope(ctx context.Context, accountColumn string, startIndex int) (string, []any) {
 	currentUser, ok := auth.CurrentUser(ctx)
 	if !ok || currentUser.IsAdmin() {
@@ -1110,6 +1306,15 @@ func agentRunScopeCondition(ctx context.Context, startIndex int) (string, []any)
     WHERE account_scope.id = ar.account_id
       AND account_scope.user_id = $%d
 )`, startIndex), []any{currentUser.ID}
+}
+
+func usageLogScopeCondition(ctx context.Context, startIndex int) (string, []any) {
+	currentUser, ok := auth.CurrentUser(ctx)
+	if !ok || currentUser.IsAdmin() {
+		return "", nil
+	}
+
+	return fmt.Sprintf("aul.user_id = $%d", startIndex), []any{currentUser.ID}
 }
 
 func decodeRuleFilters(
@@ -1241,6 +1446,15 @@ func nullableString(value sql.NullString) *string {
 	}
 
 	result := value.String
+	return &result
+}
+
+func nullableInt(value sql.NullInt64) *int {
+	if !value.Valid {
+		return nil
+	}
+
+	result := int(value.Int64)
 	return &result
 }
 

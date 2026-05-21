@@ -4,6 +4,7 @@ import {
   createUser,
   listDesktopDevices,
   deleteSystemAgentConfig,
+  listAssistantUsageLogs,
   listInvitations,
   listSystemAgentConfigs,
   listUsers,
@@ -14,6 +15,8 @@ import {
   upsertSystemAgentConfig,
   type AgentProviderConfig,
   type AgentPurpose,
+  type AssistantUsageAction,
+  type AssistantUsageLogView,
   type AuthUser,
   type DesktopDeviceStatus,
   type DesktopDeviceView,
@@ -27,7 +30,7 @@ import {
 } from '../api/client'
 import { Icon } from '../components/Icon'
 
-type AdminTab = 'users' | 'invitations' | 'agents'
+type AdminTab = 'users' | 'invitations' | 'agents' | 'usageLogs'
 type ProviderType = 'openai_compatible' | 'coze' | 'n8n' | 'webhook'
 
 interface AgentConfigForm {
@@ -147,6 +150,12 @@ export function AdminPage() {
             hint="回复和翻译 Agent"
             onClick={() => setTab('agents')}
           />
+          <AdminTabButton
+            active={tab === 'usageLogs'}
+            title="AI使用流水"
+            hint="写回和发送记录"
+            onClick={() => setTab('usageLogs')}
+          />
         </div>
       </header>
 
@@ -154,6 +163,7 @@ export function AdminPage() {
         {tab === 'users' ? <UserAdminPanel /> : null}
         {tab === 'invitations' ? <InvitationAdminPanel /> : null}
         {tab === 'agents' ? <SystemAgentPanel /> : null}
+        {tab === 'usageLogs' ? <AssistantUsageLogPanel /> : null}
       </main>
     </div>
   )
@@ -776,6 +786,98 @@ function InvitationAdminPanel() {
 
       {notice ? <div className="success-banner">{notice}</div> : null}
       {error ? <div className="error-banner">{error}</div> : null}
+    </section>
+  )
+}
+
+function AssistantUsageLogPanel() {
+  const [logs, setLogs] = useState<AssistantUsageLogView[]>([])
+  const [logDate, setLogDate] = useState(todayDateInput())
+  const [accountId, setAccountId] = useState('')
+  const [agentId, setAgentId] = useState('')
+  const [action, setAction] = useState<AssistantUsageAction | ''>('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string>()
+
+  async function loadLogs() {
+    setLoading(true)
+    setError(undefined)
+    try {
+      const response = await listAssistantUsageLogs({
+        logDate: logDate || undefined,
+        accountId: accountId.trim() || undefined,
+        agentId: agentId.trim() || undefined,
+        action,
+        limit: 80,
+      })
+      setLogs(response.logs)
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载AI使用流水失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadLogs()
+  }, [])
+
+  return (
+    <section className="panel admin-usage-log-panel">
+      <div className="admin-usage-log-toolbar">
+        <label className="field compact-field">
+          <span>日期</span>
+          <input type="date" value={logDate} onChange={(event) => setLogDate(event.target.value)} />
+        </label>
+        <label className="field compact-field">
+          <span>WS账号ID</span>
+          <input value={accountId} onChange={(event) => setAccountId(event.target.value)} />
+        </label>
+        <label className="field compact-field">
+          <span>智能体ID</span>
+          <input value={agentId} onChange={(event) => setAgentId(event.target.value)} />
+        </label>
+        <label className="field compact-field">
+          <span>动作</span>
+          <select value={action} onChange={(event) => setAction(event.target.value as AssistantUsageAction | '')}>
+            <option value="">全部</option>
+            <option value="writeback">写回</option>
+            <option value="send">发送</option>
+          </select>
+        </label>
+        <button className="primary-button" type="button" onClick={() => void loadLogs()} disabled={loading}>
+          {loading ? '查询中...' : '查询'}
+        </button>
+      </div>
+
+      {error ? <div className="error-banner">{error}</div> : null}
+
+      <div className="admin-usage-log-list">
+        {logs.length ? (
+          logs.map((log) => (
+            <article className="admin-usage-log-row" key={log.id}>
+              <div className="usage-log-main">
+                <div className="usage-log-title-row">
+                  <strong>{log.customer_nickname || log.customer_id || '未知客户'}</strong>
+                  <span>{log.action_type === 'send' ? '发送' : '写回'}</span>
+                  <small>{formatDateTime(log.created_at)}</small>
+                </div>
+                <p>{log.latest_message_text || log.latest_message_media_ref || log.latest_message_type || '无当前消息'}</p>
+                <p>{log.translated_content || log.final_draft_content}</p>
+              </div>
+              <div className="usage-log-meta">
+                <span>{log.ws_account_name || log.ws_account_id || '未知账号'}</span>
+                <span>{log.agent_name || log.agent_id || '未知智能体'}</span>
+                <span>{log.adopted_option_index ? `方案 ${log.adopted_option_index}` : '未标记方案'}</span>
+              </div>
+            </article>
+          ))
+        ) : (
+          <div className="empty-state compact-empty-state">
+            {loading ? '正在加载...' : '暂无AI使用流水'}
+          </div>
+        )}
+      </div>
     </section>
   )
 }
@@ -1518,4 +1620,10 @@ function formatDateTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function todayDateInput() {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
 }

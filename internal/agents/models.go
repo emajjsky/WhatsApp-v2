@@ -223,6 +223,102 @@ type RunListResult struct {
 	Offset int       `json:"offset"`
 }
 
+type AssistantUsageAction string
+
+const (
+	AssistantUsageActionWriteback AssistantUsageAction = "writeback"
+	AssistantUsageActionSend      AssistantUsageAction = "send"
+)
+
+type AssistantUsageLog struct {
+	ID                      string
+	UserID                  string
+	WSAccountID             string
+	WSAccountName           string
+	ChatID                  string
+	CustomerID              string
+	CustomerNickname        string
+	LatestMessageID         string
+	LatestMessageType       string
+	LatestMessageText       string
+	LatestMessageMediaRef   string
+	LatestMessageReceivedAt *time.Time
+	AgentID                 string
+	AgentName               string
+	AdoptedOptionIndex      *int
+	AdoptedOptionContent    string
+	FinalDraftContent       string
+	TranslatedContent       string
+	TargetLanguage          string
+	ActionType              AssistantUsageAction
+	LogDate                 time.Time
+	CreatedAt               time.Time
+}
+
+type AssistantUsageLogView struct {
+	ID                      string               `json:"id"`
+	UserID                  string               `json:"user_id"`
+	WSAccountID             string               `json:"ws_account_id"`
+	WSAccountName           string               `json:"ws_account_name"`
+	ChatID                  string               `json:"chat_id"`
+	CustomerID              string               `json:"customer_id"`
+	CustomerNickname        string               `json:"customer_nickname"`
+	LatestMessageID         string               `json:"latest_message_id"`
+	LatestMessageType       string               `json:"latest_message_type"`
+	LatestMessageText       string               `json:"latest_message_text"`
+	LatestMessageMediaRef   string               `json:"latest_message_media_ref"`
+	LatestMessageReceivedAt *time.Time           `json:"latest_message_received_at,omitempty"`
+	AgentID                 string               `json:"agent_id"`
+	AgentName               string               `json:"agent_name"`
+	AdoptedOptionIndex      *int                 `json:"adopted_option_index,omitempty"`
+	AdoptedOptionContent    string               `json:"adopted_option_content"`
+	FinalDraftContent       string               `json:"final_draft_content"`
+	TranslatedContent       string               `json:"translated_content"`
+	TargetLanguage          string               `json:"target_language"`
+	ActionType              AssistantUsageAction `json:"action_type"`
+	LogDate                 string               `json:"log_date"`
+	CreatedAt               time.Time            `json:"created_at"`
+}
+
+type CreateAssistantUsageLogInput struct {
+	WSAccountID             string               `json:"ws_account_id"`
+	WSAccountName           string               `json:"ws_account_name"`
+	ChatID                  string               `json:"chat_id"`
+	CustomerID              string               `json:"customer_id"`
+	CustomerNickname        string               `json:"customer_nickname"`
+	LatestMessageID         string               `json:"latest_message_id"`
+	LatestMessageType       string               `json:"latest_message_type"`
+	LatestMessageText       string               `json:"latest_message_text"`
+	LatestMessageMediaRef   string               `json:"latest_message_media_ref"`
+	LatestMessageReceivedAt *time.Time           `json:"latest_message_received_at,omitempty"`
+	AgentID                 string               `json:"agent_id"`
+	AgentName               string               `json:"agent_name"`
+	AdoptedOptionIndex      *int                 `json:"adopted_option_index,omitempty"`
+	AdoptedOptionContent    string               `json:"adopted_option_content"`
+	FinalDraftContent       string               `json:"final_draft_content"`
+	TranslatedContent       string               `json:"translated_content"`
+	TargetLanguage          string               `json:"target_language"`
+	ActionType              AssistantUsageAction `json:"action_type"`
+}
+
+type AssistantUsageLogFilters struct {
+	LogDate   string
+	UserID    string
+	AccountID string
+	ChatID    string
+	AgentID   string
+	Action    AssistantUsageAction
+	Limit     int
+	Offset    int
+}
+
+type AssistantUsageLogListResult struct {
+	Logs   []AssistantUsageLogView `json:"logs"`
+	Total  int                     `json:"total"`
+	Limit  int                     `json:"limit"`
+	Offset int                     `json:"offset"`
+}
+
 type RunStatusUpdate struct {
 	Status        RunStatus
 	OutputDraft   *string
