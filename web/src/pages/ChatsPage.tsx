@@ -2159,6 +2159,7 @@ function buildAssistantUsagePayload({
     agent_name: agent?.name || '',
     adopted_option_index: adoptedReplyIndex !== undefined ? adoptedReplyIndex + 1 : undefined,
     adopted_option_content: adoptedOption?.content || '',
+    translation_source_content: translatedSourceDraft.trim() || assistantDraft.trim(),
     final_draft_content: finalDraft || translatedContent,
     translated_content: translatedContent,
     target_language: translatedContent

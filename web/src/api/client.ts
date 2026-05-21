@@ -395,6 +395,7 @@ export interface AssistantUsageLogView {
   agent_name: string
   adopted_option_index?: number
   adopted_option_content: string
+  translation_source_content: string
   final_draft_content: string
   translated_content: string
   target_language: string
@@ -515,6 +516,7 @@ export interface CreateAssistantUsageLogPayload {
   agent_name?: string
   adopted_option_index?: number
   adopted_option_content?: string
+  translation_source_content?: string
   final_draft_content: string
   translated_content?: string
   target_language?: string

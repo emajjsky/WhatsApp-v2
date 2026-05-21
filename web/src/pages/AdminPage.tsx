@@ -863,7 +863,9 @@ function AssistantUsageLogPanel() {
                   <small>{formatDateTime(log.created_at)}</small>
                 </div>
                 <p>{log.latest_message_text || log.latest_message_media_ref || log.latest_message_type || '无当前消息'}</p>
-                <p>{log.translated_content || log.final_draft_content}</p>
+                <p>采纳：{log.adopted_option_content || '无'}</p>
+                <p>翻译原文：{log.translation_source_content || '无'}</p>
+                <p>发送内容：{log.translated_content || log.final_draft_content}</p>
               </div>
               <div className="usage-log-meta">
                 <span>{log.ws_account_name || log.ws_account_id || '未知账号'}</span>

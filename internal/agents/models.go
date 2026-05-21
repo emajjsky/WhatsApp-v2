@@ -247,6 +247,7 @@ type AssistantUsageLog struct {
 	AgentName               string
 	AdoptedOptionIndex      *int
 	AdoptedOptionContent    string
+	TranslationSourceContent string
 	FinalDraftContent       string
 	TranslatedContent       string
 	TargetLanguage          string
@@ -272,6 +273,7 @@ type AssistantUsageLogView struct {
 	AgentName               string               `json:"agent_name"`
 	AdoptedOptionIndex      *int                 `json:"adopted_option_index,omitempty"`
 	AdoptedOptionContent    string               `json:"adopted_option_content"`
+	TranslationSourceContent string              `json:"translation_source_content"`
 	FinalDraftContent       string               `json:"final_draft_content"`
 	TranslatedContent       string               `json:"translated_content"`
 	TargetLanguage          string               `json:"target_language"`
@@ -295,6 +297,7 @@ type CreateAssistantUsageLogInput struct {
 	AgentName               string               `json:"agent_name"`
 	AdoptedOptionIndex      *int                 `json:"adopted_option_index,omitempty"`
 	AdoptedOptionContent    string               `json:"adopted_option_content"`
+	TranslationSourceContent string              `json:"translation_source_content"`
 	FinalDraftContent       string               `json:"final_draft_content"`
 	TranslatedContent       string               `json:"translated_content"`
 	TargetLanguage          string               `json:"target_language"`
