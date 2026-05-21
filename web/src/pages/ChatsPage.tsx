@@ -150,7 +150,7 @@ export function ChatsPage() {
   const [composeNotice, setComposeNotice] = useState<string>()
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [assistantRun, setAssistantRun] = useState<AgentRunView>()
-  const [assistantRawDraft, setAssistantRawDraft] = useState('')
+  const [, setAssistantRawDraft] = useState('')
   const [assistantReplyOptions, setAssistantReplyOptions] = useState<AssistantReplyOption[]>([])
   const [adoptedReplyIndex, setAdoptedReplyIndex] = useState<number>()
   const [assistantDraft, setAssistantDraft] = useState('')
@@ -1018,18 +1018,7 @@ export function ChatsPage() {
     history && !canSendInCurrentChat
       ? getChatSendBlockedReason(history.chat.wa_chat_jid, history.chat.chat_type)
       : undefined
-  const assistantStageLabel =
-    adoptedReplyIndex !== undefined
-      ? '已采纳'
-      : assistantReplyOptions.length > 0
-        ? '待采纳'
-        : '待生成'
-  const assistantStageTone =
-    adoptedReplyIndex !== undefined
-      ? 'adopted'
-      : assistantReplyOptions.length > 0
-        ? 'ready'
-        : 'pending'
+  const hasAdoptedAssistantReply = adoptedReplyIndex !== undefined
 
   return (
     <div className="page page-chats whatsapp-chat-page">
@@ -1432,27 +1421,18 @@ export function ChatsPage() {
           {selectedChat && history ? (
             <div className="assistant-panel-body whatsapp-assistant-body">
               <div className="assistant-reply-column">
-                <section className="assistant-run-strip">
+                <section className="assistant-card assistant-options-card">
+                  <div className="assistant-card-header-row">
+                    <span className="assistant-section-label">回复方案</span>
+                    {hasAdoptedAssistantReply ? (
+                      <span className="assistant-stage-pill stage-adopted">已采纳</span>
+                    ) : null}
+                  </div>
                   {agentConfigsLoading ? (
                     <div className="warning-banner">加载中...</div>
                   ) : replyAgents.length ? null : (
                     <div className="warning-banner">未启用回复智能体。</div>
                   )}
-
-                  {assistantRun ? (
-                    <div className="assistant-chip-row">
-                      <StatusBadge status={assistantRun.status} />
-                    </div>
-                  ) : null}
-                </section>
-
-                <section className="assistant-card assistant-options-card">
-                  <div className="assistant-card-header-row">
-                    <span className="assistant-section-label">回复方案</span>
-                    <span className={`assistant-stage-pill stage-${assistantStageTone}`}>
-                      {assistantStageLabel}
-                    </span>
-                  </div>
 
                   {assistantReplyOptions.length ? (
                     <div className="assistant-option-list">
@@ -1490,13 +1470,8 @@ export function ChatsPage() {
                             <div className="assistant-option-header">
                               <div>
                                 <strong>{`回复方案 ${index + 1}`}</strong>
-                                <span>待生成</span>
                               </div>
-                              <button className="secondary-button assistant-mini-button" type="button" disabled>
-                                待生成
-                              </button>
                             </div>
-                            <p>生成后显示第 {index + 1} 套回复策略。</p>
                           </article>
                         )
                       })}
@@ -1508,19 +1483,8 @@ export function ChatsPage() {
                           <div className="assistant-option-header">
                             <div>
                               <strong>{`回复方案 ${index + 1}`}</strong>
-                              <span>{assistantBusy || assistantRawDraft ? '待生成内容' : '待生成'}</span>
                             </div>
-                            <button className="secondary-button assistant-mini-button" type="button" disabled>
-                              待生成
-                            </button>
                           </div>
-                          <p>
-                            {index === 0
-                              ? assistantBusy || assistantRawDraft
-                                ? '正在等待标准 JSON 输出...'
-                                : '生成后显示第一套回复策略。'
-                              : `生成后显示第 ${index + 1} 套回复策略。`}
-                          </p>
                         </article>
                       ))}
                     </div>
@@ -1532,9 +1496,9 @@ export function ChatsPage() {
                 <section className="assistant-card assistant-draft-card">
                   <div className="assistant-card-header-row">
                     <span className="assistant-section-label">采纳区</span>
-                    <span className={`assistant-stage-pill stage-${assistantStageTone}`}>
-                      {assistantStageLabel}
-                    </span>
+                    {hasAdoptedAssistantReply ? (
+                      <span className="assistant-stage-pill stage-adopted">已采纳</span>
+                    ) : null}
                   </div>
                   <textarea
                     className="assistant-draft-box"

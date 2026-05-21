@@ -2210,15 +2210,14 @@ a {
 
 .assistant-header-controls {
   min-width: 0;
-  display: grid;
-  grid-template-columns: auto minmax(142px, 1fr) auto minmax(54px, 64px) minmax(104px, auto);
-  gap: 6px;
+  display: flex;
+  gap: 8px;
   align-items: center;
 }
 
 .assistant-toolbar-title {
   color: var(--text);
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 900;
   white-space: nowrap;
 }
@@ -2237,6 +2236,7 @@ a {
 }
 
 .assistant-header-generate {
+  margin-left: auto;
   background: #25d366;
   border-color: #25d366;
   color: #063b22;
@@ -2254,6 +2254,7 @@ a {
 }
 
 .assistant-context-toggle {
+  flex: 0 0 auto;
   white-space: nowrap;
   justify-content: center;
   gap: 5px;
@@ -2263,6 +2264,7 @@ a {
 
 .assistant-context-limit-field {
   display: grid;
+  flex: 0 0 48px;
   gap: 2px;
 }
 
@@ -2271,6 +2273,7 @@ a {
 }
 
 .assistant-context-limit-field input {
+  width: 48px;
   min-height: 29px;
   padding: 4px 5px;
   text-align: center;
@@ -2306,7 +2309,7 @@ a {
 }
 
 .assistant-reply-column {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .assistant-draft-column {
@@ -2321,12 +2324,6 @@ a {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.84);
   box-shadow: none;
-}
-
-.assistant-run-strip {
-  min-height: 24px;
-  display: grid;
-  align-items: center;
 }
 
 .assistant-options-card,
@@ -2405,15 +2402,21 @@ a {
 
 .assistant-header-select {
   min-width: 0;
-  max-width: 100%;
+  width: clamp(180px, 22vw, 260px);
+  max-width: 260px;
+  flex: 0 1 260px;
   min-height: 29px;
   padding: 4px 8px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.9);
   color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.assistant-header-select option {
+  font-size: 13px;
 }
 
 .assistant-status-card {
@@ -4988,8 +4991,7 @@ a {
   }
 
   .assistant-header-controls {
-    grid-template-columns: auto minmax(112px, 1fr) auto 42px minmax(84px, auto);
-    gap: 5px;
+    gap: 6px;
   }
 
   .assistant-context-toggle {
@@ -5001,7 +5003,12 @@ a {
   .assistant-header-select {
     min-height: 26px;
     padding: 4px 6px;
-    font-size: 10px;
+    font-size: 12px;
+  }
+
+  .assistant-header-select {
+    width: clamp(160px, 20vw, 230px);
+    max-width: 230px;
   }
 
   .assistant-panel-body {
