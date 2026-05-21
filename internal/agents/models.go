@@ -336,6 +336,16 @@ type AssistantUsageLogListResult struct {
 	Offset int                     `json:"offset"`
 }
 
+type AssistantUsageLogFilterOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type AssistantUsageLogFilterOptions struct {
+	Accounts []AssistantUsageLogFilterOption `json:"accounts"`
+	Agents   []AssistantUsageLogFilterOption `json:"agents"`
+}
+
 type RunStatusUpdate struct {
 	Status        RunStatus
 	OutputDraft   *string

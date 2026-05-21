@@ -796,6 +796,7 @@ export function ChatsPage() {
     const option = resolveLanguageOption(draftTargetLanguage, draftTargetLanguageName)
     const sourceDraft = assistantDraft.trim()
     setDraftTranslationBusy(true)
+    setAssistantNoticeState(undefined)
     setTranslatedDraftState('')
     setTranslatedSourceDraftState(sourceDraft)
 
@@ -807,7 +808,7 @@ export function ChatsPage() {
         target_language_name: option.name,
       })
       setTranslatedDraftState(response.translation.translated_text)
-      setAssistantNoticeState(`已翻译成${option.name}。`)
+      setAssistantNoticeState(undefined)
     } catch (translateError) {
       setAssistantNoticeState(translateError instanceof Error ? translateError.message : '翻译草稿失败')
     } finally {
@@ -889,7 +890,7 @@ export function ChatsPage() {
             setAssistantDraftState(options.length ? '' : finalDraft)
             setAssistantNoticeState(
               options.length
-                ? getAssistantRunNotice(run)
+                ? undefined
                 : `${getAssistantRunNotice(run)} 未识别到三方案 JSON，已放入草稿。`,
             )
           },
@@ -926,8 +927,8 @@ export function ChatsPage() {
     const logResult = await recordAssistantUsage('writeback')
     setAssistantNoticeState(
       logResult.ok
-        ? '已写回输入框，发送前还能继续改。'
-        : `已写回输入框，${logResult.error || 'AI使用记录保存失败。'}`,
+        ? undefined
+        : logResult.error || '采纳数据保存失败。',
     )
   }
 
@@ -949,8 +950,8 @@ export function ChatsPage() {
       const logResult = await recordAssistantUsage('send')
       setAssistantNoticeState(
         logResult.ok
-          ? 'Agent 草稿已发送。'
-          : `Agent 草稿已发送，${logResult.error || 'AI使用记录保存失败。'}`,
+          ? undefined
+          : logResult.error || '采纳数据保存失败。',
       )
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
@@ -965,7 +966,7 @@ export function ChatsPage() {
 
   async function recordAssistantUsage(action: AssistantUsageAction) {
     if (!history || !selectedChat) {
-      return { ok: false, error: 'AI使用记录保存失败。' }
+      return { ok: false, error: '采纳数据保存失败。' }
     }
 
     const payload = buildAssistantUsagePayload({
@@ -984,7 +985,7 @@ export function ChatsPage() {
       draftTargetLanguageName,
     })
     if (!payload) {
-      return { ok: false, error: 'AI使用记录保存失败。' }
+      return { ok: false, error: '采纳数据保存失败。' }
     }
 
     try {
@@ -995,8 +996,8 @@ export function ChatsPage() {
       return {
         ok: false,
         error: logError instanceof Error
-          ? `AI使用记录保存失败：${logError.message}`
-          : 'AI使用记录保存失败：未知错误',
+          ? `采纳数据保存失败：${logError.message}`
+          : '采纳数据保存失败：未知错误',
       }
     }
   }
@@ -1544,7 +1545,7 @@ export function ChatsPage() {
                                   setTranslatedDraftState('')
                                   setTranslatedSourceDraftState('')
                                   setAdoptedReplyIndexState(index)
-                                  setAssistantNoticeState(`已采纳${option.title || `方案 ${index + 1}`}。`)
+                                  setAssistantNoticeState(undefined)
                                 }}
                                 disabled={isAdopted}
                               >
@@ -1594,8 +1595,8 @@ export function ChatsPage() {
                     value={assistantDraft}
                     onChange={(event) => {
                       setAssistantDraftState(event.target.value)
-                      setAdoptedReplyIndexState(undefined)
                       setTranslatedDraftState('')
+                      setTranslatedSourceDraftState('')
                     }}
                     placeholder="点击左侧方案的采纳，或直接在这里编辑草稿"
                     rows={7}
@@ -1655,7 +1656,7 @@ export function ChatsPage() {
                   {assistantRun?.block_reason ? (
                     <div className="warning-banner">{assistantRun.block_reason}</div>
                   ) : null}
-                  {assistantNotice ? <div className="success-banner">{assistantNotice}</div> : null}
+                  {assistantNotice ? <div className="error-banner assistant-panel-error">{assistantNotice}</div> : null}
                 </section>
               </div>
             </div>

@@ -626,6 +626,14 @@ func (s *Service) ListUsageLogs(ctx context.Context, filters AssistantUsageLogFi
 	}, nil
 }
 
+func (s *Service) ListUsageLogFilterOptions(ctx context.Context) (AssistantUsageLogFilterOptions, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return AssistantUsageLogFilterOptions{}, err
+	}
+
+	return s.repository.ListUsageLogFilterOptions(ctx)
+}
+
 func (s *Service) ensureAccountExists(ctx context.Context, accountID string) error {
 	if s.accountLookup == nil {
 		return nil

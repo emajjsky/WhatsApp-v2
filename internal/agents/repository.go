@@ -1194,6 +1194,70 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 	return items, total, nil
 }
 
+func (r *Repository) ListUsageLogFilterOptions(ctx context.Context) (AssistantUsageLogFilterOptions, error) {
+	whereClause, args := buildUsageLogWhere(ctx, AssistantUsageLogFilters{})
+
+	query := fmt.Sprintf(`
+SELECT
+    COALESCE(NULLIF(aul.ws_account_id, ''), '') AS id,
+    COALESCE(NULLIF(MAX(aul.ws_account_name), ''), COALESCE(NULLIF(aul.ws_account_id, ''), '未知账号')) AS name
+FROM assistant_usage_logs aul
+WHERE %s
+  AND COALESCE(NULLIF(aul.ws_account_id, ''), '') <> ''
+GROUP BY COALESCE(NULLIF(aul.ws_account_id, ''), '')
+ORDER BY name ASC`, whereClause)
+
+	accountRows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return AssistantUsageLogFilterOptions{}, fmt.Errorf("list assistant usage account filters: %w", err)
+	}
+	defer accountRows.Close()
+
+	options := AssistantUsageLogFilterOptions{
+		Accounts: make([]AssistantUsageLogFilterOption, 0),
+		Agents:   make([]AssistantUsageLogFilterOption, 0),
+	}
+	for accountRows.Next() {
+		var option AssistantUsageLogFilterOption
+		if err := accountRows.Scan(&option.ID, &option.Name); err != nil {
+			return AssistantUsageLogFilterOptions{}, fmt.Errorf("scan assistant usage account filter: %w", err)
+		}
+		options.Accounts = append(options.Accounts, option)
+	}
+	if err := accountRows.Err(); err != nil {
+		return AssistantUsageLogFilterOptions{}, fmt.Errorf("iterate assistant usage account filters: %w", err)
+	}
+
+	query = fmt.Sprintf(`
+SELECT
+    COALESCE(NULLIF(aul.agent_id, ''), '') AS id,
+    COALESCE(NULLIF(MAX(aul.agent_name), ''), COALESCE(NULLIF(aul.agent_id, ''), '未知智能体')) AS name
+FROM assistant_usage_logs aul
+WHERE %s
+  AND COALESCE(NULLIF(aul.agent_id, ''), '') <> ''
+GROUP BY COALESCE(NULLIF(aul.agent_id, ''), '')
+ORDER BY name ASC`, whereClause)
+
+	agentRows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return AssistantUsageLogFilterOptions{}, fmt.Errorf("list assistant usage agent filters: %w", err)
+	}
+	defer agentRows.Close()
+
+	for agentRows.Next() {
+		var option AssistantUsageLogFilterOption
+		if err := agentRows.Scan(&option.ID, &option.Name); err != nil {
+			return AssistantUsageLogFilterOptions{}, fmt.Errorf("scan assistant usage agent filter: %w", err)
+		}
+		options.Agents = append(options.Agents, option)
+	}
+	if err := agentRows.Err(); err != nil {
+		return AssistantUsageLogFilterOptions{}, fmt.Errorf("iterate assistant usage agent filters: %w", err)
+	}
+
+	return options, nil
+}
+
 func buildRuleWhere(ctx context.Context, filters RuleListFilters) (string, []any) {
 	conditions := []string{"1 = 1"}
 	args := make([]any, 0, 2)

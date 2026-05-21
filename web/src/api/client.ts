@@ -423,6 +423,17 @@ export interface AssistantUsageLogListResponse {
   offset: number
 }
 
+export interface AssistantUsageLogFiltersResponse {
+  accounts: Array<{
+    id: string
+    name: string
+  }>
+  agents: Array<{
+    id: string
+    name: string
+  }>
+}
+
 export interface AuditEntry {
   id: string
   actor_type: 'user' | 'system' | 'agent'
@@ -1151,6 +1162,10 @@ export async function listAssistantUsageLogs(params?: {
   return request<AssistantUsageLogListResponse>(
     `/api/admin/assistant-usage-logs${queryString ? `?${queryString}` : ''}`,
   )
+}
+
+export async function listAssistantUsageLogFilters() {
+  return request<AssistantUsageLogFiltersResponse>('/api/admin/assistant-usage-log-filters')
 }
 
 export async function listSystemAgentConfigs() {

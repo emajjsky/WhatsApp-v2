@@ -289,6 +289,18 @@ func (p *CloudProxy) HandleAdminUsageLogs(w http.ResponseWriter, r *http.Request
 	p.forwardCloudResponse(w, req, "call cloud assistant usage logs")
 }
 
+func (p *CloudProxy) HandleAdminUsageLogFilters(w http.ResponseWriter, r *http.Request) {
+	req, err := p.newCloudRequest(r.Context(), r, r.Method, r.URL.Path, r.Body)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.URL.RawQuery = r.URL.RawQuery
+	req.Header.Set("Accept", "application/json")
+
+	p.forwardCloudResponse(w, req, "call cloud assistant usage log filters")
+}
+
 func (p *CloudProxy) forwardCloudResponse(w http.ResponseWriter, req *http.Request, errPrefix string) {
 	resp, err := p.httpClient.Do(req)
 	if err != nil {

@@ -4,6 +4,7 @@ import {
   createUser,
   listDesktopDevices,
   deleteSystemAgentConfig,
+  listAssistantUsageLogFilters,
   listAssistantUsageLogs,
   listInvitations,
   listSystemAgentConfigs,
@@ -152,8 +153,8 @@ export function AdminPage() {
           />
           <AdminTabButton
             active={tab === 'usageLogs'}
-            title="AI使用流水"
-            hint="写回和发送记录"
+            title="采纳数据"
+            hint="方案采纳和发送记录"
             onClick={() => setTab('usageLogs')}
           />
         </div>
@@ -792,6 +793,10 @@ function InvitationAdminPanel() {
 
 function AssistantUsageLogPanel() {
   const [logs, setLogs] = useState<AssistantUsageLogView[]>([])
+  const [filterOptions, setFilterOptions] = useState<{
+    accounts: Array<{ id: string; name: string }>
+    agents: Array<{ id: string; name: string }>
+  }>({ accounts: [], agents: [] })
   const [logDate, setLogDate] = useState(todayDateInput())
   const [accountId, setAccountId] = useState('')
   const [agentId, setAgentId] = useState('')
@@ -805,37 +810,102 @@ function AssistantUsageLogPanel() {
     try {
       const response = await listAssistantUsageLogs({
         logDate: logDate || undefined,
-        accountId: accountId.trim() || undefined,
-        agentId: agentId.trim() || undefined,
+        accountId: accountId || undefined,
+        agentId: agentId || undefined,
         action,
-        limit: 80,
+        limit: 200,
       })
       setLogs(response.logs)
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '加载AI使用流水失败')
+      setError(loadError instanceof Error ? loadError.message : '加载采纳数据失败')
     } finally {
       setLoading(false)
     }
   }
 
+  async function loadFilterOptions() {
+    try {
+      const response = await listAssistantUsageLogFilters()
+      setFilterOptions(response)
+    } catch (loadError) {
+      console.warn('failed to load assistant usage log filters', loadError)
+    }
+  }
+
   useEffect(() => {
+    void loadFilterOptions()
     void loadLogs()
   }, [])
 
+  const accountOptions = useMemo(
+    () => mergeUsageLogOptions(
+      filterOptions.accounts,
+      logs.map((log) => ({
+        id: log.ws_account_id,
+        name: log.ws_account_name || log.ws_account_id,
+      })),
+    ),
+    [filterOptions.accounts, logs],
+  )
+  const agentOptions = useMemo(
+    () => mergeUsageLogOptions(
+      filterOptions.agents,
+      logs.map((log) => ({
+        id: log.agent_id,
+        name: log.agent_name || log.agent_id,
+      })),
+    ),
+    [filterOptions.agents, logs],
+  )
+
+  function handleExportLogs() {
+    exportUsageLogsToCSV(logs)
+  }
+
   return (
     <section className="panel admin-usage-log-panel">
+      <div className="admin-usage-log-heading">
+        <div>
+          <h3>采纳数据</h3>
+          <p>一条采纳或发送记录占一行，便于检索和导出。</p>
+        </div>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={handleExportLogs}
+          disabled={!logs.length}
+        >
+          <Icon name="download" />
+          导出当前结果
+        </button>
+      </div>
+
       <div className="admin-usage-log-toolbar">
         <label className="field compact-field">
           <span>日期</span>
           <input type="date" value={logDate} onChange={(event) => setLogDate(event.target.value)} />
         </label>
         <label className="field compact-field">
-          <span>WS账号ID</span>
-          <input value={accountId} onChange={(event) => setAccountId(event.target.value)} />
+          <span>WS账号</span>
+          <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
+            <option value="">全部账号</option>
+            {accountOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="field compact-field">
-          <span>智能体ID</span>
-          <input value={agentId} onChange={(event) => setAgentId(event.target.value)} />
+          <span>智能体</span>
+          <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+            <option value="">全部智能体</option>
+            {agentOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.name}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="field compact-field">
           <span>动作</span>
@@ -852,31 +922,46 @@ function AssistantUsageLogPanel() {
 
       {error ? <div className="error-banner">{error}</div> : null}
 
-      <div className="admin-usage-log-list">
+      <div className="admin-usage-log-table-wrap">
         {logs.length ? (
-          logs.map((log) => (
-            <article className="admin-usage-log-row" key={log.id}>
-              <div className="usage-log-main">
-                <div className="usage-log-title-row">
-                  <strong>{log.customer_nickname || log.customer_id || '未知客户'}</strong>
-                  <span>{log.action_type === 'send' ? '发送' : '写回'}</span>
-                  <small>{formatDateTime(log.created_at)}</small>
-                </div>
-                <p>{formatUsageLogTriggerMessages(log)}</p>
-                <p>采纳：{log.adopted_option_content || '无'}</p>
-                <p>翻译原文：{log.translation_source_content || '无'}</p>
-                <p>发送内容：{log.translated_content || log.final_draft_content}</p>
-              </div>
-              <div className="usage-log-meta">
-                <span>{log.ws_account_name || log.ws_account_id || '未知账号'}</span>
-                <span>{log.agent_name || log.agent_id || '未知智能体'}</span>
-                <span>{log.adopted_option_index ? `方案 ${log.adopted_option_index}` : '未标记方案'}</span>
-              </div>
-            </article>
-          ))
+          <table className="admin-usage-log-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>WS账号</th>
+                <th>客户</th>
+                <th>客户消息</th>
+                <th>智能体</th>
+                <th>方案</th>
+                <th>采纳方案原文</th>
+                <th>翻译原文</th>
+                <th>发送内容</th>
+                <th>动作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((log) => (
+                <tr key={log.id}>
+                  <td>{formatDateTime(log.created_at)}</td>
+                  <td>{log.ws_account_name || log.ws_account_id || '-'}</td>
+                  <td>
+                    <strong>{log.customer_nickname || '-'}</strong>
+                    <small>{log.customer_id || '-'}</small>
+                  </td>
+                  <td>{formatUsageLogTriggerMessages(log)}</td>
+                  <td>{log.agent_name || log.agent_id || '-'}</td>
+                  <td>{log.adopted_option_index ? `方案 ${log.adopted_option_index}` : '-'}</td>
+                  <td>{log.adopted_option_content || '-'}</td>
+                  <td>{log.translation_source_content || '-'}</td>
+                  <td>{log.translated_content || log.final_draft_content || '-'}</td>
+                  <td>{log.action_type === 'send' ? '发送' : '写回'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         ) : (
           <div className="empty-state compact-empty-state">
-            {loading ? '正在加载...' : '暂无AI使用流水'}
+            {loading ? '正在加载...' : '暂无采纳数据'}
           </div>
         )}
       </div>
@@ -1636,6 +1721,84 @@ function formatUsageLogTriggerMessages(log: AssistantUsageLogView) {
   }
 
   return log.latest_message_text || log.latest_message_media_ref || log.latest_message_type || '无当前消息'
+}
+
+function mergeUsageLogOptions(
+  primary: Array<{ id: string; name: string }>,
+  fallback: Array<{ id: string; name: string }>,
+) {
+  const map = new Map<string, string>()
+  for (const item of [...primary, ...fallback]) {
+    const id = item.id?.trim()
+    if (!id || map.has(id)) {
+      continue
+    }
+    map.set(id, item.name?.trim() || id)
+  }
+
+  return Array.from(map, ([id, name]) => ({ id, name })).sort((left, right) =>
+    left.name.localeCompare(right.name, 'zh-CN'),
+  )
+}
+
+function exportUsageLogsToCSV(logs: AssistantUsageLogView[]) {
+  if (!logs.length) {
+    return
+  }
+
+  const headers = [
+    '时间',
+    '日期',
+    'WS账号ID',
+    'WS账号',
+    '客户ID',
+    '客户昵称',
+    '客户消息',
+    '最新消息接收时间',
+    '智能体ID',
+    '智能体',
+    '采纳方案序号',
+    '采纳方案原文',
+    '翻译原文',
+    '发送内容',
+    '译文语种',
+    '动作',
+  ]
+  const rows = logs.map((log) => [
+    formatDateTime(log.created_at),
+    log.log_date,
+    log.ws_account_id,
+    log.ws_account_name,
+    log.customer_id,
+    log.customer_nickname,
+    formatUsageLogTriggerMessages(log),
+    log.latest_message_received_at ? formatDateTime(log.latest_message_received_at) : '',
+    log.agent_id,
+    log.agent_name,
+    log.adopted_option_index ? `方案 ${log.adopted_option_index}` : '',
+    log.adopted_option_content,
+    log.translation_source_content,
+    log.translated_content || log.final_draft_content,
+    log.target_language,
+    log.action_type === 'send' ? '发送' : '写回',
+  ])
+  const csv = [headers, ...rows]
+    .map((row) => row.map((cell) => csvCell(cell)).join(','))
+    .join('\r\n')
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `采纳数据-${todayDateInput()}.csv`
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? '')
+  return `"${text.replaceAll('"', '""')}"`
 }
 
 function todayDateInput() {

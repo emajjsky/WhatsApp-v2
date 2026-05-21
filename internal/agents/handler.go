@@ -60,6 +60,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-translations", h.handleTranslateText)
 	mux.HandleFunc("/api/agent-status-card", h.handleStatusCard)
 	mux.HandleFunc("/api/assistant-usage-logs", h.handleUsageLogs)
+	mux.HandleFunc("/api/admin/assistant-usage-log-filters", h.handleAdminUsageLogFilters)
 	mux.HandleFunc("/api/admin/assistant-usage-logs", h.handleAdminUsageLogs)
 	mux.HandleFunc("/api/desktop/agent-runs/generate", h.handleDesktopGenerateDraft)
 	mux.HandleFunc("/api/desktop/agent-runs/generate/stream", h.handleDesktopGenerateDraftStream)
@@ -391,6 +392,25 @@ func (h *Handler) handleAdminUsageLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) handleAdminUsageLogFilters(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminUsageLogFilters(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		httpx.WriteMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+
+	options, err := h.service.ListUsageLogFilterOptions(r.Context())
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, options)
 }
 
 func (h *Handler) handleRuns(w http.ResponseWriter, r *http.Request) {
