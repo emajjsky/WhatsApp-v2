@@ -832,35 +832,46 @@ function AssistantUsageLogPanel() {
   }
 
   async function loadFilterOptions() {
+    let accountResponse: { accounts: AccountView[] } = { accounts: [] }
+    let filterResponse: {
+      accounts: Array<{ id: string; name: string }>
+      agents: Array<{ id: string; name: string }>
+    } = { accounts: [], agents: [] }
+
     try {
-      const [filterResponse, accountResponse] = await Promise.all([
-        listAssistantUsageLogFilters(),
-        listAccounts(),
-      ])
-      setFilterOptions(filterResponse)
+      accountResponse = await listAccounts()
       setAccounts(accountResponse.accounts)
-      setAccountId((current) => {
-        const availableAccounts = accountResponse.accounts.length
-          ? accountResponse.accounts
-          : filterResponse.accounts.map((option) => ({
-              id: option.id,
-              display_name: option.name,
-            } as AccountView))
-        if (current && availableAccounts.some((option) => option.id === current)) {
-          return current
-        }
-        const nextAccountId = availableAccounts[0]?.id ?? ''
-        if (nextAccountId) {
-          void loadLogs(nextAccountId)
-        } else {
-          setLogs([])
-          setLoading(false)
-        }
-        return nextAccountId
-      })
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载账号失败')
+    }
+
+    try {
+      filterResponse = await listAssistantUsageLogFilters()
+      setFilterOptions(filterResponse)
     } catch (loadError) {
       console.warn('failed to load assistant usage log filters', loadError)
     }
+
+    setAccountId((current) => {
+      const availableAccounts = accountResponse.accounts.length
+        ? accountResponse.accounts
+        : filterResponse.accounts.map((option) => ({
+            id: option.id,
+            display_name: option.name,
+          } as AccountView))
+      if (current && availableAccounts.some((option) => option.id === current)) {
+        void loadLogs(current)
+        return current
+      }
+      const nextAccountId = availableAccounts[0]?.id ?? ''
+      if (nextAccountId) {
+        void loadLogs(nextAccountId)
+      } else {
+        setLogs([])
+        setLoading(false)
+      }
+      return nextAccountId
+    })
   }
 
   useEffect(() => {
