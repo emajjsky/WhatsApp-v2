@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   createInvitation,
   createUser,
+  listAccounts,
   listDesktopDevices,
   deleteSystemAgentConfig,
   listAssistantUsageLogFilters,
@@ -18,6 +19,7 @@ import {
   type AgentPurpose,
   type AssistantUsageAction,
   type AssistantUsageLogView,
+  type AccountView,
   type AuthUser,
   type DesktopDeviceStatus,
   type DesktopDeviceView,
@@ -793,6 +795,7 @@ function InvitationAdminPanel() {
 
 function AssistantUsageLogPanel() {
   const [logs, setLogs] = useState<AssistantUsageLogView[]>([])
+  const [accounts, setAccounts] = useState<AccountView[]>([])
   const [filterOptions, setFilterOptions] = useState<{
     accounts: Array<{ id: string; name: string }>
     agents: Array<{ id: string; name: string }>
@@ -804,13 +807,18 @@ function AssistantUsageLogPanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
 
-  async function loadLogs() {
+  async function loadLogs(nextAccountId = accountId) {
+    if (!nextAccountId) {
+      setLogs([])
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError(undefined)
     try {
       const response = await listAssistantUsageLogs({
         logDate: logDate || undefined,
-        accountId: accountId || undefined,
+        accountId: nextAccountId,
         agentId: agentId || undefined,
         action,
         limit: 200,
@@ -825,8 +833,31 @@ function AssistantUsageLogPanel() {
 
   async function loadFilterOptions() {
     try {
-      const response = await listAssistantUsageLogFilters()
-      setFilterOptions(response)
+      const [filterResponse, accountResponse] = await Promise.all([
+        listAssistantUsageLogFilters(),
+        listAccounts(),
+      ])
+      setFilterOptions(filterResponse)
+      setAccounts(accountResponse.accounts)
+      setAccountId((current) => {
+        const availableAccounts = accountResponse.accounts.length
+          ? accountResponse.accounts
+          : filterResponse.accounts.map((option) => ({
+              id: option.id,
+              display_name: option.name,
+            } as AccountView))
+        if (current && availableAccounts.some((option) => option.id === current)) {
+          return current
+        }
+        const nextAccountId = availableAccounts[0]?.id ?? ''
+        if (nextAccountId) {
+          void loadLogs(nextAccountId)
+        } else {
+          setLogs([])
+          setLoading(false)
+        }
+        return nextAccountId
+      })
     } catch (loadError) {
       console.warn('failed to load assistant usage log filters', loadError)
     }
@@ -834,18 +865,30 @@ function AssistantUsageLogPanel() {
 
   useEffect(() => {
     void loadFilterOptions()
-    void loadLogs()
   }, [])
 
   const accountOptions = useMemo(
     () => mergeUsageLogOptions(
-      filterOptions.accounts,
-      logs.map((log) => ({
-        id: log.ws_account_id,
-        name: log.ws_account_name || log.ws_account_id,
+      accounts.map((account) => ({
+        id: account.id,
+        name: account.display_name || account.phone_number || account.id,
       })),
+      filterOptions.accounts,
     ),
-    [filterOptions.accounts, logs],
+    [accounts, filterOptions.accounts],
+  )
+  const visibleAccountOptions = useMemo(
+    () =>
+      accountOptions.length
+        ? accountOptions
+        : mergeUsageLogOptions(
+            [],
+            logs.map((log) => ({
+              id: log.ws_account_id,
+              name: log.ws_account_name || log.ws_account_id,
+            })),
+          ),
+    [accountOptions, logs],
   )
   const agentOptions = useMemo(
     () => mergeUsageLogOptions(
@@ -888,8 +931,8 @@ function AssistantUsageLogPanel() {
         <label className="field compact-field">
           <span>WS账号</span>
           <select value={accountId} onChange={(event) => setAccountId(event.target.value)}>
-            <option value="">全部账号</option>
-            {accountOptions.map((option) => (
+            {!visibleAccountOptions.length ? <option value="">暂无账号</option> : null}
+            {visibleAccountOptions.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.name}
               </option>
@@ -915,7 +958,7 @@ function AssistantUsageLogPanel() {
             <option value="send">发送</option>
           </select>
         </label>
-        <button className="primary-button" type="button" onClick={() => void loadLogs()} disabled={loading}>
+        <button className="primary-button" type="button" onClick={() => void loadLogs()} disabled={loading || !accountId}>
           {loading ? '查询中...' : '查询'}
         </button>
       </div>

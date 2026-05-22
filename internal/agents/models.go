@@ -305,6 +305,7 @@ type CreateAssistantUsageLogInput struct {
 	TranslatedContent       string               `json:"translated_content"`
 	TargetLanguage          string               `json:"target_language"`
 	ActionType              AssistantUsageAction `json:"action_type"`
+	LogDate                 string               `json:"log_date"`
 }
 
 type AssistantUsageTriggerMessage struct {

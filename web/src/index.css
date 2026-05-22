@@ -1863,6 +1863,10 @@ a {
   min-width: 0;
 }
 
+.chat-status-card-grid.collapsed {
+  grid-template-rows: auto auto;
+}
+
 .chat-status-top-row {
   display: grid;
   grid-template-columns: minmax(130px, 1fr) auto auto auto;
@@ -2233,9 +2237,10 @@ a {
 .assistant-header-controls {
   min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
-  gap: 6px;
+  grid-template-columns: auto minmax(180px, 260px) auto auto auto;
+  gap: 8px;
   align-items: center;
+  justify-content: center;
   width: 100%;
 }
 
@@ -2260,7 +2265,6 @@ a {
 }
 
 .assistant-header-generate {
-  margin-left: auto;
   background: #25d366;
   border-color: #25d366;
   color: #063b22;
@@ -2427,11 +2431,11 @@ a {
 .assistant-header-select {
   min-width: 0;
   width: 100%;
-  max-width: none;
+  max-width: 260px;
   flex: none;
   min-height: 26px;
-  padding: 3px 7px;
-  border-radius: 7px;
+  padding: 3px 26px 3px 10px;
+  border-radius: 8px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.9);
   color: var(--text);
@@ -2440,7 +2444,7 @@ a {
 }
 
 .assistant-header-select option {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .assistant-status-card {
@@ -5136,7 +5140,8 @@ a {
   }
 
   .assistant-header-controls {
-    grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+    grid-template-columns: auto minmax(170px, 240px) auto auto auto;
+    justify-content: center;
     gap: 5px;
   }
 
@@ -5154,7 +5159,7 @@ a {
 
   .assistant-header-select {
     width: 100%;
-    max-width: none;
+    max-width: 240px;
   }
 
   .assistant-panel-body {

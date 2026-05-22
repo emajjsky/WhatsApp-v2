@@ -536,6 +536,14 @@ func (s *Service) CreateUsageLog(ctx context.Context, input CreateAssistantUsage
 	}
 
 	now := s.now()
+	logDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if value := strings.TrimSpace(input.LogDate); value != "" {
+		parsed, err := time.Parse("2006-01-02", value)
+		if err != nil {
+			return AssistantUsageLogView{}, fmt.Errorf("log_date must use YYYY-MM-DD")
+		}
+		logDate = parsed
+	}
 	item := AssistantUsageLog{
 		ID:                      ids.NewUUID(),
 		UserID:                  user.ID,
@@ -559,7 +567,7 @@ func (s *Service) CreateUsageLog(ctx context.Context, input CreateAssistantUsage
 		TranslatedContent:       limitText(input.TranslatedContent, 12000),
 		TargetLanguage:          limitText(input.TargetLanguage, 120),
 		ActionType:              action,
-		LogDate:                 time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC),
+		LogDate:                 logDate,
 		CreatedAt:               now,
 	}
 

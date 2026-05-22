@@ -1187,7 +1187,7 @@ export function ChatsPage() {
                 ) : !activeStatusCardAgent ? (
                   <div className="warning-banner">未启用状态卡智能体。</div>
                 ) : (
-                  <div className="chat-status-card-grid">
+                  <div className={`chat-status-card-grid${statusCardCollapsed ? ' collapsed' : ''}`}>
                     <div className="chat-status-top-row">
                       <div className="chat-status-title-row">
                         <span>用户状态卡</span>
@@ -2196,6 +2196,12 @@ function getOutboundDraft(chineseDraft: string, translatedText: string) {
   return (translatedText.trim() || chineseDraft.trim())
 }
 
+function todayDateInput() {
+  const now = new Date()
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+
 function buildAssistantUsagePayload({
   action,
   history,
@@ -2270,6 +2276,7 @@ function buildAssistantUsagePayload({
       ? `${draftTargetLanguageName || draftTargetLanguage}(${draftTargetLanguage})`
       : '',
     action_type: action,
+    log_date: todayDateInput(),
   }
 }
 

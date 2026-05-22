@@ -545,6 +545,7 @@ export interface CreateAssistantUsageLogPayload {
   translated_content?: string
   target_language?: string
   action_type: AssistantUsageAction
+  log_date?: string
 }
 
 export interface TranslationView {
