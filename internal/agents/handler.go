@@ -53,6 +53,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agents/rules/", h.handleRuleByID)
 	mux.HandleFunc("/api/admin/agent-configs", h.handleSystemConfigs)
 	mux.HandleFunc("/api/admin/agent-configs/", h.handleSystemConfigByID)
+	mux.HandleFunc("/api/admin/agent-skills", h.handleSkills)
+	mux.HandleFunc("/api/admin/agent-skills/", h.handleSkillByID)
 	mux.HandleFunc("/api/agent-configs", h.handleAvailableSystemConfigs)
 	mux.HandleFunc("/api/agent-runs", h.handleRuns)
 	mux.HandleFunc("/api/agent-runs/generate", h.handleGenerateRun)
@@ -320,6 +322,103 @@ func (h *Handler) handleSystemConfigByID(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleSkills(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminSkills(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		items, err := h.service.ListSkills(r.Context())
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": items})
+	case http.MethodPost:
+		var input UpsertSkillInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		item, err := h.service.UpsertSkill(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skill": item})
+	default:
+		httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (h *Handler) handleSkillByID(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminSkills(w, r)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin/agent-skills/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	skillID := strings.TrimSpace(parts[0])
+	if len(parts) == 1 {
+		switch r.Method {
+		case http.MethodGet:
+			item, err := h.service.GetSkill(r.Context(), skillID)
+			if err != nil {
+				h.writeServiceError(w, err)
+				return
+			}
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"skill": item})
+		case http.MethodDelete:
+			if err := h.service.DeleteSkill(r.Context(), skillID); err != nil {
+				h.writeServiceError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodDelete)
+		}
+		return
+	}
+
+	if parts[1] != "files" {
+		http.NotFound(w, r)
+		return
+	}
+	if len(parts) == 2 && r.Method == http.MethodPost {
+		var input UpsertSkillFileInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		item, err := h.service.UpsertSkillFile(r.Context(), skillID, input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skill": item})
+		return
+	}
+	if len(parts) == 3 && r.Method == http.MethodDelete {
+		item, err := h.service.DeleteSkillFile(r.Context(), skillID, parts[2])
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skill": item})
+		return
+	}
+
+	http.NotFound(w, r)
 }
 
 func (h *Handler) handleAvailableSystemConfigs(w http.ResponseWriter, r *http.Request) {

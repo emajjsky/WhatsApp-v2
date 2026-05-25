@@ -478,6 +478,7 @@ export interface SystemAgentConfigView {
   enabled: boolean
   provider_config: AgentProviderConfig
   prompt_template: string
+  skill_ids: string[]
   created_at: string
   updated_at: string
 }
@@ -489,6 +490,52 @@ export interface UpsertSystemAgentConfigPayload {
   enabled: boolean
   provider_config: AgentProviderConfig
   prompt_template: string
+  skill_ids?: string[]
+}
+
+export type AgentSkillFileKind = 'skill' | 'reference' | 'asset'
+
+export interface AgentSkillFileView {
+  id: string
+  skill_id: string
+  path: string
+  file_kind: AgentSkillFileKind
+  content_type: string
+  content_text: string
+  byte_size: number
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentSkillView {
+  id: string
+  name: string
+  slug: string
+  description: string
+  enabled: boolean
+  skill_markdown: string
+  files: AgentSkillFileView[]
+  created_at: string
+  updated_at: string
+}
+
+export interface UpsertAgentSkillPayload {
+  id?: string
+  name: string
+  slug?: string
+  description?: string
+  enabled: boolean
+  skill_markdown: string
+}
+
+export interface UpsertAgentSkillFilePayload {
+  id?: string
+  path: string
+  file_kind: Exclude<AgentSkillFileKind, 'skill'>
+  content_type?: string
+  content_text: string
+  sort_order?: number
 }
 
 export interface UpsertAgentSettingsPayload {
@@ -1194,6 +1241,34 @@ export async function upsertSystemAgentConfig(payload: UpsertSystemAgentConfigPa
 
 export async function deleteSystemAgentConfig(configId: string) {
   return request<void>(`/api/admin/agent-configs/${configId}`, { method: 'DELETE' })
+}
+
+export async function listAgentSkills() {
+  return request<{ skills: AgentSkillView[] }>('/api/admin/agent-skills')
+}
+
+export async function upsertAgentSkill(payload: UpsertAgentSkillPayload) {
+  return request<{ skill: AgentSkillView }>('/api/admin/agent-skills', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function deleteAgentSkill(skillId: string) {
+  return request<void>(`/api/admin/agent-skills/${skillId}`, { method: 'DELETE' })
+}
+
+export async function upsertAgentSkillFile(skillId: string, payload: UpsertAgentSkillFilePayload) {
+  return request<{ skill: AgentSkillView }>(`/api/admin/agent-skills/${skillId}/files`, {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function deleteAgentSkillFile(skillId: string, fileId: string) {
+  return request<{ skill: AgentSkillView }>(`/api/admin/agent-skills/${skillId}/files/${fileId}`, {
+    method: 'DELETE',
+  })
 }
 
 export async function generateAgentRun(payload: GenerateAgentRunPayload) {

@@ -475,6 +475,10 @@ ORDER BY purpose ASC, name ASC, created_at DESC`
 		return nil, fmt.Errorf("iterate system agent configs: %w", err)
 	}
 
+	if err := r.attachSkillIDs(ctx, items); err != nil {
+		return nil, err
+	}
+
 	return items, nil
 }
 
@@ -512,6 +516,10 @@ ORDER BY purpose ASC, name ASC, created_at DESC`
 		return nil, fmt.Errorf("iterate enabled system agent configs: %w", err)
 	}
 
+	if err := r.attachSkillIDs(ctx, items); err != nil {
+		return nil, err
+	}
+
 	return items, nil
 }
 
@@ -532,7 +540,15 @@ WHERE purpose = $1
 ORDER BY name ASC, created_at DESC
 LIMIT 1`
 
-	return scanSystemConfig(r.db.QueryRowContext(ctx, query, purpose))
+	item, err := scanSystemConfig(r.db.QueryRowContext(ctx, query, purpose))
+	if err != nil {
+		return SystemAgentConfig{}, err
+	}
+	items := []SystemAgentConfig{item}
+	if err := r.attachSkillIDs(ctx, items); err != nil {
+		return SystemAgentConfig{}, err
+	}
+	return items[0], nil
 }
 
 func (r *Repository) GetSystemConfigByID(ctx context.Context, id string, purpose AgentPurpose) (SystemAgentConfig, error) {
@@ -550,7 +566,15 @@ FROM system_agents
 WHERE id = $1
   AND ($2 = '' OR purpose = $2)`
 
-	return scanSystemConfig(r.db.QueryRowContext(ctx, query, strings.TrimSpace(id), strings.TrimSpace(string(purpose))))
+	item, err := scanSystemConfig(r.db.QueryRowContext(ctx, query, strings.TrimSpace(id), strings.TrimSpace(string(purpose))))
+	if err != nil {
+		return SystemAgentConfig{}, err
+	}
+	items := []SystemAgentConfig{item}
+	if err := r.attachSkillIDs(ctx, items); err != nil {
+		return SystemAgentConfig{}, err
+	}
+	return items[0], nil
 }
 
 func (r *Repository) UpsertSystemConfig(ctx context.Context, config SystemAgentConfig) error {
@@ -590,6 +614,35 @@ SET
 		return fmt.Errorf("upsert system agent config %q: %w", config.ID, err)
 	}
 
+	return r.SyncSystemConfigSkills(ctx, config.ID, config.SkillIDs)
+}
+
+func (r *Repository) SyncSystemConfigSkills(ctx context.Context, agentID string, skillIDs []string) error {
+	trimmedAgentID := strings.TrimSpace(agentID)
+	if trimmedAgentID == "" {
+		return fmt.Errorf("agent id is required")
+	}
+
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM system_agent_skill_bindings WHERE agent_id = $1`, trimmedAgentID); err != nil {
+		return fmt.Errorf("clear agent skill bindings for %q: %w", trimmedAgentID, err)
+	}
+
+	normalized := normalizeStringList(skillIDs)
+	for index, skillID := range normalized {
+		if _, err := r.db.ExecContext(
+			ctx,
+			`INSERT INTO system_agent_skill_bindings (agent_id, skill_id, sort_order)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (agent_id, skill_id) DO UPDATE
+             SET sort_order = EXCLUDED.sort_order`,
+			trimmedAgentID,
+			skillID,
+			index,
+		); err != nil {
+			return fmt.Errorf("bind skill %q to agent %q: %w", skillID, trimmedAgentID, err)
+		}
+	}
+
 	return nil
 }
 
@@ -617,6 +670,254 @@ func (r *Repository) DeleteSystemConfig(ctx context.Context, id string) error {
 	}
 
 	return ensureAffected(result, id)
+}
+
+func (r *Repository) ListSkills(ctx context.Context) ([]AgentSkill, error) {
+	const query = `
+SELECT
+    id,
+    name,
+    slug,
+    description,
+    enabled,
+    skill_markdown,
+    created_at,
+    updated_at
+FROM agent_skills
+ORDER BY enabled DESC, name ASC, updated_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list agent skills: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]AgentSkill, 0)
+	for rows.Next() {
+		item, err := scanAgentSkill(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate agent skills: %w", err)
+	}
+
+	if err := r.attachSkillFiles(ctx, items); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (r *Repository) ListEnabledSkillsByAgentID(ctx context.Context, agentID string) ([]AgentSkill, error) {
+	const query = `
+SELECT
+    s.id,
+    s.name,
+    s.slug,
+    s.description,
+    s.enabled,
+    s.skill_markdown,
+    s.created_at,
+    s.updated_at
+FROM system_agent_skill_bindings b
+JOIN agent_skills s ON s.id = b.skill_id
+WHERE b.agent_id = $1
+  AND s.enabled = TRUE
+ORDER BY b.sort_order ASC, s.name ASC`
+
+	rows, err := r.db.QueryContext(ctx, query, strings.TrimSpace(agentID))
+	if err != nil {
+		return nil, fmt.Errorf("list enabled skills for agent %q: %w", agentID, err)
+	}
+	defer rows.Close()
+
+	items := make([]AgentSkill, 0)
+	for rows.Next() {
+		item, err := scanAgentSkill(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate enabled skills for agent %q: %w", agentID, err)
+	}
+
+	if err := r.attachSkillFiles(ctx, items); err != nil {
+		return nil, err
+	}
+
+	return items, nil
+}
+
+func (r *Repository) GetSkillByID(ctx context.Context, id string) (AgentSkill, error) {
+	const query = `
+SELECT
+    id,
+    name,
+    slug,
+    description,
+    enabled,
+    skill_markdown,
+    created_at,
+    updated_at
+FROM agent_skills
+WHERE id = $1`
+
+	item, err := scanAgentSkill(r.db.QueryRowContext(ctx, query, strings.TrimSpace(id)))
+	if err != nil {
+		return AgentSkill{}, err
+	}
+	items := []AgentSkill{item}
+	if err := r.attachSkillFiles(ctx, items); err != nil {
+		return AgentSkill{}, err
+	}
+	return items[0], nil
+}
+
+func (r *Repository) UpsertSkill(ctx context.Context, skill AgentSkill) error {
+	const query = `
+INSERT INTO agent_skills (
+    id,
+    name,
+    slug,
+    description,
+    enabled,
+    skill_markdown
+) VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (id) DO UPDATE
+SET
+    name = EXCLUDED.name,
+    slug = EXCLUDED.slug,
+    description = EXCLUDED.description,
+    enabled = EXCLUDED.enabled,
+    skill_markdown = EXCLUDED.skill_markdown,
+    updated_at = NOW()`
+
+	if _, err := r.db.ExecContext(
+		ctx,
+		query,
+		skill.ID,
+		skill.Name,
+		skill.Slug,
+		skill.Description,
+		skill.Enabled,
+		skill.SkillMarkdown,
+	); err != nil {
+		return fmt.Errorf("upsert skill %q: %w", skill.ID, err)
+	}
+
+	return r.upsertSkillMarkdownFile(ctx, skill.ID, skill.SkillMarkdown)
+}
+
+func (r *Repository) DeleteSkill(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM agent_skills WHERE id = $1`, strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("delete skill %q: %w", id, err)
+	}
+
+	return ensureAffected(result, id)
+}
+
+func (r *Repository) UpsertSkillFile(ctx context.Context, file SkillFile) error {
+	const query = `
+INSERT INTO agent_skill_files (
+    id,
+    skill_id,
+    path,
+    file_kind,
+    content_type,
+    content_text,
+    byte_size,
+    sort_order
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (id) DO UPDATE
+SET
+    path = EXCLUDED.path,
+    file_kind = EXCLUDED.file_kind,
+    content_type = EXCLUDED.content_type,
+    content_text = EXCLUDED.content_text,
+    byte_size = EXCLUDED.byte_size,
+    sort_order = EXCLUDED.sort_order,
+    updated_at = NOW()`
+
+	if _, err := r.db.ExecContext(
+		ctx,
+		query,
+		file.ID,
+		file.SkillID,
+		file.Path,
+		file.FileKind,
+		file.ContentType,
+		file.ContentText,
+		file.ByteSize,
+		file.SortOrder,
+	); err != nil {
+		return fmt.Errorf("upsert skill file %q: %w", file.ID, err)
+	}
+
+	return nil
+}
+
+func (r *Repository) DeleteSkillFile(ctx context.Context, skillID string, fileID string) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`DELETE FROM agent_skill_files WHERE skill_id = $1 AND id = $2 AND file_kind <> 'skill'`,
+		strings.TrimSpace(skillID),
+		strings.TrimSpace(fileID),
+	)
+	if err != nil {
+		return fmt.Errorf("delete skill file %q: %w", fileID, err)
+	}
+
+	return ensureAffected(result, fileID)
+}
+
+func (r *Repository) upsertSkillMarkdownFile(ctx context.Context, skillID string, markdown string) error {
+	trimmedSkillID := strings.TrimSpace(skillID)
+	byteSize := int64(len([]byte(markdown)))
+
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE agent_skill_files
+         SET
+             content_text = $2,
+             byte_size = $3,
+             updated_at = NOW()
+         WHERE skill_id = $1
+           AND LOWER(path) = LOWER('SKILL.md')
+           AND file_kind = 'skill'`,
+		trimmedSkillID,
+		markdown,
+		byteSize,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert skill markdown file for %q: %w", skillID, err)
+	}
+	if affected, err := result.RowsAffected(); err == nil && affected > 0 {
+		return nil
+	}
+
+	const query = `
+INSERT INTO agent_skill_files (
+    id,
+    skill_id,
+    path,
+    file_kind,
+    content_type,
+    content_text,
+    byte_size,
+    sort_order
+) VALUES ($1, $2, 'SKILL.md', 'skill', 'text/markdown; charset=utf-8', $3, $4, -100)`
+
+	if _, err := r.db.ExecContext(ctx, query, trimmedSkillID, trimmedSkillID, markdown, byteSize); err != nil {
+		return fmt.Errorf("insert skill markdown file for %q: %w", skillID, err)
+	}
+
+	return nil
 }
 
 func (r *Repository) GetStatusCardByChatID(ctx context.Context, chatID string) (StatusCardView, error) {
@@ -1142,7 +1443,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 			item                    AssistantUsageLogView
 			latestMessageReceivedAt sql.NullTime
 			adoptedOptionIndex      sql.NullInt64
-			triggerMessages          []byte
+			triggerMessages         []byte
 			logDate                 time.Time
 		)
 
@@ -1450,6 +1751,115 @@ func decodeRuleFilters(
 	return nil
 }
 
+func (r *Repository) attachSkillIDs(ctx context.Context, items []SystemAgentConfig) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(items))
+	byID := make(map[string]int, len(items))
+	for index := range items {
+		items[index].SkillIDs = []string{}
+		trimmedID := strings.TrimSpace(items[index].ID)
+		if trimmedID == "" {
+			continue
+		}
+		ids = append(ids, trimmedID)
+		byID[trimmedID] = index
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT agent_id::text, skill_id::text
+         FROM system_agent_skill_bindings
+         WHERE agent_id = ANY($1::uuid[])
+         ORDER BY agent_id::text, sort_order ASC, skill_id::text`,
+		postgresTextArray(ids),
+	)
+	if err != nil {
+		return fmt.Errorf("list system agent skill bindings: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var agentID string
+		var skillID string
+		if err := rows.Scan(&agentID, &skillID); err != nil {
+			return fmt.Errorf("scan system agent skill binding: %w", err)
+		}
+		if index, ok := byID[agentID]; ok {
+			items[index].SkillIDs = append(items[index].SkillIDs, skillID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate system agent skill bindings: %w", err)
+	}
+
+	return nil
+}
+
+func (r *Repository) attachSkillFiles(ctx context.Context, items []AgentSkill) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(items))
+	byID := make(map[string]int, len(items))
+	for index := range items {
+		items[index].Files = []SkillFile{}
+		trimmedID := strings.TrimSpace(items[index].ID)
+		if trimmedID == "" {
+			continue
+		}
+		ids = append(ids, trimmedID)
+		byID[trimmedID] = index
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		`SELECT
+             id,
+             skill_id,
+             path,
+             file_kind,
+             content_type,
+             content_text,
+             byte_size,
+             sort_order,
+             created_at,
+             updated_at
+         FROM agent_skill_files
+         WHERE skill_id = ANY($1::uuid[])
+         ORDER BY skill_id::text, sort_order ASC, path ASC`,
+		postgresTextArray(ids),
+	)
+	if err != nil {
+		return fmt.Errorf("list agent skill files: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		file, err := scanSkillFile(rows)
+		if err != nil {
+			return err
+		}
+		if index, ok := byID[file.SkillID]; ok {
+			items[index].Files = append(items[index].Files, file)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate agent skill files: %w", err)
+	}
+
+	return nil
+}
+
 func (r *Repository) syncRuleAccounts(ctx context.Context, ruleID string, primaryAccountID string, accountIDs []string) error {
 	if _, err := r.db.ExecContext(ctx, `DELETE FROM agent_rule_accounts WHERE rule_id = $1`, ruleID); err != nil {
 		return fmt.Errorf("clear agent rule accounts for %q: %w", ruleID, err)
@@ -1468,6 +1878,18 @@ func (r *Repository) syncRuleAccounts(ctx context.Context, ruleID string, primar
 	}
 
 	return nil
+}
+
+func postgresTextArray(values []string) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		parts = append(parts, `"`+strings.ReplaceAll(trimmed, `"`, `\"`)+`"`)
+	}
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 func mustMarshalJSON(value any) ([]byte, error) {
@@ -1589,6 +2011,45 @@ func scanSystemConfig(row rowScanner) (SystemAgentConfig, error) {
 		item.ProviderConfig = map[string]any{}
 	}
 
+	return item, nil
+}
+
+func scanAgentSkill(row rowScanner) (AgentSkill, error) {
+	var item AgentSkill
+	if err := row.Scan(
+		&item.ID,
+		&item.Name,
+		&item.Slug,
+		&item.Description,
+		&item.Enabled,
+		&item.SkillMarkdown,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return AgentSkill{}, err
+	}
+	if item.Files == nil {
+		item.Files = []SkillFile{}
+	}
+	return item, nil
+}
+
+func scanSkillFile(row rowScanner) (SkillFile, error) {
+	var item SkillFile
+	if err := row.Scan(
+		&item.ID,
+		&item.SkillID,
+		&item.Path,
+		&item.FileKind,
+		&item.ContentType,
+		&item.ContentText,
+		&item.ByteSize,
+		&item.SortOrder,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return SkillFile{}, fmt.Errorf("scan skill file row: %w", err)
+	}
 	return item, nil
 }
 

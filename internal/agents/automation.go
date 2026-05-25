@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"whatsapp-agent-platform/internal/chats"
 	"whatsapp-agent-platform/internal/sessions"
@@ -390,6 +392,11 @@ func (a *Automation) GenerateDesktopDraft(ctx context.Context, input DesktopAgen
 	if err != nil {
 		return DesktopAgentDraftResult{}, fmt.Errorf("load admin reply agent config failed: %w", err)
 	}
+	contextMessages := desktopMessagesToRunnerMessages(input.RecentMessages)
+	knowledgeBinding, err := a.buildSkillKnowledgeBinding(ctx, rule, input.MessageText, contextMessages)
+	if err != nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("load skill knowledge failed: %w", err)
+	}
 
 	requestID := strings.TrimSpace(input.RequestID)
 	if requestID == "" {
@@ -410,12 +417,12 @@ func (a *Automation) GenerateDesktopDraft(ctx context.Context, input DesktopAgen
 			TriggerFilter:           rule.TriggerFilter,
 			BlacklistFilter:         rule.BlacklistFilter,
 			PromptTemplate:          resolveRunnerPrompt(rule, providerConfig),
-			KnowledgeBinding:        rule.KnowledgeBinding,
+			KnowledgeBinding:        knowledgeBinding,
 		},
 		Message: RunnerMessage{Text: messageText},
 		Context: RunnerContext{
 			ChatTitle:      input.ChatTitle,
-			RecentMessages: desktopMessagesToRunnerMessages(input.RecentMessages),
+			RecentMessages: contextMessages,
 		},
 		Provider: providerConfig,
 	})
@@ -453,6 +460,11 @@ func (a *Automation) GenerateDesktopDraftStream(
 	if err != nil {
 		return DesktopAgentDraftResult{}, fmt.Errorf("load admin reply agent config failed: %w", err)
 	}
+	contextMessages := desktopMessagesToRunnerMessages(input.RecentMessages)
+	knowledgeBinding, err := a.buildSkillKnowledgeBinding(ctx, rule, input.MessageText, contextMessages)
+	if err != nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("load skill knowledge failed: %w", err)
+	}
 
 	requestID := strings.TrimSpace(input.RequestID)
 	if requestID == "" {
@@ -473,12 +485,12 @@ func (a *Automation) GenerateDesktopDraftStream(
 			TriggerFilter:           rule.TriggerFilter,
 			BlacklistFilter:         rule.BlacklistFilter,
 			PromptTemplate:          resolveRunnerPrompt(rule, providerConfig),
-			KnowledgeBinding:        rule.KnowledgeBinding,
+			KnowledgeBinding:        knowledgeBinding,
 		},
 		Message: RunnerMessage{Text: messageText},
 		Context: RunnerContext{
 			ChatTitle:      input.ChatTitle,
-			RecentMessages: desktopMessagesToRunnerMessages(input.RecentMessages),
+			RecentMessages: contextMessages,
 		},
 		Provider: providerConfig,
 	}, func(event RunnerRunStreamEvent) error {
@@ -728,6 +740,10 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 		return prepared, fmt.Errorf("load agent settings failed: %w", err)
 	}
 	resolvedPrompt := resolveRunnerPrompt(selected, providerConfig)
+	knowledgeBinding, err := a.buildSkillKnowledgeBinding(ctx, selected, trigger.Text, contextMessages)
+	if err != nil {
+		return prepared, fmt.Errorf("load skill knowledge failed: %w", err)
+	}
 
 	prepared.RunnerRequest = RunnerRunRequest{
 		RequestID:        runID,
@@ -744,7 +760,7 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 			TriggerFilter:           runRule.TriggerFilter,
 			BlacklistFilter:         runRule.BlacklistFilter,
 			PromptTemplate:          resolvedPrompt,
-			KnowledgeBinding:        runRule.KnowledgeBinding,
+			KnowledgeBinding:        knowledgeBinding,
 		},
 		Message: RunnerMessage{Text: trigger.Text},
 		Context: RunnerContext{
@@ -905,6 +921,15 @@ func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Even
 		})
 	}
 	resolvedPrompt := resolveRunnerPrompt(selected, providerConfig)
+	knowledgeBinding, err := a.buildSkillKnowledgeBinding(ctx, selected, text, contextMessages)
+	if err != nil {
+		completedAt := a.now()
+		return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
+			Status:      RunStatusFailed,
+			BlockReason: stringPointer(fmt.Sprintf("load skill knowledge failed: %v", err)),
+			CompletedAt: &completedAt,
+		})
+	}
 
 	runnerResp, err := a.runner.Run(ctx, RunnerRunRequest{
 		RequestID:         runID,
@@ -922,7 +947,7 @@ func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Even
 			TriggerFilter:           selected.TriggerFilter,
 			BlacklistFilter:         selected.BlacklistFilter,
 			PromptTemplate:          resolvedPrompt,
-			KnowledgeBinding:        selected.KnowledgeBinding,
+			KnowledgeBinding:        knowledgeBinding,
 		},
 		Message: RunnerMessage{Text: text},
 		Context: RunnerContext{
@@ -1568,7 +1593,205 @@ func systemConfigRule(accountID string, config SystemAgentConfig) AgentRule {
 		TriggerFilter:  TriggerFilter{MatchMode: MatchModeAny, IgnoreFromMe: true},
 		PromptTemplate: strings.TrimSpace(config.PromptTemplate),
 		ProviderConfig: cloneProviderConfig(config.ProviderConfig),
+		SkillIDs:       normalizeStringList(config.SkillIDs),
 	}
+}
+
+func (a *Automation) buildSkillKnowledgeBinding(
+	ctx context.Context,
+	rule AgentRule,
+	messageText string,
+	contextMessages []RunnerRecentMessage,
+) (*KnowledgeBinding, error) {
+	binding := mergeKnowledgeBinding(nil, rule.KnowledgeBinding)
+	skillIDs := normalizeStringList(rule.SkillIDs)
+	if len(skillIDs) == 0 {
+		return binding, nil
+	}
+
+	query := buildSkillSearchText(messageText, contextMessages)
+	skills, err := a.repository.ListEnabledSkillsByAgentID(ctx, rule.ID)
+	if err != nil {
+		return nil, err
+	}
+	skillsByID := make(map[string]AgentSkill, len(skills))
+	for _, skill := range skills {
+		skillsByID[skill.ID] = skill
+	}
+	for _, skillID := range skillIDs {
+		if skill, ok := skillsByID[skillID]; ok {
+			binding = mergeKnowledgeBinding(binding, skillKnowledgeBinding(skill, query))
+		}
+	}
+
+	return binding, nil
+}
+
+func skillKnowledgeBinding(skill AgentSkill, query string) *KnowledgeBinding {
+	if strings.TrimSpace(skill.ID) == "" {
+		return nil
+	}
+
+	summaryParts := []string{
+		fmt.Sprintf("Skill: %s", strings.TrimSpace(skill.Name)),
+	}
+	if strings.TrimSpace(skill.Description) != "" {
+		summaryParts = append(summaryParts, "Description: "+strings.TrimSpace(skill.Description))
+	}
+	if strings.TrimSpace(skill.SkillMarkdown) != "" {
+		summaryParts = append(summaryParts, "SKILL.md:\n"+limitText(skill.SkillMarkdown, 5000))
+	}
+
+	references := make([]string, 0, 6)
+	for _, file := range pickRelevantSkillFiles(skill.Files, query, 6) {
+		if file.FileKind != SkillFileKindReference {
+			continue
+		}
+		content := strings.TrimSpace(file.ContentText)
+		if content == "" {
+			continue
+		}
+		references = append(references, fmt.Sprintf("[%s]\n%s", file.Path, limitText(content, 3500)))
+	}
+
+	summary := strings.Join(summaryParts, "\n\n")
+	return &KnowledgeBinding{
+		Summary:    &summary,
+		References: references,
+	}
+}
+
+func pickRelevantSkillFiles(files []SkillFile, query string, limit int) []SkillFile {
+	if limit <= 0 {
+		return nil
+	}
+	type scoredFile struct {
+		file  SkillFile
+		score int
+	}
+	keywords := skillSearchKeywords(query)
+	scored := make([]scoredFile, 0, len(files))
+	for _, file := range files {
+		if file.FileKind != SkillFileKindReference {
+			continue
+		}
+		content := strings.ToLower(file.Path + "\n" + file.ContentText)
+		score := 0
+		for _, keyword := range keywords {
+			if strings.Contains(content, keyword) {
+				score += 3
+			}
+		}
+		if score == 0 {
+			continue
+		}
+		scored = append(scored, scoredFile{file: file, score: score})
+	}
+	sort.SliceStable(scored, func(left, right int) bool {
+		if scored[left].score == scored[right].score {
+			return scored[left].file.SortOrder < scored[right].file.SortOrder
+		}
+		return scored[left].score > scored[right].score
+	})
+	if len(scored) > limit {
+		scored = scored[:limit]
+	}
+	result := make([]SkillFile, 0, len(scored))
+	for _, item := range scored {
+		result = append(result, item.file)
+	}
+	return result
+}
+
+func skillSearchKeywords(value string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return r == ' ' || r == '\n' || r == '\r' || r == '\t' || r == ',' || r == '.' ||
+			r == '?' || r == '!' || r == '，' || r == '。' || r == '？' || r == '！' ||
+			r == ':' || r == '：' || r == ';' || r == '；' || r == '/' || r == '\\'
+	})
+	seen := make(map[string]struct{}, len(fields))
+	result := make([]string, 0, len(fields))
+	add := func(field string) {
+		trimmed := strings.TrimSpace(field)
+		if len([]rune(trimmed)) < 2 {
+			return
+		}
+		if _, ok := seen[trimmed]; ok {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	for _, field := range fields {
+		trimmed := strings.TrimSpace(field)
+		add(trimmed)
+		if !containsCJK(trimmed) {
+			continue
+		}
+		runes := []rune(trimmed)
+		for size := 2; size <= 3; size++ {
+			if len(runes) < size {
+				continue
+			}
+			for index := 0; index <= len(runes)-size; index++ {
+				add(string(runes[index : index+size]))
+				if len(result) >= 80 {
+					return result
+				}
+			}
+		}
+	}
+	return result
+}
+
+func containsCJK(value string) bool {
+	for _, r := range value {
+		if unicode.In(r, unicode.Han) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildSkillSearchText(messageText string, contextMessages []RunnerRecentMessage) string {
+	parts := []string{strings.TrimSpace(messageText)}
+	start := len(contextMessages) - 8
+	if start < 0 {
+		start = 0
+	}
+	for _, item := range contextMessages[start:] {
+		parts = append(parts, item.Text)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func mergeKnowledgeBinding(left *KnowledgeBinding, right *KnowledgeBinding) *KnowledgeBinding {
+	if right == nil {
+		return left
+	}
+	if left == nil {
+		return normalizeKnowledgeBinding(right)
+	}
+
+	summaryParts := []string{}
+	if left.Summary != nil && strings.TrimSpace(*left.Summary) != "" {
+		summaryParts = append(summaryParts, strings.TrimSpace(*left.Summary))
+	}
+	if right.Summary != nil && strings.TrimSpace(*right.Summary) != "" {
+		summaryParts = append(summaryParts, strings.TrimSpace(*right.Summary))
+	}
+	var summary *string
+	if len(summaryParts) > 0 {
+		merged := strings.Join(summaryParts, "\n\n---\n\n")
+		summary = &merged
+	}
+
+	references := append([]string{}, left.References...)
+	references = append(references, right.References...)
+	return normalizeKnowledgeBinding(&KnowledgeBinding{
+		Summary:    summary,
+		References: references,
+	})
 }
 
 func mapWithPromptFallback(config map[string]any, promptTemplate string) map[string]any {

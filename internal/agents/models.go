@@ -50,6 +50,14 @@ type KnowledgeBinding struct {
 	References []string `json:"references"`
 }
 
+type SkillFileKind string
+
+const (
+	SkillFileKindSkill     SkillFileKind = "skill"
+	SkillFileKindReference SkillFileKind = "reference"
+	SkillFileKindAsset     SkillFileKind = "asset"
+)
+
 type AgentRule struct {
 	ID                      string
 	AccountID               string
@@ -66,6 +74,7 @@ type AgentRule struct {
 	PromptTemplate          string
 	ProviderConfig          map[string]any
 	KnowledgeBinding        *KnowledgeBinding
+	SkillIDs                []string
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
@@ -126,6 +135,7 @@ type SystemAgentConfig struct {
 	Enabled        bool           `json:"enabled"`
 	ProviderConfig map[string]any `json:"provider_config"`
 	PromptTemplate string         `json:"prompt_template"`
+	SkillIDs       []string       `json:"skill_ids"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 }
@@ -137,6 +147,50 @@ type UpsertSystemConfigInput struct {
 	Enabled        bool           `json:"enabled"`
 	ProviderConfig map[string]any `json:"provider_config"`
 	PromptTemplate string         `json:"prompt_template"`
+	SkillIDs       []string       `json:"skill_ids,omitempty"`
+}
+
+type AgentSkill struct {
+	ID            string      `json:"id"`
+	Name          string      `json:"name"`
+	Slug          string      `json:"slug"`
+	Description   string      `json:"description"`
+	Enabled       bool        `json:"enabled"`
+	SkillMarkdown string      `json:"skill_markdown"`
+	Files         []SkillFile `json:"files,omitempty"`
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
+}
+
+type SkillFile struct {
+	ID          string        `json:"id"`
+	SkillID     string        `json:"skill_id"`
+	Path        string        `json:"path"`
+	FileKind    SkillFileKind `json:"file_kind"`
+	ContentType string        `json:"content_type"`
+	ContentText string        `json:"content_text"`
+	ByteSize    int64         `json:"byte_size"`
+	SortOrder   int           `json:"sort_order"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}
+
+type UpsertSkillInput struct {
+	ID            string `json:"id,omitempty"`
+	Name          string `json:"name"`
+	Slug          string `json:"slug,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	SkillMarkdown string `json:"skill_markdown"`
+}
+
+type UpsertSkillFileInput struct {
+	ID          string        `json:"id,omitempty"`
+	Path        string        `json:"path"`
+	FileKind    SkillFileKind `json:"file_kind"`
+	ContentType string        `json:"content_type,omitempty"`
+	ContentText string        `json:"content_text"`
+	SortOrder   int           `json:"sort_order,omitempty"`
 }
 
 type SettingsView struct {
@@ -231,81 +285,81 @@ const (
 )
 
 type AssistantUsageLog struct {
-	ID                      string
-	UserID                  string
-	WSAccountID             string
-	WSAccountName           string
-	ChatID                  string
-	CustomerID              string
-	CustomerNickname        string
-	LatestMessageID         string
-	LatestMessageType       string
-	LatestMessageText       string
-	LatestMessageMediaRef   string
-	LatestMessageReceivedAt *time.Time
-	TriggerMessages         []AssistantUsageTriggerMessage
-	AgentID                 string
-	AgentName               string
-	AdoptedOptionIndex      *int
-	AdoptedOptionContent    string
+	ID                       string
+	UserID                   string
+	WSAccountID              string
+	WSAccountName            string
+	ChatID                   string
+	CustomerID               string
+	CustomerNickname         string
+	LatestMessageID          string
+	LatestMessageType        string
+	LatestMessageText        string
+	LatestMessageMediaRef    string
+	LatestMessageReceivedAt  *time.Time
+	TriggerMessages          []AssistantUsageTriggerMessage
+	AgentID                  string
+	AgentName                string
+	AdoptedOptionIndex       *int
+	AdoptedOptionContent     string
 	TranslationSourceContent string
-	FinalDraftContent       string
-	TranslatedContent       string
-	TargetLanguage          string
-	ActionType              AssistantUsageAction
-	LogDate                 time.Time
-	CreatedAt               time.Time
+	FinalDraftContent        string
+	TranslatedContent        string
+	TargetLanguage           string
+	ActionType               AssistantUsageAction
+	LogDate                  time.Time
+	CreatedAt                time.Time
 }
 
 type AssistantUsageLogView struct {
-	ID                      string               `json:"id"`
-	UserID                  string               `json:"user_id"`
-	WSAccountID             string               `json:"ws_account_id"`
-	WSAccountName           string               `json:"ws_account_name"`
-	ChatID                  string               `json:"chat_id"`
-	CustomerID              string               `json:"customer_id"`
-	CustomerNickname        string               `json:"customer_nickname"`
-	LatestMessageID         string               `json:"latest_message_id"`
-	LatestMessageType       string               `json:"latest_message_type"`
-	LatestMessageText       string               `json:"latest_message_text"`
-	LatestMessageMediaRef   string               `json:"latest_message_media_ref"`
-	LatestMessageReceivedAt *time.Time           `json:"latest_message_received_at,omitempty"`
-	TriggerMessages         []AssistantUsageTriggerMessage `json:"trigger_messages"`
-	AgentID                 string               `json:"agent_id"`
-	AgentName               string               `json:"agent_name"`
-	AdoptedOptionIndex      *int                 `json:"adopted_option_index,omitempty"`
-	AdoptedOptionContent    string               `json:"adopted_option_content"`
-	TranslationSourceContent string              `json:"translation_source_content"`
-	FinalDraftContent       string               `json:"final_draft_content"`
-	TranslatedContent       string               `json:"translated_content"`
-	TargetLanguage          string               `json:"target_language"`
-	ActionType              AssistantUsageAction `json:"action_type"`
-	LogDate                 string               `json:"log_date"`
-	CreatedAt               time.Time            `json:"created_at"`
+	ID                       string                         `json:"id"`
+	UserID                   string                         `json:"user_id"`
+	WSAccountID              string                         `json:"ws_account_id"`
+	WSAccountName            string                         `json:"ws_account_name"`
+	ChatID                   string                         `json:"chat_id"`
+	CustomerID               string                         `json:"customer_id"`
+	CustomerNickname         string                         `json:"customer_nickname"`
+	LatestMessageID          string                         `json:"latest_message_id"`
+	LatestMessageType        string                         `json:"latest_message_type"`
+	LatestMessageText        string                         `json:"latest_message_text"`
+	LatestMessageMediaRef    string                         `json:"latest_message_media_ref"`
+	LatestMessageReceivedAt  *time.Time                     `json:"latest_message_received_at,omitempty"`
+	TriggerMessages          []AssistantUsageTriggerMessage `json:"trigger_messages"`
+	AgentID                  string                         `json:"agent_id"`
+	AgentName                string                         `json:"agent_name"`
+	AdoptedOptionIndex       *int                           `json:"adopted_option_index,omitempty"`
+	AdoptedOptionContent     string                         `json:"adopted_option_content"`
+	TranslationSourceContent string                         `json:"translation_source_content"`
+	FinalDraftContent        string                         `json:"final_draft_content"`
+	TranslatedContent        string                         `json:"translated_content"`
+	TargetLanguage           string                         `json:"target_language"`
+	ActionType               AssistantUsageAction           `json:"action_type"`
+	LogDate                  string                         `json:"log_date"`
+	CreatedAt                time.Time                      `json:"created_at"`
 }
 
 type CreateAssistantUsageLogInput struct {
-	WSAccountID             string               `json:"ws_account_id"`
-	WSAccountName           string               `json:"ws_account_name"`
-	ChatID                  string               `json:"chat_id"`
-	CustomerID              string               `json:"customer_id"`
-	CustomerNickname        string               `json:"customer_nickname"`
-	LatestMessageID         string               `json:"latest_message_id"`
-	LatestMessageType       string               `json:"latest_message_type"`
-	LatestMessageText       string               `json:"latest_message_text"`
-	LatestMessageMediaRef   string               `json:"latest_message_media_ref"`
-	LatestMessageReceivedAt *time.Time           `json:"latest_message_received_at,omitempty"`
-	TriggerMessages         []AssistantUsageTriggerMessage `json:"trigger_messages"`
-	AgentID                 string               `json:"agent_id"`
-	AgentName               string               `json:"agent_name"`
-	AdoptedOptionIndex      *int                 `json:"adopted_option_index,omitempty"`
-	AdoptedOptionContent    string               `json:"adopted_option_content"`
-	TranslationSourceContent string              `json:"translation_source_content"`
-	FinalDraftContent       string               `json:"final_draft_content"`
-	TranslatedContent       string               `json:"translated_content"`
-	TargetLanguage          string               `json:"target_language"`
-	ActionType              AssistantUsageAction `json:"action_type"`
-	LogDate                 string               `json:"log_date"`
+	WSAccountID              string                         `json:"ws_account_id"`
+	WSAccountName            string                         `json:"ws_account_name"`
+	ChatID                   string                         `json:"chat_id"`
+	CustomerID               string                         `json:"customer_id"`
+	CustomerNickname         string                         `json:"customer_nickname"`
+	LatestMessageID          string                         `json:"latest_message_id"`
+	LatestMessageType        string                         `json:"latest_message_type"`
+	LatestMessageText        string                         `json:"latest_message_text"`
+	LatestMessageMediaRef    string                         `json:"latest_message_media_ref"`
+	LatestMessageReceivedAt  *time.Time                     `json:"latest_message_received_at,omitempty"`
+	TriggerMessages          []AssistantUsageTriggerMessage `json:"trigger_messages"`
+	AgentID                  string                         `json:"agent_id"`
+	AgentName                string                         `json:"agent_name"`
+	AdoptedOptionIndex       *int                           `json:"adopted_option_index,omitempty"`
+	AdoptedOptionContent     string                         `json:"adopted_option_content"`
+	TranslationSourceContent string                         `json:"translation_source_content"`
+	FinalDraftContent        string                         `json:"final_draft_content"`
+	TranslatedContent        string                         `json:"translated_content"`
+	TargetLanguage           string                         `json:"target_language"`
+	ActionType               AssistantUsageAction           `json:"action_type"`
+	LogDate                  string                         `json:"log_date"`
 }
 
 type AssistantUsageTriggerMessage struct {

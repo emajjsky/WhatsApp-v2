@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -379,6 +381,150 @@ func (s *Service) ListSystemConfigs(ctx context.Context) ([]SystemAgentConfig, e
 	return items, nil
 }
 
+func (s *Service) ListSkills(ctx context.Context) ([]AgentSkill, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
+
+	return s.repository.ListSkills(ctx)
+}
+
+func (s *Service) GetSkill(ctx context.Context, id string) (AgentSkill, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return AgentSkill{}, err
+	}
+
+	trimmedID := strings.TrimSpace(id)
+	if trimmedID == "" {
+		return AgentSkill{}, fmt.Errorf("skill id is required")
+	}
+
+	return s.repository.GetSkillByID(ctx, trimmedID)
+}
+
+func (s *Service) UpsertSkill(ctx context.Context, input UpsertSkillInput) (AgentSkill, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return AgentSkill{}, err
+	}
+
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return AgentSkill{}, fmt.Errorf("skill name is required")
+	}
+
+	slug := normalizeSkillSlug(input.Slug)
+	if slug == "" {
+		slug = normalizeSkillSlug(name)
+	}
+	if slug == "" {
+		return AgentSkill{}, fmt.Errorf("skill slug is required")
+	}
+
+	markdown := strings.TrimSpace(input.SkillMarkdown)
+	if markdown == "" {
+		markdown = defaultSkillMarkdown(name, strings.TrimSpace(input.Description))
+	}
+
+	id := strings.TrimSpace(input.ID)
+	if id == "" {
+		id = ids.NewUUID()
+	}
+
+	item := AgentSkill{
+		ID:            id,
+		Name:          limitText(name, 120),
+		Slug:          limitText(slug, 120),
+		Description:   limitText(input.Description, 1000),
+		Enabled:       input.Enabled,
+		SkillMarkdown: limitText(markdown, 20000),
+	}
+	if err := s.repository.UpsertSkill(ctx, item); err != nil {
+		return AgentSkill{}, err
+	}
+
+	return s.repository.GetSkillByID(ctx, item.ID)
+}
+
+func (s *Service) DeleteSkill(ctx context.Context, id string) error {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return err
+	}
+
+	trimmedID := strings.TrimSpace(id)
+	if trimmedID == "" {
+		return fmt.Errorf("skill id is required")
+	}
+
+	return s.repository.DeleteSkill(ctx, trimmedID)
+}
+
+func (s *Service) UpsertSkillFile(ctx context.Context, skillID string, input UpsertSkillFileInput) (AgentSkill, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return AgentSkill{}, err
+	}
+
+	trimmedSkillID := strings.TrimSpace(skillID)
+	if trimmedSkillID == "" {
+		return AgentSkill{}, fmt.Errorf("skill id is required")
+	}
+	if _, err := s.repository.GetSkillByID(ctx, trimmedSkillID); err != nil {
+		return AgentSkill{}, err
+	}
+
+	fileKind := normalizeSkillFileKind(input.FileKind)
+	if fileKind == "" || fileKind == SkillFileKindSkill {
+		return AgentSkill{}, fmt.Errorf("file_kind must be reference or asset")
+	}
+
+	path, err := normalizeSkillFilePath(input.Path, fileKind)
+	if err != nil {
+		return AgentSkill{}, err
+	}
+
+	contentType := strings.TrimSpace(input.ContentType)
+	if contentType == "" {
+		contentType = "text/plain; charset=utf-8"
+	}
+	contentText := limitText(input.ContentText, 120000)
+
+	fileID := strings.TrimSpace(input.ID)
+	if fileID == "" {
+		fileID = ids.NewUUID()
+	}
+	file := SkillFile{
+		ID:          fileID,
+		SkillID:     trimmedSkillID,
+		Path:        path,
+		FileKind:    fileKind,
+		ContentType: limitText(contentType, 160),
+		ContentText: contentText,
+		ByteSize:    int64(len([]byte(contentText))),
+		SortOrder:   input.SortOrder,
+	}
+	if err := s.repository.UpsertSkillFile(ctx, file); err != nil {
+		return AgentSkill{}, err
+	}
+
+	return s.repository.GetSkillByID(ctx, trimmedSkillID)
+}
+
+func (s *Service) DeleteSkillFile(ctx context.Context, skillID string, fileID string) (AgentSkill, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return AgentSkill{}, err
+	}
+
+	trimmedSkillID := strings.TrimSpace(skillID)
+	trimmedFileID := strings.TrimSpace(fileID)
+	if trimmedSkillID == "" || trimmedFileID == "" {
+		return AgentSkill{}, fmt.Errorf("skill id and file id are required")
+	}
+	if err := s.repository.DeleteSkillFile(ctx, trimmedSkillID, trimmedFileID); err != nil {
+		return AgentSkill{}, err
+	}
+
+	return s.repository.GetSkillByID(ctx, trimmedSkillID)
+}
+
 func (s *Service) ListAvailableSystemConfigs(ctx context.Context, purpose AgentPurpose) ([]SystemAgentConfig, error) {
 	if _, err := auth.RequireUser(ctx); err != nil {
 		return nil, err
@@ -451,8 +597,16 @@ func (s *Service) UpsertSystemConfig(ctx context.Context, input UpsertSystemConf
 		ProviderConfig: providerConfig,
 		PromptTemplate: strings.TrimSpace(input.PromptTemplate),
 	}
+	if purpose == AgentPurposeReply {
+		config.SkillIDs = normalizeStringList(input.SkillIDs)
+	}
 	if config.ID == "" {
 		config.ID = ids.NewUUID()
+	}
+	for _, skillID := range config.SkillIDs {
+		if _, err := s.repository.GetSkillByID(ctx, skillID); err != nil {
+			return SystemAgentConfig{}, fmt.Errorf("skill not found: %s", skillID)
+		}
 	}
 
 	if err := s.repository.UpsertSystemConfig(ctx, config); err != nil {
@@ -545,30 +699,30 @@ func (s *Service) CreateUsageLog(ctx context.Context, input CreateAssistantUsage
 		logDate = parsed
 	}
 	item := AssistantUsageLog{
-		ID:                      ids.NewUUID(),
-		UserID:                  user.ID,
-		WSAccountID:             limitText(input.WSAccountID, 500),
-		WSAccountName:           limitText(input.WSAccountName, 500),
-		ChatID:                  limitText(input.ChatID, 500),
-		CustomerID:              limitText(input.CustomerID, 500),
-		CustomerNickname:        limitText(input.CustomerNickname, 500),
-		LatestMessageID:         limitText(input.LatestMessageID, 500),
-		LatestMessageType:       limitText(input.LatestMessageType, 80),
-		LatestMessageText:       limitText(input.LatestMessageText, 8000),
-		LatestMessageMediaRef:   limitText(input.LatestMessageMediaRef, 2000),
-		LatestMessageReceivedAt: input.LatestMessageReceivedAt,
-		TriggerMessages:         normalizeUsageTriggerMessages(input.TriggerMessages),
-		AgentID:                 limitText(input.AgentID, 500),
-		AgentName:               limitText(input.AgentName, 500),
-		AdoptedOptionIndex:      input.AdoptedOptionIndex,
-		AdoptedOptionContent:    limitText(input.AdoptedOptionContent, 8000),
+		ID:                       ids.NewUUID(),
+		UserID:                   user.ID,
+		WSAccountID:              limitText(input.WSAccountID, 500),
+		WSAccountName:            limitText(input.WSAccountName, 500),
+		ChatID:                   limitText(input.ChatID, 500),
+		CustomerID:               limitText(input.CustomerID, 500),
+		CustomerNickname:         limitText(input.CustomerNickname, 500),
+		LatestMessageID:          limitText(input.LatestMessageID, 500),
+		LatestMessageType:        limitText(input.LatestMessageType, 80),
+		LatestMessageText:        limitText(input.LatestMessageText, 8000),
+		LatestMessageMediaRef:    limitText(input.LatestMessageMediaRef, 2000),
+		LatestMessageReceivedAt:  input.LatestMessageReceivedAt,
+		TriggerMessages:          normalizeUsageTriggerMessages(input.TriggerMessages),
+		AgentID:                  limitText(input.AgentID, 500),
+		AgentName:                limitText(input.AgentName, 500),
+		AdoptedOptionIndex:       input.AdoptedOptionIndex,
+		AdoptedOptionContent:     limitText(input.AdoptedOptionContent, 8000),
 		TranslationSourceContent: limitText(input.TranslationSourceContent, 12000),
-		FinalDraftContent:       limitText(finalDraft, 12000),
-		TranslatedContent:       limitText(input.TranslatedContent, 12000),
-		TargetLanguage:          limitText(input.TargetLanguage, 120),
-		ActionType:              action,
-		LogDate:                 logDate,
-		CreatedAt:               now,
+		FinalDraftContent:        limitText(finalDraft, 12000),
+		TranslatedContent:        limitText(input.TranslatedContent, 12000),
+		TargetLanguage:           limitText(input.TargetLanguage, 120),
+		ActionType:               action,
+		LogDate:                  logDate,
+		CreatedAt:                now,
 	}
 
 	if item.AdoptedOptionIndex != nil && *item.AdoptedOptionIndex < 0 {
@@ -761,30 +915,30 @@ func normalizeAssistantUsageAction(value AssistantUsageAction) AssistantUsageAct
 
 func mapUsageLogToView(item AssistantUsageLog) AssistantUsageLogView {
 	return AssistantUsageLogView{
-		ID:                      item.ID,
-		UserID:                  item.UserID,
-		WSAccountID:             item.WSAccountID,
-		WSAccountName:           item.WSAccountName,
-		ChatID:                  item.ChatID,
-		CustomerID:              item.CustomerID,
-		CustomerNickname:        item.CustomerNickname,
-		LatestMessageID:         item.LatestMessageID,
-		LatestMessageType:       item.LatestMessageType,
-		LatestMessageText:       item.LatestMessageText,
-		LatestMessageMediaRef:   item.LatestMessageMediaRef,
-		LatestMessageReceivedAt: item.LatestMessageReceivedAt,
-		TriggerMessages:         item.TriggerMessages,
-		AgentID:                 item.AgentID,
-		AgentName:               item.AgentName,
-		AdoptedOptionIndex:      item.AdoptedOptionIndex,
-		AdoptedOptionContent:    item.AdoptedOptionContent,
+		ID:                       item.ID,
+		UserID:                   item.UserID,
+		WSAccountID:              item.WSAccountID,
+		WSAccountName:            item.WSAccountName,
+		ChatID:                   item.ChatID,
+		CustomerID:               item.CustomerID,
+		CustomerNickname:         item.CustomerNickname,
+		LatestMessageID:          item.LatestMessageID,
+		LatestMessageType:        item.LatestMessageType,
+		LatestMessageText:        item.LatestMessageText,
+		LatestMessageMediaRef:    item.LatestMessageMediaRef,
+		LatestMessageReceivedAt:  item.LatestMessageReceivedAt,
+		TriggerMessages:          item.TriggerMessages,
+		AgentID:                  item.AgentID,
+		AgentName:                item.AgentName,
+		AdoptedOptionIndex:       item.AdoptedOptionIndex,
+		AdoptedOptionContent:     item.AdoptedOptionContent,
 		TranslationSourceContent: item.TranslationSourceContent,
-		FinalDraftContent:       item.FinalDraftContent,
-		TranslatedContent:       item.TranslatedContent,
-		TargetLanguage:          item.TargetLanguage,
-		ActionType:              item.ActionType,
-		LogDate:                 item.LogDate.Format("2006-01-02"),
-		CreatedAt:               item.CreatedAt,
+		FinalDraftContent:        item.FinalDraftContent,
+		TranslatedContent:        item.TranslatedContent,
+		TargetLanguage:           item.TargetLanguage,
+		ActionType:               item.ActionType,
+		LogDate:                  item.LogDate.Format("2006-01-02"),
+		CreatedAt:                item.CreatedAt,
 	}
 }
 
@@ -902,6 +1056,80 @@ func normalizeKnowledgeBinding(binding *KnowledgeBinding) *KnowledgeBinding {
 		Summary:    summary,
 		References: references,
 	}
+}
+
+var skillSlugReplacePattern = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+func normalizeSkillSlug(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, " ", "-")
+	normalized = skillSlugReplacePattern.ReplaceAllString(normalized, "-")
+	normalized = strings.Trim(normalized, "-_")
+	return normalized
+}
+
+func defaultSkillMarkdown(name string, description string) string {
+	lines := []string{
+		"# " + strings.TrimSpace(name),
+		"",
+		"## 何时使用",
+		"当客户消息与本技能的话术、知识或场景匹配时使用。",
+		"",
+		"## 回复目标",
+		"结合 references 中的资料，生成自然、准确、适合 WhatsApp 客服场景的回复。",
+		"",
+		"## 使用要求",
+		"- 优先参考本技能下的 references。",
+		"- 不要编造资料中没有的承诺。",
+		"- 不要输出内部分析过程。",
+	}
+	if strings.TrimSpace(description) != "" {
+		lines = append([]string{
+			"# " + strings.TrimSpace(name),
+			"",
+			"## 技能说明",
+			strings.TrimSpace(description),
+			"",
+		}, lines[2:]...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func normalizeSkillFileKind(value SkillFileKind) SkillFileKind {
+	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case string(SkillFileKindReference), "references":
+		return SkillFileKindReference
+	case string(SkillFileKindAsset), "assets":
+		return SkillFileKindAsset
+	default:
+		return ""
+	}
+}
+
+func normalizeSkillFilePath(value string, kind SkillFileKind) (string, error) {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if trimmed == "" {
+		return "", fmt.Errorf("file path is required")
+	}
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	cleaned := filepath.Clean(trimmed)
+	cleaned = strings.ReplaceAll(cleaned, "\\", "/")
+	if cleaned == "." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
+		return "", fmt.Errorf("invalid file path")
+	}
+
+	prefix := "references/"
+	if kind == SkillFileKindAsset {
+		prefix = "assets/"
+	}
+	if cleaned == strings.TrimSuffix(prefix, "/") {
+		return "", fmt.Errorf("file path must include a file name")
+	}
+	if !strings.HasPrefix(cleaned, prefix) {
+		cleaned = prefix + filepath.Base(cleaned)
+		cleaned = strings.ReplaceAll(cleaned, "\\", "/")
+	}
+	return limitText(cleaned, 240), nil
 }
 
 func normalizeProviderConfig(config map[string]any) (map[string]any, error) {

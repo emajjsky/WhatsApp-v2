@@ -3546,7 +3546,7 @@ a {
 
 .admin-tab-button {
   min-height: 38px;
-  min-width: 128px;
+  min-width: 116px;
   padding: 6px 12px;
   border: 1px solid transparent;
   border-radius: 10px;
@@ -3697,6 +3697,143 @@ a {
   display: grid;
   gap: 12px;
   min-height: 0;
+}
+
+.admin-skill-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.admin-skill-workbench {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.admin-skill-list,
+.admin-skill-file-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.admin-skill-item,
+.admin-skill-file-item,
+.admin-skill-bind-row {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text);
+}
+
+.admin-skill-item {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  text-align: left;
+}
+
+.admin-skill-item strong,
+.admin-skill-file-item strong,
+.admin-skill-bind-row strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.admin-skill-item span,
+.admin-skill-item small,
+.admin-skill-file-item small,
+.admin-skill-bind-row small {
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.admin-skill-item.active,
+.admin-skill-file-item.active,
+.admin-skill-bind-row:has(input:checked) {
+  border-color: rgba(18, 140, 126, 0.32);
+  background: #edf8f3;
+}
+
+.admin-skill-editor {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding-right: 4px;
+}
+
+.admin-skill-form {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-skill-files {
+  min-height: 0;
+}
+
+.admin-skill-file-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 0.66fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.admin-skill-file-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  text-align: left;
+}
+
+.admin-skill-file-item span,
+.admin-skill-file-item strong,
+.admin-skill-file-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-skill-file-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-skill-bind-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.admin-skill-bind-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 10px 12px;
+}
+
+.admin-skill-bind-row input {
+  margin-top: 2px;
+}
+
+.admin-skill-bind-row span,
+.admin-skill-bind-row strong,
+.admin-skill-bind-row small {
+  display: block;
+  min-width: 0;
 }
 
 .admin-usage-log-heading {

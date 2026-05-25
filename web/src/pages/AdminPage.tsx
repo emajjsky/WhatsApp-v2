@@ -2,7 +2,10 @@ import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   createInvitation,
   createUser,
+  deleteAgentSkill,
+  deleteAgentSkillFile,
   listAccounts,
+  listAgentSkills,
   listDesktopDevices,
   deleteSystemAgentConfig,
   listAssistantUsageLogFilters,
@@ -14,7 +17,12 @@ import {
   updateInvitation,
   updateUser,
   updateDesktopDeviceStatus,
+  upsertAgentSkill,
+  upsertAgentSkillFile,
   upsertSystemAgentConfig,
+  type AgentSkillFileKind,
+  type AgentSkillFileView,
+  type AgentSkillView,
   type AgentProviderConfig,
   type AgentPurpose,
   type AssistantUsageAction,
@@ -33,7 +41,7 @@ import {
 } from '../api/client'
 import { Icon } from '../components/Icon'
 
-type AdminTab = 'users' | 'invitations' | 'agents' | 'usageLogs'
+type AdminTab = 'users' | 'invitations' | 'agents' | 'skills' | 'usageLogs'
 type ProviderType = 'openai_compatible' | 'coze' | 'n8n' | 'webhook'
 
 interface AgentConfigForm {
@@ -58,6 +66,25 @@ interface AgentConfigForm {
   customerTypeLabels: string
   riskLabels: string
   promptTemplate: string
+  skillIds: string[]
+}
+
+interface SkillForm {
+  id: string
+  name: string
+  slug: string
+  description: string
+  enabled: boolean
+  skillMarkdown: string
+}
+
+interface SkillFileForm {
+  id: string
+  path: string
+  fileKind: Exclude<AgentSkillFileKind, 'skill'>
+  contentType: string
+  contentText: string
+  sortOrder: string
 }
 
 const defaultReplyPrompt = `你是 WhatsApp 跨境客服回复策略助手。你的任务是基于客户最新消息和上下文，输出 3 个不同回复策略，帮助客服选择最合适的一条。
@@ -154,6 +181,12 @@ export function AdminPage() {
             onClick={() => setTab('agents')}
           />
           <AdminTabButton
+            active={tab === 'skills'}
+            title="Skill 管理"
+            hint="话术包和知识目录"
+            onClick={() => setTab('skills')}
+          />
+          <AdminTabButton
             active={tab === 'usageLogs'}
             title="采纳数据"
             hint="方案采纳和发送记录"
@@ -166,6 +199,7 @@ export function AdminPage() {
         {tab === 'users' ? <UserAdminPanel /> : null}
         {tab === 'invitations' ? <InvitationAdminPanel /> : null}
         {tab === 'agents' ? <SystemAgentPanel /> : null}
+        {tab === 'skills' ? <SkillAdminPanel /> : null}
         {tab === 'usageLogs' ? <AssistantUsageLogPanel /> : null}
       </main>
     </div>
@@ -578,6 +612,388 @@ function DesktopUserControls({
         </div>
       ) : null}
     </div>
+  )
+}
+
+function SkillAdminPanel() {
+  const [skills, setSkills] = useState<AgentSkillView[]>([])
+  const [selectedSkillId, setSelectedSkillId] = useState('new')
+  const [skillForm, setSkillForm] = useState<SkillForm>(() => createDefaultSkillForm())
+  const [fileForm, setFileForm] = useState<SkillFileForm>(() => createDefaultSkillFileForm())
+  const [selectedFileId, setSelectedFileId] = useState('new')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const [notice, setNotice] = useState<string>()
+
+  const selectedSkill = useMemo(
+    () => skills.find((skill) => skill.id === selectedSkillId),
+    [selectedSkillId, skills],
+  )
+  const editableFiles = useMemo(
+    () => (selectedSkill?.files ?? []).filter((file) => file.file_kind !== 'skill'),
+    [selectedSkill],
+  )
+  const selectedFile = useMemo(
+    () => editableFiles.find((file) => file.id === selectedFileId),
+    [editableFiles, selectedFileId],
+  )
+
+  async function loadSkills() {
+    setLoading(true)
+    setError(undefined)
+    try {
+      const response = await listAgentSkills()
+      setSkills(response.skills)
+      setSelectedSkillId((current) => {
+        if (current === 'new') {
+          return current
+        }
+        return response.skills.some((skill) => skill.id === current) ? current : response.skills[0]?.id ?? 'new'
+      })
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载 Skill 失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadSkills()
+  }, [])
+
+  useEffect(() => {
+    setSkillForm(selectedSkill ? mapSkillToForm(selectedSkill) : createDefaultSkillForm())
+    setSelectedFileId('new')
+  }, [selectedSkill, selectedSkillId])
+
+  useEffect(() => {
+    setFileForm(selectedFile ? mapSkillFileToForm(selectedFile) : createDefaultSkillFileForm())
+  }, [selectedFile, selectedFileId])
+
+  function updateSkillForm(next: Partial<SkillForm>) {
+    setSkillForm((current) => ({ ...current, ...next }))
+  }
+
+  function updateFileForm(next: Partial<SkillFileForm>) {
+    setFileForm((current) => ({ ...current, ...next }))
+  }
+
+  async function handleSaveSkill(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    try {
+      const response = await upsertAgentSkill({
+        id: skillForm.id || undefined,
+        name: skillForm.name.trim(),
+        slug: skillForm.slug.trim(),
+        description: skillForm.description.trim(),
+        enabled: skillForm.enabled,
+        skill_markdown: skillForm.skillMarkdown.trim(),
+      })
+      setSkills((current) => [
+        ...current.filter((item) => item.id !== response.skill.id),
+        response.skill,
+      ].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')))
+      setSelectedSkillId(response.skill.id)
+      setNotice('Skill 已保存')
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : '保存 Skill 失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDeleteSkill() {
+    if (!selectedSkill || saving) {
+      return
+    }
+    if (!window.confirm(`确认删除 Skill「${selectedSkill.name}」？`)) {
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    try {
+      await deleteAgentSkill(selectedSkill.id)
+      setSkills((current) => current.filter((item) => item.id !== selectedSkill.id))
+      setSelectedSkillId('new')
+      setNotice('Skill 已删除')
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : '删除 Skill 失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleSaveFile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedSkill) {
+      setError('请先保存或选择一个 Skill')
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    try {
+      const response = await upsertAgentSkillFile(selectedSkill.id, {
+        id: fileForm.id || undefined,
+        path: fileForm.path.trim(),
+        file_kind: fileForm.fileKind,
+        content_type: fileForm.contentType.trim(),
+        content_text: fileForm.contentText,
+        sort_order: optionalNumber(fileForm.sortOrder) ?? 0,
+      })
+      setSkills((current) => current.map((item) => (item.id === response.skill.id ? response.skill : item)))
+      setSelectedSkillId(response.skill.id)
+      setSelectedFileId('new')
+      setNotice('文件已保存')
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : '保存文件失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDeleteFile(file: AgentSkillFileView) {
+    if (!selectedSkill || saving || file.file_kind === 'skill') {
+      return
+    }
+    if (!window.confirm(`确认删除文件「${file.path}」？`)) {
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    try {
+      const response = await deleteAgentSkillFile(selectedSkill.id, file.id)
+      setSkills((current) => current.map((item) => (item.id === response.skill.id ? response.skill : item)))
+      setSelectedFileId('new')
+      setNotice('文件已删除')
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : '删除文件失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleReferenceUpload(file: File | undefined) {
+    if (!file) {
+      return
+    }
+    const text = await file.text().catch(() => '')
+    const path = `references/${file.name}`
+    setFileForm({
+      id: '',
+      path,
+      fileKind: 'reference',
+      contentType: file.type || 'text/plain; charset=utf-8',
+      contentText: text,
+      sortOrder: String(editableFiles.length),
+    })
+    setSelectedFileId('new')
+  }
+
+  return (
+    <section className="panel admin-skill-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Agent Skills</p>
+          <h3>{loading ? '加载 Skill 中' : `${skills.length} 个 Skill`}</h3>
+        </div>
+        <button className="secondary-button" type="button" onClick={() => setSelectedSkillId('new')}>
+          <Icon name="plus" />
+          新建 Skill
+        </button>
+      </div>
+
+      <div className="admin-skill-workbench">
+        <aside className="admin-skill-list">
+          {skills.length ? (
+            skills.map((skill) => (
+              <button
+                key={skill.id}
+                type="button"
+                className={`admin-skill-item${skill.id === selectedSkillId ? ' active' : ''}`}
+                onClick={() => setSelectedSkillId(skill.id)}
+              >
+                <strong>{skill.name}</strong>
+                <span>{skill.slug}</span>
+                <small>{skill.enabled ? '已启用' : '已停用'} · {skill.files?.length ?? 0} 个文件</small>
+              </button>
+            ))
+          ) : (
+            <div className="system-agent-empty">还没有 Skill</div>
+          )}
+        </aside>
+
+        <div className="admin-skill-editor">
+          <form className="admin-skill-form" onSubmit={handleSaveSkill}>
+            <section className="admin-form-section">
+              <div className="admin-form-section-title">
+                <strong>Skill 目录</strong>
+                <span>一个 Skill 就是一套可绑定到 agent 的话术和知识能力</span>
+              </div>
+              <div className="two-column-grid">
+                <label className="field">
+                  <span>名称</span>
+                  <input value={skillForm.name} onChange={(event) => updateSkillForm({ name: event.target.value })} />
+                </label>
+                <label className="field">
+                  <span>目录名</span>
+                  <input value={skillForm.slug} onChange={(event) => updateSkillForm({ slug: event.target.value })} />
+                </label>
+              </div>
+              <label className="field">
+                <span>说明</span>
+                <input
+                  value={skillForm.description}
+                  onChange={(event) => updateSkillForm({ description: event.target.value })}
+                />
+              </label>
+              <label className="checkbox-row agent-thinking-row">
+                <input
+                  type="checkbox"
+                  checked={skillForm.enabled}
+                  onChange={(event) => updateSkillForm({ enabled: event.target.checked })}
+                />
+                <span>启用这个 Skill</span>
+              </label>
+              <label className="field agent-prompt-field">
+                <span>SKILL.md</span>
+                <textarea
+                  rows={11}
+                  value={skillForm.skillMarkdown}
+                  onChange={(event) => updateSkillForm({ skillMarkdown: event.target.value })}
+                />
+              </label>
+              <div className="button-row">
+                <button className="primary-button" type="submit" disabled={saving}>
+                  <Icon name="save" />
+                  保存 Skill
+                </button>
+                {selectedSkill ? (
+                  <button className="danger-button" type="button" onClick={() => void handleDeleteSkill()} disabled={saving}>
+                    <Icon name="delete" />
+                    删除
+                  </button>
+                ) : null}
+              </div>
+            </section>
+          </form>
+
+          <section className="admin-form-section admin-skill-files">
+            <div className="admin-form-section-title">
+              <strong>references / assets</strong>
+              <span>客服话术优先放 references，assets 暂作资料登记</span>
+            </div>
+            <div className="admin-skill-file-grid">
+              <div className="admin-skill-file-list">
+                <button
+                  type="button"
+                  className={`admin-skill-file-item${selectedFileId === 'new' ? ' active' : ''}`}
+                  onClick={() => setSelectedFileId('new')}
+                >
+                  <Icon name="plus" />
+                  新建 reference
+                </button>
+                {editableFiles.map((file) => (
+                  <button
+                    key={file.id}
+                    type="button"
+                    className={`admin-skill-file-item${file.id === selectedFileId ? ' active' : ''}`}
+                    onClick={() => setSelectedFileId(file.id)}
+                  >
+                    <Icon name={file.file_kind === 'asset' ? 'document' : 'fileText'} />
+                    <span>
+                      <strong>{file.path}</strong>
+                      <small>{formatByteSize(file.byte_size)}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <form className="admin-skill-file-editor" onSubmit={handleSaveFile}>
+                <div className="two-column-grid">
+                  <label className="field">
+                    <span>路径</span>
+                    <input value={fileForm.path} onChange={(event) => updateFileForm({ path: event.target.value })} />
+                  </label>
+                  <label className="field">
+                    <span>类型</span>
+                    <select
+                      value={fileForm.fileKind}
+                      onChange={(event) =>
+                        updateFileForm({ fileKind: event.target.value as Exclude<AgentSkillFileKind, 'skill'> })
+                      }
+                    >
+                      <option value="reference">reference</option>
+                      <option value="asset">asset</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="two-column-grid">
+                  <label className="field">
+                    <span>Content-Type</span>
+                    <input
+                      value={fileForm.contentType}
+                      onChange={(event) => updateFileForm({ contentType: event.target.value })}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>排序</span>
+                    <input
+                      type="number"
+                      value={fileForm.sortOrder}
+                      onChange={(event) => updateFileForm({ sortOrder: event.target.value })}
+                    />
+                  </label>
+                </div>
+                <label className="script-upload-drop">
+                  <strong>从本地文件填充内容</strong>
+                  <span>建议使用 txt、md、csv、json。PDF/Word 先登记文件名，自动抽文本后续补。</span>
+                  <input
+                    type="file"
+                    accept=".txt,.md,.csv,.json,.log,.html,.pdf,.doc,.docx"
+                    onChange={(event) => void handleReferenceUpload(event.target.files?.[0])}
+                  />
+                </label>
+                <label className="field agent-prompt-field">
+                  <span>文件内容</span>
+                  <textarea
+                    rows={10}
+                    value={fileForm.contentText}
+                    onChange={(event) => updateFileForm({ contentText: event.target.value })}
+                  />
+                </label>
+                <div className="button-row">
+                  <button className="primary-button" type="submit" disabled={saving || !selectedSkill}>
+                    <Icon name="save" />
+                    保存文件
+                  </button>
+                  {selectedFile ? (
+                    <button
+                      className="danger-button"
+                      type="button"
+                      onClick={() => void handleDeleteFile(selectedFile)}
+                      disabled={saving}
+                    >
+                      <Icon name="delete" />
+                      删除文件
+                    </button>
+                  ) : null}
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      {notice ? <div className="success-banner">{notice}</div> : null}
+      {error ? <div className="error-banner">{error}</div> : null}
+    </section>
   )
 }
 
@@ -1025,6 +1441,7 @@ function AssistantUsageLogPanel() {
 
 function SystemAgentPanel() {
   const [configs, setConfigs] = useState<SystemAgentConfigView[]>([])
+  const [skills, setSkills] = useState<AgentSkillView[]>([])
   const [purpose, setPurpose] = useState<AgentPurpose>('reply')
   const [selectedConfigId, setSelectedConfigId] = useState('new')
   const [form, setForm] = useState<AgentConfigForm>(() => createDefaultConfigForm('reply'))
@@ -1046,8 +1463,9 @@ function SystemAgentPanel() {
     setLoading(true)
     setError(undefined)
     try {
-      const response = await listSystemAgentConfigs()
+      const [response, skillResponse] = await Promise.all([listSystemAgentConfigs(), listAgentSkills()])
       setConfigs(response.configs)
+      setSkills(skillResponse.skills)
       setSelectedConfigId((current) => {
         if (current === 'new') {
           return current
@@ -1106,6 +1524,7 @@ function SystemAgentPanel() {
         enabled: form.enabled,
         provider_config: buildProviderConfig({ ...form, purpose }),
         prompt_template: form.promptTemplate.trim(),
+        skill_ids: purpose === 'reply' ? form.skillIds : [],
       })
       setConfigs((current) => [
         ...current
@@ -1452,6 +1871,45 @@ function SystemAgentPanel() {
               </section>
             ) : null}
 
+            {purpose === 'reply' ? (
+              <section className="admin-form-section">
+                <div className="admin-form-section-title">
+                  <strong>绑定 Skill</strong>
+                  <span>回复生成时会自动参考已绑定 Skill 的 SKILL.md 和 references</span>
+                </div>
+                <div className="admin-skill-bind-list">
+                  {skills.length ? (
+                    skills.map((skill) => {
+                      const checked = form.skillIds.includes(skill.id)
+                      return (
+                        <label key={skill.id} className="admin-skill-bind-row">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              const next = new Set(form.skillIds)
+                              if (event.target.checked) {
+                                next.add(skill.id)
+                              } else {
+                                next.delete(skill.id)
+                              }
+                              updateForm({ skillIds: Array.from(next) })
+                            }}
+                          />
+                          <span>
+                            <strong>{skill.name}</strong>
+                            <small>{skill.enabled ? '已启用' : '已停用'} · {skill.slug}</small>
+                          </span>
+                        </label>
+                      )
+                    })
+                  ) : (
+                    <div className="system-agent-empty">还没有可绑定的 Skill，请先到 Skill 管理中新建</div>
+                  )}
+                </div>
+              </section>
+            ) : null}
+
             <section className="admin-form-section">
               <div className="admin-form-section-title">
                 <strong>提示词</strong>
@@ -1524,6 +1982,68 @@ function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
         : purpose === 'status_card'
           ? defaultStatusCardPrompt
           : defaultReplyPrompt,
+    skillIds: [],
+  }
+}
+
+function createDefaultSkillForm(): SkillForm {
+  return {
+    id: '',
+    name: '新建 Skill',
+    slug: 'new-skill',
+    description: '',
+    enabled: true,
+    skillMarkdown: defaultSkillMarkdown('新建 Skill'),
+  }
+}
+
+function defaultSkillMarkdown(name: string) {
+  return [
+    `# ${name}`,
+    '',
+    '## 何时使用',
+    '当客户消息与本技能的话术、知识或场景匹配时使用。',
+    '',
+    '## 回复目标',
+    '结合 references 中的资料，生成自然、准确、适合 WhatsApp 客服场景的回复。',
+    '',
+    '## 使用要求',
+    '- 优先参考本技能下的 references。',
+    '- 不要编造资料中没有的承诺。',
+    '- 不要输出内部分析过程。',
+  ].join('\n')
+}
+
+function createDefaultSkillFileForm(): SkillFileForm {
+  return {
+    id: '',
+    path: 'references/new-reference.md',
+    fileKind: 'reference',
+    contentType: 'text/markdown; charset=utf-8',
+    contentText: '',
+    sortOrder: '0',
+  }
+}
+
+function mapSkillToForm(skill: AgentSkillView): SkillForm {
+  return {
+    id: skill.id,
+    name: skill.name,
+    slug: skill.slug,
+    description: skill.description,
+    enabled: skill.enabled,
+    skillMarkdown: skill.skill_markdown || defaultSkillMarkdown(skill.name),
+  }
+}
+
+function mapSkillFileToForm(file: AgentSkillFileView): SkillFileForm {
+  return {
+    id: file.id,
+    path: file.path,
+    fileKind: file.file_kind === 'asset' ? 'asset' : 'reference',
+    contentType: file.content_type,
+    contentText: file.content_text,
+    sortOrder: String(file.sort_order ?? 0),
   }
 }
 
@@ -1635,6 +2155,7 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
     ).join('\n'),
     riskLabels: readConfigStringList(providerConfig, 'risk_labels', defaultRiskLabels).join('\n'),
     promptTemplate: config.prompt_template || fallback.promptTemplate,
+    skillIds: config.skill_ids ?? [],
   }
 }
 
@@ -1761,6 +2282,19 @@ function formatDateTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function formatByteSize(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0 B'
+  }
+  if (value < 1024) {
+    return `${value} B`
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`
+  }
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
 function formatUsageLogTriggerMessages(log: AssistantUsageLogView) {

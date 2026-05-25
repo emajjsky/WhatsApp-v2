@@ -1,6 +1,6 @@
 # 当前进度
 
-更新日期：2026-05-21
+更新日期：2026-05-25
 
 ## 一句话说明
 
@@ -24,10 +24,12 @@
 - 桌面端可以使用云端后台配置的回复 Agent、翻译 Agent、状态卡 Agent。
 - Electron 云端服务已支持独立部署，不影响 `main`。
 - Windows 安装包已生成到 `desktop/release/`。
-- Windows 客户端当前版本已更新到 `0.1.11`。
+- Windows 客户端当前版本已更新到 `0.1.18`。
 - 右侧 AI 助手面板已重排为固定两列：左侧三套回复方案，右侧采纳区和翻译区。
 - 回复方案状态已接入：未生成显示 `待生成`，生成后显示 `待采纳`，采纳后显示 `已采纳`。
 - 客户端左下角已显示桌面应用版本号。
+- 云端后台已新增 `Skill 管理`，支持创建话术包、维护 `SKILL.md`、添加 `references/assets` 文件，并绑定到回复智能体。
+- 桌面端生成回复建议时，会使用云端回复智能体绑定的 Skill 内容，不需要在客户端本地配置话术包。
 - macOS 安装包暂未生成，后续需要在 macOS 环境补充打包、签名和公证流程。
 
 最新已推送提交：
@@ -59,6 +61,8 @@ GitHub Electron-desktop
 - 回复 Agent 支持云端统一配置。
 - 翻译 Agent 支持云端统一配置。
 - 状态卡 Agent 支持云端统一配置。
+- 回复 Agent 支持绑定多个 Skill / 话术包。
+- Skill 第一版支持 `SKILL.md` 和 `references` 文本知识注入，不执行 `scripts`。
 - 桌面端用户不需要在本机填写模型 API Key。
 - 桌面端通过本地 API 代理到云端 Agent 执行，返回结果后再写入桌面端界面。
 
@@ -74,7 +78,7 @@ GitHub Electron-desktop
 当前已有 Windows 安装包：
 
 ```text
-desktop/release/WhatsApp Agent Setup 0.1.11.exe
+desktop/release/WhatsApp Agent Setup 0.1.18.exe
 ```
 
 安装新版本通常可以直接覆盖安装，不需要先卸载旧版本。
@@ -150,9 +154,10 @@ deploy/migrations/0017_chat_status_cards_cloud_agents.sql
 - Windows 桌面端安装和登录。
 - 桌面端 WhatsApp 扫码登录。
 - 桌面端使用云端配置的回复 Agent。
+- 桌面端使用云端回复 Agent 绑定的 Skill / 话术包。
 - 桌面端使用云端配置的翻译 Agent。
 - 桌面端使用云端配置的状态卡 Agent。
-- Windows 安装包 `0.1.11`。
+- Windows 安装包 `0.1.18`。
 - 桌面端 AI 助手右侧布局。
 - 回复方案 `待生成` / `待采纳` / `已采纳` 状态流转。
 
@@ -175,7 +180,12 @@ curl http://127.0.0.1:8088/healthz
 
 ## 下一步建议
 
-1. 继续用 Windows 安装包 `0.1.11` 跑完整桌面端验收。
-2. 如果状态卡、翻译、回复都稳定，再补 macOS 打包配置。
-3. macOS 先做内部测试包，确认功能稳定后再做签名和公证。
-4. 聊天记录上传云端先不急，等桌面版核心链路稳定后再单独设计。
+1. 继续用 Windows 安装包 `0.1.18` 跑完整桌面端验收。
+2. 在云端后台配置 Skill，并绑定到回复 Agent，验证回复建议是否能参考话术包。
+3. 如果状态卡、翻译、回复和 Skill 都稳定，再补 macOS 打包配置。
+4. macOS 先做内部测试包，确认功能稳定后再做签名和公证。
+5. 聊天记录上传云端先不急，等桌面版核心链路稳定后再单独设计。
+
+## 相关文档
+
+- Agent Skill / 话术包管理：`docs/agent-skills.md`
