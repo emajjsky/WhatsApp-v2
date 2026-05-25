@@ -128,7 +128,7 @@ const attachmentActions: Array<{
 
 const messageTranslationCacheStorageKey = 'whatsapp.messageTranslations.v1'
 const messageTranslationCacheLimit = 800
-const assistantWorkspaceStorageKey = 'whatsapp.assistantWorkspace.v1'
+const assistantWorkspaceStorageKey = 'whatsapp.assistantWorkspace.v2'
 const assistantWorkspaceCacheLimit = 160
 
 function getAssistantRunNotice(run: AgentRunView) {
@@ -182,7 +182,7 @@ export function ChatsPage() {
   const [statusCardNotice, setStatusCardNotice] = useState<string>()
   const [statusCardCollapsed, setStatusCardCollapsed] = useState(false)
   const [agentConfigsLoading, setAgentConfigsLoading] = useState(true)
-  const [assistantBusy, setAssistantBusy] = useState(false)
+  const [assistantBusyByChatId, setAssistantBusyByChatId] = useState<Record<string, boolean>>({})
   const [assistantSending, setAssistantSending] = useState(false)
   const [assistantNotice, setAssistantNotice] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
@@ -203,6 +203,7 @@ export function ChatsPage() {
   const previousTimelineMetricsRef = useRef<
     { scrollHeight: number; scrollTop: number } | undefined
   >(undefined)
+  const assistantBusy = selectedChatId ? Boolean(assistantBusyByChatId[selectedChatId]) : false
 
   const scrollTimelineToBottom = useCallback(() => {
     const timeline = timelineRef.current
@@ -254,6 +255,57 @@ export function ChatsPage() {
     }
     writeStoredAssistantWorkspaceCache(trimStoredAssistantWorkspaceCache(assistantWorkspaceCacheRef.current))
   }, [emptyAssistantWorkspace])
+
+  const updateAssistantWorkspaceCacheForChat = useCallback((chatId: string, patch: Partial<AssistantWorkspaceState>) => {
+    const trimmedChatId = chatId.trim()
+    if (!trimmedChatId) {
+      return
+    }
+    const current = assistantWorkspaceCacheRef.current[trimmedChatId] ?? emptyAssistantWorkspace()
+    assistantWorkspaceCacheRef.current[trimmedChatId] = {
+      ...current,
+      ...patch,
+      cached_at: new Date().toISOString(),
+    }
+    writeStoredAssistantWorkspaceCache(trimStoredAssistantWorkspaceCache(assistantWorkspaceCacheRef.current))
+  }, [emptyAssistantWorkspace])
+
+  const applyAssistantWorkspacePatch = useCallback((chatId: string, patch: Partial<AssistantWorkspaceState>) => {
+    updateAssistantWorkspaceCacheForChat(chatId, patch)
+    if (activeAssistantChatIdRef.current !== chatId) {
+      return
+    }
+    if ('run' in patch) {
+      setAssistantRun(patch.run)
+    }
+    if ('rawDraft' in patch && patch.rawDraft !== undefined) {
+      setAssistantRawDraft(patch.rawDraft)
+    }
+    if ('replyOptions' in patch && patch.replyOptions !== undefined) {
+      setAssistantReplyOptions(patch.replyOptions)
+    }
+    if ('adoptedReplyIndex' in patch) {
+      setAdoptedReplyIndex(patch.adoptedReplyIndex)
+    }
+    if ('draft' in patch && patch.draft !== undefined) {
+      setAssistantDraft(patch.draft)
+    }
+    if ('translatedDraft' in patch && patch.translatedDraft !== undefined) {
+      setTranslatedDraft(patch.translatedDraft)
+    }
+    if ('translatedSourceDraft' in patch && patch.translatedSourceDraft !== undefined) {
+      setTranslatedSourceDraft(patch.translatedSourceDraft)
+    }
+    if ('targetLanguage' in patch && patch.targetLanguage !== undefined) {
+      setDraftTargetLanguage(patch.targetLanguage)
+    }
+    if ('targetLanguageName' in patch && patch.targetLanguageName !== undefined) {
+      setDraftTargetLanguageName(patch.targetLanguageName)
+    }
+    if ('notice' in patch) {
+      setAssistantNotice(patch.notice)
+    }
+  }, [updateAssistantWorkspaceCacheForChat])
 
   const setAssistantRunState = useCallback((run?: AgentRunView) => {
     setAssistantRun(run)
@@ -848,72 +900,85 @@ export function ChatsPage() {
       return
     }
 
-    setAssistantBusy(true)
-    setAssistantNoticeState(undefined)
+    const requestChatId = selectedChatId
+    setAssistantBusyByChatId((current) => ({ ...current, [requestChatId]: true }))
     setError(undefined)
-    setAssistantRunState(undefined)
-    setAssistantRawDraftState('')
-    setAssistantReplyOptionsState([])
-    setAdoptedReplyIndexState(undefined)
-    setAssistantDraftState('')
-    setTranslatedDraftState('')
-    setTranslatedSourceDraftState('')
+    applyAssistantWorkspacePatch(requestChatId, {
+      run: undefined,
+      rawDraft: '',
+      replyOptions: [],
+      adoptedReplyIndex: undefined,
+      draft: '',
+      translatedDraft: '',
+      translatedSourceDraft: '',
+      notice: undefined,
+    })
 
     try {
       if (!selectedReplyAgentId) {
-        setAssistantNoticeState('请先选择回复智能体')
+        applyAssistantWorkspacePatch(requestChatId, { notice: '请先选择回复智能体' })
         return
       }
 
       let streamedDraft = ''
       await streamGenerateAgentRun(
         {
-          chat_id: selectedChatId,
+          chat_id: requestChatId,
           agent_id: selectedReplyAgentId,
           context_enabled: assistantContextEnabled,
           context_message_limit: assistantContextLimit,
         },
         {
           onStart: (run) => {
-            setAssistantRunState(run)
+            applyAssistantWorkspacePatch(requestChatId, { run })
           },
           onDelta: (text) => {
             streamedDraft += text
-            setAssistantRawDraftState(streamedDraft)
+            applyAssistantWorkspacePatch(requestChatId, { rawDraft: streamedDraft })
           },
           onComplete: (run) => {
-            setAssistantRunState(run)
             const finalDraft = run.output_draft ?? streamedDraft
             const options = parseAssistantReplyOptions(finalDraft)
-            setAssistantRawDraftState(finalDraft)
-            setAssistantReplyOptionsState(options)
-            setAssistantDraftState(options.length ? '' : finalDraft)
-            setAssistantNoticeState(
-              options.length
+            applyAssistantWorkspacePatch(requestChatId, {
+              run,
+              rawDraft: finalDraft,
+              replyOptions: options,
+              draft: options.length ? '' : finalDraft,
+              notice: options.length
                 ? undefined
-                : `${getAssistantRunNotice(run)} 未识别到三方案 JSON，已放入草稿。`,
-            )
+                : `${getAssistantRunNotice(run)} 未识别到可拆分回复，已放入草稿。`,
+            })
           },
           onError: (message, run) => {
             if (run) {
-              setAssistantRunState(run)
               const finalDraft = run.output_draft ?? streamedDraft
               const options = parseAssistantReplyOptions(finalDraft)
-              setAssistantRawDraftState(finalDraft)
-              setAssistantReplyOptionsState(options)
-              setAssistantDraftState(options.length ? '' : finalDraft)
+              applyAssistantWorkspacePatch(requestChatId, {
+                run,
+                rawDraft: finalDraft,
+                replyOptions: options,
+                draft: options.length ? '' : finalDraft,
+              })
             }
-            setAssistantNoticeState(message)
+            applyAssistantWorkspacePatch(requestChatId, { notice: message })
           },
         },
       )
 
       void loadChatsList(true)
-      void loadHistory(selectedChatId, true)
+      if (activeAssistantChatIdRef.current === requestChatId) {
+        void loadHistory(requestChatId, true)
+      }
     } catch (generateError) {
-      setError(generateError instanceof Error ? generateError.message : '生成 Agent 草稿失败')
+      applyAssistantWorkspacePatch(requestChatId, {
+        notice: generateError instanceof Error ? generateError.message : '生成 Agent 草稿失败',
+      })
     } finally {
-      setAssistantBusy(false)
+      setAssistantBusyByChatId((current) => {
+        const next = { ...current }
+        delete next[requestChatId]
+        return next
+      })
     }
   }
 
@@ -2342,8 +2407,12 @@ function parseAssistantReplyOptions(rawDraft: string): AssistantReplyOption[] {
     return []
   }
 
-  const decoded = parseJsonObjectFromText(text)
-  const source = decoded?.replies ?? decoded?.reply_options ?? decoded?.options
+  const decoded = parseJsonValueFromText(text)
+  const source = Array.isArray(decoded)
+    ? decoded
+    : isPlainRecord(decoded)
+      ? decoded.replies ?? decoded.reply_options ?? decoded.options
+      : undefined
   if (Array.isArray(source)) {
     return source
       .map((item, index) => normalizeAssistantReplyOption(item, index))
@@ -2354,23 +2423,36 @@ function parseAssistantReplyOptions(rawDraft: string): AssistantReplyOption[] {
   return parseFallbackReplyOptions(text)
 }
 
-function parseJsonObjectFromText(text: string): Record<string, unknown> | undefined {
+function parseJsonValueFromText(text: string): unknown {
+  const normalized = stripJsonFence(text)
   try {
-    const decoded = JSON.parse(text)
-    return isPlainRecord(decoded) ? decoded : undefined
+    return JSON.parse(normalized)
   } catch {
-    const start = text.indexOf('{')
-    const end = text.lastIndexOf('}')
-    if (start < 0 || end <= start) {
+    const objectStart = normalized.indexOf('{')
+    const objectEnd = normalized.lastIndexOf('}')
+    const arrayStart = normalized.indexOf('[')
+    const arrayEnd = normalized.lastIndexOf(']')
+    const hasObject = objectStart >= 0 && objectEnd > objectStart
+    const hasArray = arrayStart >= 0 && arrayEnd > arrayStart
+    if (!hasObject && !hasArray) {
       return undefined
     }
+    const useArray = hasArray && (!hasObject || arrayStart < objectStart)
+    const start = useArray ? arrayStart : objectStart
+    const end = useArray ? arrayEnd : objectEnd
     try {
-      const decoded = JSON.parse(text.slice(start, end + 1))
-      return isPlainRecord(decoded) ? decoded : undefined
+      return JSON.parse(normalized.slice(start, end + 1))
     } catch {
       return undefined
     }
   }
+}
+
+function stripJsonFence(text: string) {
+  return text
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
 }
 
 function normalizeAssistantReplyOption(value: unknown, index: number): AssistantReplyOption | undefined {
@@ -2396,7 +2478,9 @@ function normalizeAssistantReplyOption(value: unknown, index: number): Assistant
 
 function parseFallbackReplyOptions(text: string): AssistantReplyOption[] {
   const matches = Array.from(
-    text.matchAll(/(?:^|\n)\s*(?:回复方案|方案)\s*([1-3一二三])\s*[：:]\s*([\s\S]*?)(?=\n\s*(?:回复方案|方案)\s*[1-3一二三]\s*[：:]|$)/g),
+    text.matchAll(
+      /(?:^|\n)\s*(?:(?:回复方案|方案)\s*)?(#?\s*[1-3]|[一二三])(?:\s*[\.、\)]|\s*[：:])\s*([\s\S]*?)(?=\n\s*(?:(?:回复方案|方案)\s*)?(?:#?\s*[1-3]|[一二三])(?:\s*[\.、\)]|\s*[：:])|$)/g,
+    ),
   )
 
   return matches
