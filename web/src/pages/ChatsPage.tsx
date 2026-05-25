@@ -170,7 +170,7 @@ export function ChatsPage() {
   const [draftTargetLanguageName, setDraftTargetLanguageName] = useState(defaultDraftLanguage.name)
   const [translatedDraft, setTranslatedDraft] = useState('')
   const [translatedSourceDraft, setTranslatedSourceDraft] = useState('')
-  const [draftTranslationBusy, setDraftTranslationBusy] = useState(false)
+  const [draftTranslationBusyByChatId, setDraftTranslationBusyByChatId] = useState<Record<string, boolean>>({})
   const [assistantContextEnabled, setAssistantContextEnabled] = useState(true)
   const [assistantContextLimit, setAssistantContextLimit] = useState(defaultAssistantContextLimit)
   const [replyAgents, setReplyAgents] = useState<SystemAgentConfigView[]>([])
@@ -204,6 +204,7 @@ export function ChatsPage() {
     { scrollHeight: number; scrollTop: number } | undefined
   >(undefined)
   const assistantBusy = selectedChatId ? Boolean(assistantBusyByChatId[selectedChatId]) : false
+  const draftTranslationBusy = selectedChatId ? Boolean(draftTranslationBusyByChatId[selectedChatId]) : false
 
   const scrollTimelineToBottom = useCallback(() => {
     const timeline = timelineRef.current
@@ -776,8 +777,9 @@ export function ChatsPage() {
   async function translateMessageToChinese(message: MessageView) {
     const text = message.text_content?.trim()
     const accountID = message.account_id || history?.chat.account_id
+    const requestChatId = message.chat_id
     const translationKey = getMessageTranslationKey(message, text)
-    if (!text || !accountID || !translationKey) {
+    if (!text || !accountID || !requestChatId || !translationKey) {
       return
     }
     if (translationAgents.length === 0) {
@@ -822,7 +824,10 @@ export function ChatsPage() {
           response.translation.source_language_code,
           response.translation.source_language_name,
         )
-        setDraftTargetLanguageState(option.code, option.name)
+        applyAssistantWorkspacePatch(requestChatId, {
+          targetLanguage: option.code,
+          targetLanguageName: option.name,
+        })
       }
     } catch (translateError) {
       setMessageTranslations((current) => ({
@@ -837,7 +842,7 @@ export function ChatsPage() {
   }
 
   async function translateDraftToTarget() {
-    if (!history || !assistantDraft.trim() || draftTranslationBusy) {
+    if (!selectedChatId || !history || !assistantDraft.trim() || draftTranslationBusy) {
       return
     }
     if (translationAgents.length === 0) {
@@ -845,26 +850,43 @@ export function ChatsPage() {
       return
     }
 
+    const requestChatId = selectedChatId
+    const requestAccountId = history.chat.account_id
     const option = resolveLanguageOption(draftTargetLanguage, draftTargetLanguageName)
     const sourceDraft = assistantDraft.trim()
-    setDraftTranslationBusy(true)
-    setAssistantNoticeState(undefined)
-    setTranslatedDraftState('')
-    setTranslatedSourceDraftState(sourceDraft)
+    setDraftTranslationBusyByChatId((current) => ({ ...current, [requestChatId]: true }))
+    applyAssistantWorkspacePatch(requestChatId, {
+      notice: undefined,
+      translatedDraft: '',
+      translatedSourceDraft: sourceDraft,
+      targetLanguage: option.code,
+      targetLanguageName: option.name,
+    })
 
     try {
       const response = await translateText({
-        account_id: history.chat.account_id,
+        account_id: requestAccountId,
         text: sourceDraft,
         target_language: option.code,
         target_language_name: option.name,
       })
-      setTranslatedDraftState(response.translation.translated_text)
-      setAssistantNoticeState(undefined)
+      const cachedWorkspace = assistantWorkspaceCacheRef.current[requestChatId]
+      if (cachedWorkspace?.translatedSourceDraft === sourceDraft) {
+        applyAssistantWorkspacePatch(requestChatId, {
+          translatedDraft: response.translation.translated_text,
+          notice: undefined,
+        })
+      }
     } catch (translateError) {
-      setAssistantNoticeState(translateError instanceof Error ? translateError.message : '翻译草稿失败')
+      applyAssistantWorkspacePatch(requestChatId, {
+        notice: translateError instanceof Error ? translateError.message : '翻译草稿失败',
+      })
     } finally {
-      setDraftTranslationBusy(false)
+      setDraftTranslationBusyByChatId((current) => {
+        const next = { ...current }
+        delete next[requestChatId]
+        return next
+      })
     }
   }
 
