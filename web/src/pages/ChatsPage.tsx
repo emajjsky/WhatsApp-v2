@@ -154,10 +154,10 @@ export function ChatsPage() {
   const [selectedChatId, setSelectedChatId] = useState<string>()
   const [history, setHistory] = useState<MessageHistoryResponse>()
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [sending, setSending] = useState(false)
-  const [draftMessage, setDraftMessage] = useState('')
+  const [sendingByChatId, setSendingByChatId] = useState<Record<string, boolean>>({})
+  const [draftMessageByChatId, setDraftMessageByChatId] = useState<Record<string, string>>({})
   const [error, setError] = useState<string>()
-  const [composeNotice, setComposeNotice] = useState<string>()
+  const [composeNoticeByChatId, setComposeNoticeByChatId] = useState<Record<string, string>>({})
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [assistantRun, setAssistantRun] = useState<AgentRunView>()
   const [, setAssistantRawDraft] = useState('')
@@ -178,12 +178,12 @@ export function ChatsPage() {
   const [statusCardAgents, setStatusCardAgents] = useState<SystemAgentConfigView[]>([])
   const [selectedReplyAgentId, setSelectedReplyAgentId] = useState('')
   const [statusCard, setStatusCard] = useState<StatusCardView>()
-  const [statusCardBusy, setStatusCardBusy] = useState(false)
+  const [statusCardBusyByChatId, setStatusCardBusyByChatId] = useState<Record<string, boolean>>({})
   const [statusCardNotice, setStatusCardNotice] = useState<string>()
   const [statusCardCollapsed, setStatusCardCollapsed] = useState(false)
   const [agentConfigsLoading, setAgentConfigsLoading] = useState(true)
   const [assistantBusyByChatId, setAssistantBusyByChatId] = useState<Record<string, boolean>>({})
-  const [assistantSending, setAssistantSending] = useState(false)
+  const [assistantSendingByChatId, setAssistantSendingByChatId] = useState<Record<string, boolean>>({})
   const [assistantNotice, setAssistantNotice] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
   const assistantDraftRef = useRef<HTMLTextAreaElement>(null)
@@ -199,12 +199,18 @@ export function ChatsPage() {
   const pendingMessageTranslationKeysRef = useRef<Set<string>>(new Set())
   const keepTimelinePinnedRef = useRef(true)
   const pendingScrollModeRef = useRef<'bottom' | 'preserve' | 'none'>('bottom')
+  const historyRequestSeqRef = useRef(0)
   const statusCardRequestSeqRef = useRef(0)
   const previousTimelineMetricsRef = useRef<
     { scrollHeight: number; scrollTop: number } | undefined
   >(undefined)
   const assistantBusy = selectedChatId ? Boolean(assistantBusyByChatId[selectedChatId]) : false
   const draftTranslationBusy = selectedChatId ? Boolean(draftTranslationBusyByChatId[selectedChatId]) : false
+  const assistantSending = selectedChatId ? Boolean(assistantSendingByChatId[selectedChatId]) : false
+  const sending = selectedChatId ? Boolean(sendingByChatId[selectedChatId]) : false
+  const draftMessage = selectedChatId ? draftMessageByChatId[selectedChatId] ?? '' : ''
+  const composeNotice = selectedChatId ? composeNoticeByChatId[selectedChatId] : undefined
+  const statusCardBusy = selectedChatId ? Boolean(statusCardBusyByChatId[selectedChatId]) : false
 
   const scrollTimelineToBottom = useCallback(() => {
     const timeline = timelineRef.current
@@ -214,6 +220,43 @@ export function ChatsPage() {
 
     timeline.scrollTop = timeline.scrollHeight
     keepTimelinePinnedRef.current = true
+  }, [])
+
+  const setDraftMessageForChat = useCallback((chatId: string, value: string) => {
+    const trimmedChatId = chatId.trim()
+    if (!trimmedChatId) {
+      return
+    }
+    setDraftMessageByChatId((current) => {
+      if (!value) {
+        const next = { ...current }
+        delete next[trimmedChatId]
+        return next
+      }
+      return { ...current, [trimmedChatId]: value }
+    })
+  }, [])
+
+  const setCurrentDraftMessage = useCallback((value: string) => {
+    if (!selectedChatId) {
+      return
+    }
+    setDraftMessageForChat(selectedChatId, value)
+  }, [selectedChatId, setDraftMessageForChat])
+
+  const setComposeNoticeForChat = useCallback((chatId: string, value?: string) => {
+    const trimmedChatId = chatId.trim()
+    if (!trimmedChatId) {
+      return
+    }
+    setComposeNoticeByChatId((current) => {
+      if (!value) {
+        const next = { ...current }
+        delete next[trimmedChatId]
+        return next
+      }
+      return { ...current, [trimmedChatId]: value }
+    })
   }, [])
 
   const emptyAssistantWorkspace = useCallback(
@@ -270,6 +313,39 @@ export function ChatsPage() {
     }
     writeStoredAssistantWorkspaceCache(trimStoredAssistantWorkspaceCache(assistantWorkspaceCacheRef.current))
   }, [emptyAssistantWorkspace])
+
+  const getAssistantWorkspaceForChat = useCallback((chatId: string): AssistantWorkspaceState => {
+    const trimmedChatId = chatId.trim()
+    if (!trimmedChatId) {
+      return emptyAssistantWorkspace()
+    }
+    if (activeAssistantChatIdRef.current === trimmedChatId) {
+      return {
+        run: assistantRun,
+        rawDraft: '',
+        replyOptions: assistantReplyOptions,
+        adoptedReplyIndex,
+        draft: assistantDraft,
+        translatedDraft,
+        translatedSourceDraft,
+        targetLanguage: draftTargetLanguage,
+        targetLanguageName: draftTargetLanguageName,
+        notice: assistantNotice,
+      }
+    }
+    return assistantWorkspaceCacheRef.current[trimmedChatId] ?? emptyAssistantWorkspace()
+  }, [
+    adoptedReplyIndex,
+    assistantDraft,
+    assistantNotice,
+    assistantReplyOptions,
+    assistantRun,
+    draftTargetLanguage,
+    draftTargetLanguageName,
+    emptyAssistantWorkspace,
+    translatedDraft,
+    translatedSourceDraft,
+  ])
 
   const applyAssistantWorkspacePatch = useCallback((chatId: string, patch: Partial<AssistantWorkspaceState>) => {
     updateAssistantWorkspaceCacheForChat(chatId, patch)
@@ -426,6 +502,9 @@ export function ChatsPage() {
   )
 
   const loadHistory = useCallback(async (chatId: string, background = false) => {
+    const requestSeq = historyRequestSeqRef.current + 1
+    historyRequestSeqRef.current = requestSeq
+    const requestChatId = chatId.trim()
     if (background) {
       const timeline = timelineRef.current
       const shouldStickToBottom = timeline ? isNearBottom(timeline) : keepTimelinePinnedRef.current
@@ -442,7 +521,10 @@ export function ChatsPage() {
     }
 
     try {
-      const response = await getChatMessages(chatId, { limit: 60 })
+      const response = await getChatMessages(requestChatId, { limit: 60 })
+      if (historyRequestSeqRef.current !== requestSeq || activeAssistantChatIdRef.current !== requestChatId) {
+        return
+      }
       setHistory((current) => {
         if (!current || current.chat.id !== response.chat.id || !background) {
           return response
@@ -473,12 +555,15 @@ export function ChatsPage() {
         }
       })
     } catch (loadError) {
+      if (historyRequestSeqRef.current !== requestSeq || activeAssistantChatIdRef.current !== requestChatId) {
+        return
+      }
       if (!background) {
         setHistory(undefined)
         setError(loadError instanceof Error ? loadError.message : '加载消息失败')
       }
     } finally {
-      if (!background) {
+      if (!background && activeAssistantChatIdRef.current === requestChatId) {
         setHistoryLoading(false)
       }
     }
@@ -491,12 +576,12 @@ export function ChatsPage() {
     setStatusCardNotice(undefined)
     try {
       const response = await getStatusCard(chatId)
-      if (statusCardRequestSeqRef.current !== requestSeq) {
+      if (statusCardRequestSeqRef.current !== requestSeq || activeAssistantChatIdRef.current !== chatId) {
         return
       }
       setStatusCard(response.status_card ?? undefined)
     } catch (loadError) {
-      if (statusCardRequestSeqRef.current !== requestSeq) {
+      if (statusCardRequestSeqRef.current !== requestSeq || activeAssistantChatIdRef.current !== chatId) {
         return
       }
       setStatusCardNotice(loadError instanceof Error ? loadError.message : '加载状态卡失败')
@@ -517,6 +602,7 @@ export function ChatsPage() {
 
   useEffect(() => {
     if (!selectedChatId) {
+      historyRequestSeqRef.current += 1
       statusCardRequestSeqRef.current += 1
       setHistory(undefined)
       setStatusCard(undefined)
@@ -535,7 +621,6 @@ export function ChatsPage() {
         ? assistantWorkspaceCacheRef.current[selectedChatId] ?? emptyAssistantWorkspace()
         : emptyAssistantWorkspace(),
     )
-    setComposeNotice(undefined)
     setAttachmentMenuOpen(false)
   }, [emptyAssistantWorkspace, restoreAssistantWorkspace, selectedChatId])
 
@@ -636,9 +721,12 @@ export function ChatsPage() {
   }, [loadChatsList, loadHistory, selectedAccountId, selectedChatId])
 
   async function loadMoreMessages() {
-    if (!selectedChatId || !history?.next_before) {
+    if (!selectedChatId || !history?.next_before || history.chat.id !== selectedChatId) {
       return
     }
+    const requestChatId = selectedChatId
+    const requestBefore = history.next_before
+    const requestLimit = history.limit
 
     if (timelineRef.current) {
       previousTimelineMetricsRef.current = {
@@ -652,14 +740,14 @@ export function ChatsPage() {
     setError(undefined)
 
     try {
-      const response = await getChatMessages(selectedChatId, {
-        limit: history.limit,
-        before: history.next_before,
+      const response = await getChatMessages(requestChatId, {
+        limit: requestLimit,
+        before: requestBefore,
       })
 
       setHistory((current) => {
-        if (!current) {
-          return response
+        if (!current || current.chat.id !== requestChatId || response.chat.id !== requestChatId) {
+          return current
         }
 
         return {
@@ -675,36 +763,47 @@ export function ChatsPage() {
   }
 
   async function handleSendMessage() {
-    if (!selectedChatId || !history || !selectedChat) {
+    if (!selectedChatId || !history || !selectedChat || history.chat.id !== selectedChatId) {
       return
     }
 
+    const requestChatId = selectedChatId
+    const requestHistory = history
+    const requestSelectedChat = selectedChat
     const content = draftMessage.trim()
     if (!content || sending) {
       return
     }
 
-    if (!isChatSendable(history.chat.wa_chat_jid, history.chat.chat_type)) {
-      setError(getChatSendBlockedReason(history.chat.wa_chat_jid, history.chat.chat_type))
+    if (!isChatSendable(requestHistory.chat.wa_chat_jid, requestHistory.chat.chat_type)) {
+      setError(getChatSendBlockedReason(requestHistory.chat.wa_chat_jid, requestHistory.chat.chat_type))
       return
     }
 
-    setSending(true)
+    setSendingByChatId((current) => ({ ...current, [requestChatId]: true }))
     setError(undefined)
 
     try {
-      const response = await sendChatMessage(selectedChatId, { message_text: content })
-      appendOptimisticMessage(response, history.chat, selectedChat)
-      setDraftMessage('')
-      setComposeNotice(undefined)
+      const response = await sendChatMessage(requestChatId, { message_text: content })
+      appendOptimisticMessage(response, requestHistory.chat, requestSelectedChat)
+      setDraftMessageForChat(requestChatId, '')
+      setComposeNoticeForChat(requestChatId, undefined)
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
-      void loadHistory(selectedChatId, true)
+      if (activeAssistantChatIdRef.current === requestChatId) {
+        void loadHistory(requestChatId, true)
+      }
       void loadChatsList(true)
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : '发送消息失败')
+      if (activeAssistantChatIdRef.current === requestChatId) {
+        setError(sendError instanceof Error ? sendError.message : '发送消息失败')
+      }
     } finally {
-      setSending(false)
+      setSendingByChatId((current) => {
+        const next = { ...current }
+        delete next[requestChatId]
+        return next
+      })
     }
   }
 
@@ -728,10 +827,11 @@ export function ChatsPage() {
   }
 
   async function handleAttachmentFiles(kind: AttachmentAction, files: FileList | null) {
-    if (!selectedChatId || !history || !selectedChat) {
+    if (!selectedChatId || !history || !selectedChat || history.chat.id !== selectedChatId) {
       return
     }
 
+    const requestChatId = selectedChatId
     const selectedFiles = Array.from(files ?? [])
     if (selectedFiles.length === 0) {
       return
@@ -744,15 +844,15 @@ export function ChatsPage() {
       return
     }
 
-    setSending(true)
+    setSendingByChatId((current) => ({ ...current, [requestChatId]: true }))
     setError(undefined)
 
     const caption = kind === 'audio' ? '' : draftMessage.trim()
 
     try {
       for (const [index, file] of selectedFiles.entries()) {
-        setComposeNotice(`正在发送${getAttachmentActionLabel(kind)}：${file.name}`)
-        await sendChatMedia(selectedChatId, {
+        setComposeNoticeForChat(requestChatId, `正在发送${getAttachmentActionLabel(kind)}：${file.name}`)
+        await sendChatMedia(requestChatId, {
           file,
           mediaType: resolveAttachmentMediaType(kind, file),
           caption: index === 0 ? caption : '',
@@ -760,17 +860,28 @@ export function ChatsPage() {
       }
 
       if (caption) {
-        setDraftMessage('')
+        setDraftMessageForChat(requestChatId, '')
       }
-      setComposeNotice(`${selectedFiles.length > 1 ? `${selectedFiles.length} 个文件` : selectedFiles[0].name}已发送。`)
+      setComposeNoticeForChat(
+        requestChatId,
+        `${selectedFiles.length > 1 ? `${selectedFiles.length} 个文件` : selectedFiles[0].name}已发送。`,
+      )
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
-      void loadHistory(selectedChatId, true)
+      if (activeAssistantChatIdRef.current === requestChatId) {
+        void loadHistory(requestChatId, true)
+      }
       void loadChatsList(true)
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : '发送媒体失败')
+      if (activeAssistantChatIdRef.current === requestChatId) {
+        setError(sendError instanceof Error ? sendError.message : '发送媒体失败')
+      }
     } finally {
-      setSending(false)
+      setSendingByChatId((current) => {
+        const next = { ...current }
+        delete next[requestChatId]
+        return next
+      })
     }
   }
 
@@ -842,7 +953,7 @@ export function ChatsPage() {
   }
 
   async function translateDraftToTarget() {
-    if (!selectedChatId || !history || !assistantDraft.trim() || draftTranslationBusy) {
+    if (!selectedChatId || !history || history.chat.id !== selectedChatId || !assistantDraft.trim() || draftTranslationBusy) {
       return
     }
     if (translationAgents.length === 0) {
@@ -891,34 +1002,47 @@ export function ChatsPage() {
   }
 
   async function handleAnalyzeStatusCard() {
-    if (!selectedChatId || statusCardBusy) {
+    if (!selectedChatId || !history || history.chat.id !== selectedChatId || statusCardBusy) {
       return
     }
+    const requestChatId = selectedChatId
     const activeAgent = statusCardAgents[0]
     if (!activeAgent) {
       setStatusCardNotice('管理员后台还没有启用状态卡智能体')
       return
     }
 
-    setStatusCardBusy(true)
+    const requestSeq = statusCardRequestSeqRef.current + 1
+    statusCardRequestSeqRef.current = requestSeq
+    setStatusCardBusyByChatId((current) => ({ ...current, [requestChatId]: true }))
     setStatusCardNotice(undefined)
     setError(undefined)
 
     try {
       const response = await analyzeStatusCard({
-        chat_id: selectedChatId,
+        chat_id: requestChatId,
         agent_id: activeAgent.id,
       })
+      if (statusCardRequestSeqRef.current !== requestSeq || activeAssistantChatIdRef.current !== requestChatId) {
+        return
+      }
       setStatusCard(response.status_card)
     } catch (analyzeError) {
+      if (statusCardRequestSeqRef.current !== requestSeq || activeAssistantChatIdRef.current !== requestChatId) {
+        return
+      }
       setStatusCardNotice(analyzeError instanceof Error ? analyzeError.message : '状态卡分析失败')
     } finally {
-      setStatusCardBusy(false)
+      setStatusCardBusyByChatId((current) => {
+        const next = { ...current }
+        delete next[requestChatId]
+        return next
+      })
     }
   }
 
   async function handleGenerateAssistantDraft() {
-    if (!selectedChatId || !history || assistantBusy) {
+    if (!selectedChatId || !history || history.chat.id !== selectedChatId || assistantBusy) {
       return
     }
 
@@ -1005,71 +1129,109 @@ export function ChatsPage() {
   }
 
   async function handleWriteAssistantDraft() {
-    const content = getOutboundDraft(assistantDraft, translatedDraft)
+    if (!selectedChatId || !history || !selectedChat || history.chat.id !== selectedChatId) {
+      return
+    }
+
+    const requestChatId = selectedChatId
+    const workspace = getAssistantWorkspaceForChat(requestChatId)
+    const content = getOutboundDraft(workspace.draft, workspace.translatedDraft)
     if (!content) {
       return
     }
 
-    setDraftMessage(content)
-    const logResult = await recordAssistantUsage('writeback')
-    setAssistantNoticeState(
-      logResult.ok
-        ? undefined
-        : logResult.error || '采纳数据保存失败。',
-    )
+    setDraftMessageForChat(requestChatId, content)
+    const logResult = await recordAssistantUsage('writeback', {
+      history,
+      selectedChat,
+      workspace,
+      selectedReplyAgentId,
+    })
+    applyAssistantWorkspacePatch(requestChatId, {
+      notice: logResult.ok ? undefined : logResult.error || '采纳数据保存失败。',
+    })
   }
 
   async function handleSendAssistantDraft() {
-    const outboundDraft = getOutboundDraft(assistantDraft, translatedDraft)
-    if (!selectedChatId || !assistantRun || !outboundDraft || assistantSending) {
+    if (!selectedChatId || !history || !selectedChat || history.chat.id !== selectedChatId || assistantSending) {
       return
     }
 
-    setAssistantSending(true)
-    setAssistantNoticeState(undefined)
+    const requestChatId = selectedChatId
+    const requestHistory = history
+    const requestSelectedChat = selectedChat
+    const workspace = getAssistantWorkspaceForChat(requestChatId)
+    const requestRun = workspace.run
+    const outboundDraft = getOutboundDraft(workspace.draft, workspace.translatedDraft)
+    if (
+      !requestRun ||
+      requestRun.chat_id !== requestChatId ||
+      requestRun.status !== 'ready_for_review' ||
+      !outboundDraft
+    ) {
+      return
+    }
+
+    setAssistantSendingByChatId((current) => ({ ...current, [requestChatId]: true }))
+    applyAssistantWorkspacePatch(requestChatId, { notice: undefined })
     setError(undefined)
 
     try {
-      const response = await sendAgentRun(assistantRun.id, {
+      const response = await sendAgentRun(requestRun.id, {
         message_text: outboundDraft,
       })
-      setAssistantRunState(response.run)
-      const logResult = await recordAssistantUsage('send')
-      setAssistantNoticeState(
-        logResult.ok
-          ? undefined
-          : logResult.error || '采纳数据保存失败。',
-      )
+      applyAssistantWorkspacePatch(requestChatId, { run: response.run })
+      const logResult = await recordAssistantUsage('send', {
+        history: requestHistory,
+        selectedChat: requestSelectedChat,
+        workspace,
+        selectedReplyAgentId,
+      })
+      applyAssistantWorkspacePatch(requestChatId, {
+        notice: logResult.ok ? undefined : logResult.error || '采纳数据保存失败。',
+      })
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
-      void loadHistory(selectedChatId, true)
+      if (activeAssistantChatIdRef.current === requestChatId) {
+        void loadHistory(requestChatId, true)
+      }
       void loadChatsList(true)
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : '发送 Agent 草稿失败')
+      applyAssistantWorkspacePatch(requestChatId, {
+        notice: sendError instanceof Error ? sendError.message : '发送 Agent 草稿失败',
+      })
     } finally {
-      setAssistantSending(false)
+      setAssistantSendingByChatId((current) => {
+        const next = { ...current }
+        delete next[requestChatId]
+        return next
+      })
     }
   }
 
-  async function recordAssistantUsage(action: AssistantUsageAction) {
-    if (!history || !selectedChat) {
-      return { ok: false, error: '采纳数据保存失败。' }
-    }
-
+  async function recordAssistantUsage(
+    action: AssistantUsageAction,
+    snapshot: {
+      history: MessageHistoryResponse
+      selectedChat: ChatSummary
+      workspace: AssistantWorkspaceState
+      selectedReplyAgentId: string
+    },
+  ) {
     const payload = buildAssistantUsagePayload({
       action,
-      history,
-      selectedChat,
+      history: snapshot.history,
+      selectedChat: snapshot.selectedChat,
       accounts,
       replyAgents,
-      selectedReplyAgentId,
-      assistantReplyOptions,
-      adoptedReplyIndex,
-      assistantDraft,
-      translatedDraft,
-      translatedSourceDraft,
-      draftTargetLanguage,
-      draftTargetLanguageName,
+      selectedReplyAgentId: snapshot.selectedReplyAgentId,
+      assistantReplyOptions: snapshot.workspace.replyOptions,
+      adoptedReplyIndex: snapshot.workspace.adoptedReplyIndex,
+      assistantDraft: snapshot.workspace.draft,
+      translatedDraft: snapshot.workspace.translatedDraft,
+      translatedSourceDraft: snapshot.workspace.translatedSourceDraft,
+      draftTargetLanguage: snapshot.workspace.targetLanguage,
+      draftTargetLanguageName: snapshot.workspace.targetLanguageName,
     })
     if (!payload) {
       return { ok: false, error: '采纳数据保存失败。' }
@@ -1160,25 +1322,29 @@ export function ChatsPage() {
 
   const activeStatusCardAgent = statusCardAgents[0]
   const selectedChat = chats.find((item) => item.id === selectedChatId)
-  const hasSystemAssistantFallback = Boolean(history && selectedChat)
+  const activeHistory = history && selectedChatId && history.chat.id === selectedChatId ? history : undefined
+  const hasSystemAssistantFallback = Boolean(activeHistory && selectedChat)
   const canGenerateAssistantDraft = Boolean(
     selectedChatId &&
-      history &&
+      activeHistory &&
       hasSystemAssistantFallback &&
       selectedReplyAgentId &&
       !assistantBusy,
   )
   const canUseAssistantDraft = Boolean(
-    assistantRun?.status === 'ready_for_review' && assistantDraft.trim(),
+    selectedChatId &&
+      assistantRun?.chat_id === selectedChatId &&
+      assistantRun.status === 'ready_for_review' &&
+      getOutboundDraft(assistantDraft, translatedDraft),
   )
   const canSendInCurrentChat = Boolean(
-    history && isChatSendable(history.chat.wa_chat_jid, history.chat.chat_type),
+    activeHistory && isChatSendable(activeHistory.chat.wa_chat_jid, activeHistory.chat.chat_type),
   )
   const canSendMessage = Boolean(canSendInCurrentChat && draftMessage.trim() && !sending)
-  const canAnalyzeStatusCard = Boolean(selectedChatId && history && activeStatusCardAgent && !statusCardBusy)
+  const canAnalyzeStatusCard = Boolean(selectedChatId && activeHistory && activeStatusCardAgent && !statusCardBusy)
   const sendBlockReason =
-    history && !canSendInCurrentChat
-      ? getChatSendBlockedReason(history.chat.wa_chat_jid, history.chat.chat_type)
+    activeHistory && !canSendInCurrentChat
+      ? getChatSendBlockedReason(activeHistory.chat.wa_chat_jid, activeHistory.chat.chat_type)
       : undefined
   const hasAdoptedAssistantReply = adoptedReplyIndex !== undefined
 
@@ -1266,7 +1432,7 @@ export function ChatsPage() {
         </aside>
 
         <section className="panel chat-main-panel whatsapp-chat-main">
-          {selectedChat && history ? (
+          {selectedChat && activeHistory ? (
             <>
               <section className="chat-status-strip whatsapp-chat-status-strip">
                 {agentConfigsLoading ? (
@@ -1281,10 +1447,10 @@ export function ChatsPage() {
                         {statusCard ? (
                           <span>{statusCard.message_count} 条记录</span>
                         ) : (
-                          <span>{history.messages.length} 条已加载消息</span>
+                          <span>{activeHistory.messages.length} 条已加载消息</span>
                         )}
                       </div>
-                      <StatusBadge status={history.chat.chat_type} />
+                      <StatusBadge status={activeHistory.chat.chat_type} />
                       <button
                         className="secondary-button assistant-mini-button chat-status-collapse-button"
                         type="button"
@@ -1356,7 +1522,7 @@ export function ChatsPage() {
               </section>
 
               <div className="whatsapp-history-toolbar">
-                {history.has_more ? (
+                {activeHistory.has_more ? (
                   <button className="secondary-button" type="button" onClick={() => void loadMoreMessages()}>
                     {historyLoading ? '正在加载更早消息...' : '查看更多消息'}
                   </button>
@@ -1364,7 +1530,7 @@ export function ChatsPage() {
               </div>
 
               <div ref={timelineRef} className="message-timeline whatsapp-message-timeline">
-                {history.messages.map((message) => {
+                {activeHistory.messages.map((message) => {
                   const textContent = message.text_content?.trim()
                   const hasMedia = message.media.length > 0
 
@@ -1490,7 +1656,7 @@ export function ChatsPage() {
                   <div className="chat-compose-box whatsapp-chat-compose-box">
                     <textarea
                       value={draftMessage}
-                      onChange={(event) => setDraftMessage(event.target.value)}
+                      onChange={(event) => setCurrentDraftMessage(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' && !event.shiftKey) {
                           event.preventDefault()
@@ -1515,7 +1681,7 @@ export function ChatsPage() {
                 </div>
 
                 <div className="whatsapp-compose-meta">
-                  <span className="field-hint">当前会话：{getChatDisplayName(history.chat)}</span>
+                  <span className="field-hint">当前会话：{getChatDisplayName(activeHistory.chat)}</span>
                 </div>
                 {composeNotice ? <div className="compose-attachment-notice">{composeNotice}</div> : null}
               </div>
@@ -1593,7 +1759,7 @@ export function ChatsPage() {
             </div>
           </div>
 
-          {selectedChat && history ? (
+          {selectedChat && activeHistory ? (
             <div className="assistant-panel-body whatsapp-assistant-body">
               <div className="assistant-reply-column">
                 <section className="assistant-card assistant-options-card">
