@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -67,6 +68,9 @@ type WhatsmeowConnector struct {
 
 	sessions map[string]*whatsmeowSession
 	handler  func(Event)
+
+	waVersionMu          sync.Mutex
+	waVersionRefreshedAt time.Time
 }
 
 const (
@@ -77,6 +81,8 @@ const (
 	metadataRefreshTimeout  = 45 * time.Second
 	groupInfoRequestTimeout = 8 * time.Second
 	logoutRequestTimeout    = 8 * time.Second
+	waVersionRefreshTimeout = 12 * time.Second
+	waVersionRefreshWindow  = 6 * time.Hour
 )
 
 func NewWhatsmeowConnector(
@@ -117,7 +123,59 @@ func (c *WhatsmeowConnector) SetEventHandler(handler func(Event)) {
 	c.mu.Unlock()
 }
 
+func (c *WhatsmeowConnector) refreshWAVersion(ctx context.Context, force bool) error {
+	c.waVersionMu.Lock()
+	defer c.waVersionMu.Unlock()
+
+	if !force && !c.waVersionRefreshedAt.IsZero() && c.now().Sub(c.waVersionRefreshedAt) < waVersionRefreshWindow {
+		return nil
+	}
+
+	refreshCtx, cancel := context.WithTimeout(ctx, waVersionRefreshTimeout)
+	defer cancel()
+
+	httpClient, err := c.newWAVersionHTTPClient()
+	if err != nil {
+		return err
+	}
+
+	previous := store.GetWAVersion()
+	latest, err := whatsmeow.GetLatestVersion(refreshCtx, httpClient)
+	if err != nil {
+		return err
+	}
+	store.SetWAVersion(*latest)
+	c.waVersionRefreshedAt = c.now()
+	c.logger.Info("whatsapp web version refreshed", "previous", previous.String(), "latest", latest.String())
+	return nil
+}
+
+func (c *WhatsmeowConnector) newWAVersionHTTPClient() (*http.Client, error) {
+	httpClient := newWhatsmeowHTTPClient()
+	if strings.TrimSpace(c.proxyURL) == "" {
+		return httpClient, nil
+	}
+
+	proxyURL, err := url.Parse(c.proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse whatsapp proxy for version refresh: %w", err)
+	}
+
+	transport, ok := httpClient.Transport.(*http.Transport)
+	if !ok || transport == nil {
+		return nil, fmt.Errorf("unexpected whatsapp http transport %T", httpClient.Transport)
+	}
+	transport = transport.Clone()
+	transport.Proxy = http.ProxyURL(proxyURL)
+	httpClient.Transport = transport
+	return httpClient, nil
+}
+
 func (c *WhatsmeowConnector) StartPairing(ctx context.Context, accountID string, request StartPairingRequest) (SessionSnapshot, error) {
+	if err := c.refreshWAVersion(ctx, false); err != nil {
+		c.logger.Warn("failed to refresh whatsapp web version before pairing", "account_id", accountID, "error", err)
+	}
+
 	session, err := c.ensureSession(ctx, accountID)
 	if err != nil {
 		return SessionSnapshot{}, err
@@ -188,6 +246,10 @@ func (c *WhatsmeowConnector) StartPairing(ctx context.Context, accountID string,
 }
 
 func (c *WhatsmeowConnector) Restore(ctx context.Context, accountID string) error {
+	if err := c.refreshWAVersion(ctx, false); err != nil {
+		c.logger.Warn("failed to refresh whatsapp web version before restore", "account_id", accountID, "error", err)
+	}
+
 	session, err := c.ensureSession(ctx, accountID)
 	if err != nil {
 		return err
@@ -612,6 +674,10 @@ func (c *WhatsmeowConnector) connectExistingSession(ctx context.Context, account
 	})
 	c.emitSnapshot(snapshot)
 
+	if err := c.refreshWAVersion(ctx, false); err != nil {
+		c.logger.Warn("failed to refresh whatsapp web version before reconnect", "account_id", accountID, "error", err)
+	}
+
 	if err := session.client.Connect(); err != nil {
 		return SessionSnapshot{}, c.failSnapshot(accountID, "failed", fmt.Sprintf("connect existing whatsapp session: %v", err))
 	}
@@ -620,6 +686,13 @@ func (c *WhatsmeowConnector) connectExistingSession(ctx context.Context, account
 }
 
 func (c *WhatsmeowConnector) startQRFlow(accountID string, firstItem whatsmeow.QRChannelItem) (SessionSnapshot, error) {
+	if firstItem.Event == whatsmeow.QRChannelClientOutdated.Event {
+		if err := c.refreshWAVersion(context.Background(), true); err != nil {
+			c.logger.Warn("failed to force refresh whatsapp web version after outdated qr event", "account_id", accountID, "error", err)
+		}
+		return SessionSnapshot{}, c.failSnapshot(accountID, "failed", "WhatsApp Web 客户端版本已过期，系统已尝试刷新，请重新点击二维码配对。")
+	}
+
 	if firstItem.Event != whatsmeow.QRChannelEventCode || strings.TrimSpace(firstItem.Code) == "" {
 		return SessionSnapshot{}, c.failSnapshot(accountID, "failed", fmt.Sprintf("unexpected qr event: %s", firstItem.Event))
 	}
@@ -739,7 +812,10 @@ func (c *WhatsmeowConnector) handleQRChannelItem(accountID string, item whatsmeo
 	case whatsmeow.QRChannelEventError:
 		c.failSnapshot(accountID, "failed", fmt.Sprintf("pairing error: %v", item.Error))
 	case whatsmeow.QRChannelClientOutdated.Event:
-		c.failSnapshot(accountID, "failed", "whatsmeow client version is outdated")
+		if err := c.refreshWAVersion(context.Background(), true); err != nil {
+			c.logger.Warn("failed to force refresh whatsapp web version after outdated qr channel event", "account_id", accountID, "error", err)
+		}
+		c.failSnapshot(accountID, "failed", "WhatsApp Web 客户端版本已过期，系统已尝试刷新，请重新点击二维码配对。")
 	}
 }
 
@@ -819,6 +895,10 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 		envelope, err := c.mapIncomingMessage(accountID, session.client, event, nil)
 		if err != nil {
 			c.logger.Warn("failed to normalize whatsmeow message", "account_id", accountID, "error", err)
+			return
+		}
+		if shouldIgnoreInboundMessage(envelope.Message.MessageType, envelope.Message.TextContent) {
+			c.logger.Debug("ignored internal whatsapp protocol message", "account_id", accountID, "chat_jid", envelope.Chat.WAChatJID, "message_id", envelope.Message.WAMessageID)
 			return
 		}
 		c.emit(Event{
@@ -999,6 +1079,9 @@ func (c *WhatsmeowConnector) handleHistorySync(accountID string, event *waEvents
 			continue
 		}
 		chatJID = chatJID.ToNonAD()
+		if historyConversationContainsOnlyInternalMessages(conversation) {
+			continue
+		}
 
 		meta := &historyChatMeta{
 			Title:            firstNonEmptyStringPointer(conversation.GetDisplayName(), conversation.GetName()),
@@ -1029,6 +1112,10 @@ func (c *WhatsmeowConnector) handleHistorySync(accountID string, event *waEvents
 			envelope, err := c.mapIncomingMessage(accountID, session.client, parsed, meta)
 			if err != nil {
 				c.logger.Warn("failed to normalize history sync message", "account_id", accountID, "chat_jid", chatJID.String(), "error", err)
+				continue
+			}
+			if shouldIgnoreInboundMessage(envelope.Message.MessageType, envelope.Message.TextContent) {
+				c.logger.Debug("ignored internal whatsapp protocol message from history sync", "account_id", accountID, "chat_jid", chatJID.String(), "message_id", envelope.Message.WAMessageID)
 				continue
 			}
 
@@ -1083,6 +1170,30 @@ func historyConversationMutedUntil(conversation *waHistorySync.Conversation) *ti
 		return unixSecondsPointer(timestamp)
 	}
 	return nil
+}
+
+func historyConversationContainsOnlyInternalMessages(conversation *waHistorySync.Conversation) bool {
+	if conversation == nil {
+		return false
+	}
+
+	hasMessage := false
+	for _, historyMessage := range conversation.GetMessages() {
+		message := historyMessage.GetMessage()
+		if message == nil {
+			continue
+		}
+		hasMessage = true
+		if !isInternalProtocolMessage(message.GetMessage()) {
+			return false
+		}
+	}
+
+	return hasMessage
+}
+
+func isInternalProtocolMessage(message *waProto.Message) bool {
+	return message != nil && message.GetProtocolMessage() != nil
 }
 
 func unixSecondsPointer(timestamp uint64) *time.Time {
@@ -1215,6 +1326,14 @@ func (c *WhatsmeowConnector) extractIncomingMessageContent(accountID, messageID 
 	default:
 		return ingest.MessageTypeUnknown, nil, nil
 	}
+}
+
+func shouldIgnoreInboundMessage(messageType ingest.MessageType, text *string) bool {
+	if messageType != ingest.MessageTypeSystem || text == nil {
+		return false
+	}
+
+	return strings.HasPrefix(strings.TrimSpace(*text), "protocol:")
 }
 
 func (c *WhatsmeowConnector) downloadAndStoreMedia(

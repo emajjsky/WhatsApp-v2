@@ -19,6 +19,11 @@ desktop/dist/
 .tools/
 .gocache/
 .gotelemetry/
+.serena/
+
+# Local build outputs
+/api-server
+/api-server.exe
 
 # Python bytecode / caches
 __pycache__/

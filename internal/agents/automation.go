@@ -787,9 +787,11 @@ func (a *Automation) failRun(ctx context.Context, runID string, reason string) (
 }
 
 func (a *Automation) handleMessageEvent(ctx context.Context, event sessions.Event) error {
-	// Agent generation is intentionally manual-only in the chat workspace.
-	// Admin backend system configs are used when the user explicitly generates a draft.
-	return nil
+	// Inbound automation is opt-in. Desktop and cloud production compose files keep
+	// it disabled so normal operation remains human-reviewed and manual.
+	if !a.autoSendEnabled {
+		return nil
+	}
 
 	message := event.Message
 	if message == nil {

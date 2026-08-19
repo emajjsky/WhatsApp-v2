@@ -169,7 +169,7 @@ SELECT
     END AS display_title,
     c.participant_count,
     c.archived,
-    COALESCE(c.last_message_at, latest.sent_at),
+    COALESCE(latest.sent_at, c.last_message_at),
     latest.text_content,
     latest.message_type,
     latest.sender_jid,
@@ -197,12 +197,13 @@ LEFT JOIN LATERAL (
         m.sent_at
     FROM messages m
     WHERE m.chat_id = c.id
+      AND %s
     ORDER BY m.sent_at DESC, m.id DESC
     LIMIT 1
 ) AS latest ON TRUE
 WHERE %s
-ORDER BY COALESCE(c.last_message_at, latest.sent_at, c.updated_at) DESC, c.id DESC
-LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
+ORDER BY COALESCE(latest.sent_at, c.last_message_at, c.updated_at) DESC, c.id DESC
+LIMIT $%d OFFSET $%d`, visibleMessageCondition("m"), whereClause, limitIndex, offsetIndex)
 
 	rows, err := r.db.QueryContext(ctx, listQuery, listArgs...)
 	if err != nil {
@@ -451,7 +452,7 @@ WHERE c.id IN (%s)%%s`, strings.Join(placeholders, ", "))
 
 func (r *Repository) ListMessages(ctx context.Context, filters MessageListFilters) ([]MessageView, bool, error) {
 	args := []any{filters.ChatID}
-	conditions := []string{"m.chat_id = $1"}
+	conditions := []string{"m.chat_id = $1", visibleMessageCondition("m")}
 
 	if filters.Before != nil {
 		args = append(args, *filters.Before)
@@ -762,16 +763,35 @@ func buildChatListWhere(ctx context.Context, filters ChatListFilters) (string, [
         SELECT 1
         FROM messages sm
         WHERE sm.chat_id = c.id
+          AND %s
           AND COALESCE(sm.text_content, '') ILIKE $%d
     )
-)`, index, index, index))
+)`, index, index, visibleMessageCondition("sm"), index))
 	}
+
+	conditions = append(conditions, fmt.Sprintf(`(
+    NOT EXISTS (
+        SELECT 1
+        FROM messages cm
+        WHERE cm.chat_id = c.id
+    )
+    OR EXISTS (
+        SELECT 1
+        FROM messages vm
+        WHERE vm.chat_id = c.id
+          AND %s
+    )
+)`, visibleMessageCondition("vm")))
 	if scopeCondition, scopeArgs := chatAccountScopeCondition(ctx, len(args)+1); scopeCondition != "" {
 		conditions = append(conditions, scopeCondition)
 		args = append(args, scopeArgs...)
 	}
 
 	return strings.Join(conditions, " AND "), args
+}
+
+func visibleMessageCondition(alias string) string {
+	return fmt.Sprintf("(%s.message_type <> 'system' OR COALESCE(%s.text_content, '') NOT LIKE 'protocol:%%')", alias, alias)
 }
 
 func chatAccountScopeCondition(ctx context.Context, startIndex int) (string, []any) {

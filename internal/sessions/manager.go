@@ -78,8 +78,12 @@ type Manager struct {
 	logger          *slog.Logger
 	mu              sync.RWMutex
 	bridge          *EventBridge
+	bridgeQueue     chan Event
+	bridgeOnce      sync.Once
 	subscribers     map[chan Event]struct{}
 }
+
+const bridgeQueueSize = 2048
 
 type eventSource interface {
 	SetEventHandler(handler func(Event))
@@ -105,6 +109,7 @@ func NewManager(connector Connector, credentialStore *CredentialStoreAdapter, lo
 		connector:       connector,
 		credentialStore: credentialStore,
 		logger:          logger.With("component", "session_manager"),
+		bridgeQueue:     make(chan Event, bridgeQueueSize),
 		subscribers:     make(map[chan Event]struct{}),
 	}
 
@@ -119,6 +124,11 @@ func (m *Manager) SetEventBridge(bridge *EventBridge) {
 	m.mu.Lock()
 	m.bridge = bridge
 	m.mu.Unlock()
+	if bridge != nil {
+		m.bridgeOnce.Do(func() {
+			go m.processBridgeEvents()
+		})
+	}
 
 	if source, ok := m.connector.(eventSource); ok {
 		source.SetEventHandler(m.handleEvent)
@@ -553,31 +563,49 @@ func (m *Manager) handleEvent(event Event) {
 	}
 
 	m.mu.RLock()
-	subscribers := make([]chan Event, 0, len(m.subscribers))
-	for subscriber := range m.subscribers {
-		subscribers = append(subscribers, subscriber)
-	}
 	bridge := m.bridge
 	m.mu.RUnlock()
+	if bridge == nil {
+		m.publishEvent(event)
+		return
+	}
 
-	for _, subscriber := range subscribers {
+	// Applying backpressure here preserves event order and prevents unbounded
+	// goroutine growth while a history sync is writing many messages.
+	m.bridgeQueue <- event
+}
+
+func (m *Manager) processBridgeEvents() {
+	for event := range m.bridgeQueue {
+		m.mu.RLock()
+		bridge := m.bridge
+		m.mu.RUnlock()
+		if bridge == nil {
+			m.publishEvent(event)
+			continue
+		}
+
+		if err := bridge.Handle(context.Background(), event); err != nil {
+			m.logger.Error(
+				"failed to process session event",
+				"account_id", event.AccountID,
+				"type", event.Type,
+				"error", err,
+			)
+			continue
+		}
+		m.publishEvent(event)
+	}
+}
+
+func (m *Manager) publishEvent(event Event) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for subscriber := range m.subscribers {
 		select {
 		case subscriber <- event:
 		default:
 		}
-	}
-
-	if bridge != nil {
-		go func(event Event) {
-			if err := bridge.Handle(context.Background(), event); err != nil {
-				m.logger.Error(
-					"failed to process session event",
-					"account_id", event.AccountID,
-					"type", event.Type,
-					"error", err,
-				)
-			}
-		}(event)
 	}
 }
 

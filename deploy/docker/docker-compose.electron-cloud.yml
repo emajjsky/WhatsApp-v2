@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: whatsapp_electron_cloud
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
       - whatsapp_electron_cloud_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -29,6 +29,11 @@ services:
     environment:
       AGENT_RUNNER_HOST: 0.0.0.0
       AGENT_RUNNER_PORT: 8090
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   api:
     build:
@@ -42,7 +47,7 @@ services:
       postgres:
         condition: service_healthy
       agent-runner:
-        condition: service_started
+        condition: service_healthy
     env_file:
       - ../../.env
     environment:
@@ -50,7 +55,7 @@ services:
       HTTP_HOST: 0.0.0.0
       HTTP_PORT: 8080
       DB_DRIVER: postgres
-      DB_DSN: postgres://postgres:postgres@postgres:5432/whatsapp_electron_cloud?sslmode=disable
+      DB_DSN: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/whatsapp_electron_cloud?sslmode=disable
       DB_AUTO_MIGRATE: "true"
       DB_MIGRATIONS_DIR: deploy/migrations
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-wa_electron_cloud_session}
@@ -64,6 +69,11 @@ services:
       AGENT_AUTO_SEND_ENABLED: "false"
     volumes:
       - whatsapp_electron_cloud_data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   web:
     build:
@@ -74,9 +84,15 @@ services:
         NGINX_IMAGE: ${DOCKER_IMAGE_PREFIX:-}nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "8088:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   whatsapp_electron_cloud_postgres_data:

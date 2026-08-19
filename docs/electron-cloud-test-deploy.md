@@ -2,6 +2,8 @@
 
 这套部署只用于 `Electron-desktop` 分支，不影响 `main` 云端 Web 版。
 
+本文中的 IP、`8088`、默认管理员和非安全 Cookie 只适用于内部测试，不可直接作为正式生产配置。生产门槛见 [生产就绪审查](production-readiness.md)。
+
 ## 部署目标
 
 当前测试阶段可以和 `main` 放在同一台服务器，通过端口区分：
@@ -70,6 +72,20 @@ admin123456
 ```
 
 上线前必须在后台修改默认密码。
+
+## 从测试升级到生产
+
+正式对外前至少完成：
+
+1. 给服务器绑定域名并启用 HTTPS。
+2. 把桌面端 `cloudAuthBaseUrl` 改为 HTTPS 域名并重新打包。
+3. 设置 `AUTH_SECURE_COOKIE=true`。
+4. 重置管理员强密码。
+5. 轮换 PostgreSQL 密码，并在 `.env` 中设置 `POSTGRES_PASSWORD`。
+6. 只公开 `22/80/443`，关闭 `8088` 公网访问。
+7. 配置数据库备份和恢复演练。
+
+账号级独立出口 IP 尚未在当前版本实现，设计方案见 [WhatsApp 一账号一固定 IP 方案](account-level-proxy-design.md)。
 
 ## 更新部署
 

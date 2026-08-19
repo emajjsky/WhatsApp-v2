@@ -113,7 +113,16 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 	}
 	blacklistFilter := normalizeBlacklistFilter(input.BlacklistFilter)
 	knowledgeBinding := normalizeKnowledgeBinding(input.KnowledgeBinding)
-	providerConfig, err := normalizeProviderConfig(input.ProviderConfig)
+	providerConfigInput := input.ProviderConfig
+	if strings.TrimSpace(input.ID) != "" {
+		existing, existingErr := s.repository.GetRuleByID(ctx, strings.TrimSpace(input.ID))
+		if existingErr == nil {
+			providerConfigInput = preserveProviderSecrets(providerConfigInput, existing.ProviderConfig)
+		} else if !errors.Is(existingErr, sql.ErrNoRows) {
+			return RuleView{}, mapRuleError(input.ID, existingErr)
+		}
+	}
+	providerConfig, err := normalizeProviderConfig(providerConfigInput)
 	if err != nil {
 		return RuleView{}, err
 	}
@@ -175,7 +184,7 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 			return RuleView{}, err
 		}
 
-		return mapRuleToView(stored), nil
+		return mapRuleToViewForContext(ctx, stored), nil
 	}
 
 	existing, err := s.repository.GetRuleByID(ctx, ruleID)
@@ -216,7 +225,7 @@ func (s *Service) UpsertRule(ctx context.Context, input UpsertRuleInput) (RuleVi
 		return RuleView{}, err
 	}
 
-	return mapRuleToView(stored), nil
+	return mapRuleToViewForContext(ctx, stored), nil
 }
 
 func (s *Service) SetRuleEnabled(ctx context.Context, ruleID string, enabled bool) (RuleView, error) {
@@ -247,7 +256,7 @@ func (s *Service) SetRuleEnabled(ctx context.Context, ruleID string, enabled boo
 		return RuleView{}, err
 	}
 
-	return mapRuleToView(stored), nil
+	return mapRuleToViewForContext(ctx, stored), nil
 }
 
 func (s *Service) DeleteRule(ctx context.Context, ruleID string) (RuleView, error) {
@@ -264,7 +273,7 @@ func (s *Service) DeleteRule(ctx context.Context, ruleID string) (RuleView, erro
 		return RuleView{}, mapRuleError(ruleID, err)
 	}
 
-	return mapRuleToView(rule), nil
+	return mapRuleToViewForContext(ctx, rule), nil
 }
 
 func (s *Service) GetSettings(ctx context.Context, accountID string) (SettingsView, error) {
@@ -315,7 +324,15 @@ func (s *Service) UpsertSettings(ctx context.Context, input UpsertSettingsInput)
 
 	apiKey := strings.TrimSpace(input.APIKey)
 	if apiKey == "" {
-		return SettingsView{}, fmt.Errorf("api_key is required")
+		existing, existingErr := s.repository.GetSettings(ctx, accountID)
+		if existingErr == nil {
+			apiKey = existing.APIKey
+		} else if !errors.Is(existingErr, sql.ErrNoRows) {
+			return SettingsView{}, mapSettingsError(accountID, existingErr)
+		}
+	}
+	if apiKey == "" {
+		return SettingsView{}, fmt.Errorf("api_key is required for a new configuration")
 	}
 
 	promptTemplate := strings.TrimSpace(input.PromptTemplate)
@@ -348,6 +365,7 @@ func mapRuleToViewForContext(ctx context.Context, rule AgentRule) RuleView {
 	view := mapRuleToView(rule)
 	currentUser, ok := auth.CurrentUser(ctx)
 	if !ok || currentUser.IsAdmin() {
+		view.ProviderConfig = redactProviderSecrets(view.ProviderConfig)
 		return view
 	}
 
@@ -368,6 +386,42 @@ func publicProviderConfig(config map[string]any) map[string]any {
 	return result
 }
 
+var providerSecretKeys = []string{"api_key", "authorization"}
+
+func redactProviderSecrets(config map[string]any) map[string]any {
+	result := make(map[string]any, len(config))
+	for key, value := range config {
+		result[key] = value
+	}
+	for _, key := range providerSecretKeys {
+		if strings.TrimSpace(anyString(result[key])) != "" {
+			result[key+"_configured"] = true
+		}
+		delete(result, key)
+	}
+	return result
+}
+
+func preserveProviderSecrets(incoming map[string]any, existing map[string]any) map[string]any {
+	result := make(map[string]any, len(incoming)+len(providerSecretKeys))
+	for key, value := range incoming {
+		if strings.HasSuffix(key, "_configured") {
+			continue
+		}
+		result[key] = value
+	}
+
+	if normalizeProviderType(anyString(result["type"])) != normalizeProviderType(anyString(existing["type"])) {
+		return result
+	}
+	for _, key := range providerSecretKeys {
+		if strings.TrimSpace(anyString(result[key])) == "" && strings.TrimSpace(anyString(existing[key])) != "" {
+			result[key] = existing[key]
+		}
+	}
+	return result
+}
+
 func (s *Service) ListSystemConfigs(ctx context.Context) ([]SystemAgentConfig, error) {
 	if _, err := auth.RequireAdmin(ctx); err != nil {
 		return nil, err
@@ -376,6 +430,10 @@ func (s *Service) ListSystemConfigs(ctx context.Context) ([]SystemAgentConfig, e
 	items, err := s.repository.ListSystemConfigs(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	for index := range items {
+		items[index].ProviderConfig = redactProviderSecrets(items[index].ProviderConfig)
 	}
 
 	return items, nil
@@ -578,7 +636,17 @@ func (s *Service) UpsertSystemConfig(ctx context.Context, input UpsertSystemConf
 		return SystemAgentConfig{}, fmt.Errorf("agent name is required")
 	}
 
-	providerConfig, err := normalizeProviderConfig(input.ProviderConfig)
+	providerConfigInput := input.ProviderConfig
+	configID := strings.TrimSpace(input.ID)
+	if configID != "" {
+		existing, existingErr := s.repository.GetSystemConfigByID(ctx, configID, "")
+		if existingErr == nil {
+			providerConfigInput = preserveProviderSecrets(providerConfigInput, existing.ProviderConfig)
+		} else if !errors.Is(existingErr, sql.ErrNoRows) {
+			return SystemAgentConfig{}, existingErr
+		}
+	}
+	providerConfig, err := normalizeProviderConfig(providerConfigInput)
 	if err != nil {
 		return SystemAgentConfig{}, err
 	}
@@ -590,7 +658,7 @@ func (s *Service) UpsertSystemConfig(ctx context.Context, input UpsertSystemConf
 	}
 
 	config := SystemAgentConfig{
-		ID:             strings.TrimSpace(input.ID),
+		ID:             configID,
 		Name:           name,
 		Purpose:        purpose,
 		Enabled:        input.Enabled,
@@ -618,7 +686,12 @@ func (s *Service) UpsertSystemConfig(ctx context.Context, input UpsertSystemConf
 		}
 	}
 
-	return s.repository.GetSystemConfigByID(ctx, config.ID, purpose)
+	stored, err := s.repository.GetSystemConfigByID(ctx, config.ID, purpose)
+	if err != nil {
+		return SystemAgentConfig{}, err
+	}
+	stored.ProviderConfig = redactProviderSecrets(stored.ProviderConfig)
+	return stored, nil
 }
 
 func (s *Service) DeleteSystemConfig(ctx context.Context, id string) error {

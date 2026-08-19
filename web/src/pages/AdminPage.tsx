@@ -53,8 +53,10 @@ interface AgentConfigForm {
   model: string
   baseUrl: string
   apiKey: string
+  apiKeyConfigured: boolean
   endpointUrl: string
   authorization: string
+  authorizationConfigured: boolean
   method: string
   responsePath: string
   temperature: string
@@ -1291,7 +1293,9 @@ function AssistantUsageLogPanel() {
   }
 
   useEffect(() => {
+    // Initial load only; filter changes are applied explicitly by the query button.
     void loadFilterOptions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const accountOptions = useMemo(
@@ -1482,7 +1486,9 @@ function SystemAgentPanel() {
   }
 
   useEffect(() => {
+    // Initial load only; purpose switching is handled by the selection effect below.
     void loadConfigs()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -1727,6 +1733,7 @@ function SystemAgentPanel() {
                     type="password"
                     value={form.apiKey}
                     onChange={(event) => updateForm({ apiKey: event.target.value })}
+                    placeholder={form.apiKeyConfigured ? '已配置，留空保持不变' : '请输入 API Key'}
                   />
                 </label>
                 <div className="agent-advanced-grid">
@@ -1784,6 +1791,7 @@ function SystemAgentPanel() {
                     <input
                       value={form.authorization}
                       onChange={(event) => updateForm({ authorization: event.target.value })}
+                      placeholder={form.authorizationConfigured ? '已配置，留空保持不变' : '可选'}
                     />
                   </label>
                   <label className="field">
@@ -1792,6 +1800,7 @@ function SystemAgentPanel() {
                       type="password"
                       value={form.apiKey}
                       onChange={(event) => updateForm({ apiKey: event.target.value })}
+                      placeholder={form.apiKeyConfigured ? '已配置，留空保持不变' : '可选'}
                     />
                   </label>
                 </div>
@@ -1964,8 +1973,10 @@ function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
     model: '',
     baseUrl: '',
     apiKey: '',
+    apiKeyConfigured: false,
     endpointUrl: '',
     authorization: '',
+    authorizationConfigured: false,
     method: 'POST',
     responsePath: 'draft',
     temperature: '0.2',
@@ -2137,9 +2148,11 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
     providerType,
     model: readConfigString(providerConfig, 'model'),
     baseUrl: readConfigString(providerConfig, 'base_url'),
-    apiKey: readConfigString(providerConfig, 'api_key'),
+    apiKey: '',
+    apiKeyConfigured: readConfigBool(providerConfig, 'api_key_configured', false),
     endpointUrl: readConfigString(providerConfig, 'endpoint_url') || readConfigString(providerConfig, 'base_url'),
-    authorization: readConfigString(providerConfig, 'authorization'),
+    authorization: '',
+    authorizationConfigured: readConfigBool(providerConfig, 'authorization_configured', false),
     method: readConfigString(providerConfig, 'method') || 'POST',
     responsePath: readConfigString(providerConfig, 'response_path') || 'draft',
     temperature: readConfigString(providerConfig, 'temperature') || fallback.temperature,

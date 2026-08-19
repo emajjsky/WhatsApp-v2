@@ -1,6 +1,6 @@
 # 当前进度
 
-更新日期：2026-05-25
+更新日期：2026-08-20
 
 ## 一句话说明
 
@@ -24,7 +24,10 @@
 - 桌面端可以使用云端后台配置的回复 Agent、翻译 Agent、状态卡 Agent。
 - Electron 云端服务已支持独立部署，不影响 `main`。
 - Windows 安装包已生成到 `desktop/release/`。
-- Windows 客户端当前版本已更新到 `0.1.19`。
+- Windows 客户端当前版本已更新到 `0.1.22`。
+- 已过滤 WhatsApp 内部协议消息，历史 `protocol:*` 脏记录不再显示为客户会话。
+- 消息入库已改成有界顺序队列，避免历史同步产生无界并发，并确保入库后再触发前端和 Agent。
+- 管理后台不再向浏览器返回 Agent API Key 或 Authorization 明文。
 - 右侧 AI 助手面板已重排为固定两列：左侧三套回复方案，右侧采纳区和翻译区。
 - 回复方案状态已接入：未生成显示 `待生成`，生成后显示 `待采纳`，采纳后显示 `已采纳`。
 - 客户端左下角已显示桌面应用版本号。
@@ -78,7 +81,7 @@ GitHub Electron-desktop
 当前已有 Windows 安装包：
 
 ```text
-desktop/release/WhatsApp Agent Setup 0.1.19.exe
+desktop/release/WhatsApp Agent Setup 0.1.22.exe
 ```
 
 安装新版本通常可以直接覆盖安装，不需要先卸载旧版本。
@@ -157,7 +160,7 @@ deploy/migrations/0017_chat_status_cards_cloud_agents.sql
 - 桌面端使用云端回复 Agent 绑定的 Skill / 话术包。
 - 桌面端使用云端配置的翻译 Agent。
 - 桌面端使用云端配置的状态卡 Agent。
-- Windows 安装包 `0.1.19`。
+- Windows 安装包版本 `0.1.22`。
 - 桌面端 AI 助手右侧布局。
 - 回复方案 `待生成` / `待采纳` / `已采纳` 状态流转。
 
@@ -180,7 +183,7 @@ curl http://127.0.0.1:8088/healthz
 
 ## 下一步建议
 
-1. 继续用 Windows 安装包 `0.1.19` 跑完整桌面端验收。
+1. 继续用 Windows 安装包 `0.1.22` 跑完整桌面端验收。
 2. 在云端后台配置 Skill，并绑定到回复 Agent，验证回复建议是否能参考话术包。
 3. 如果状态卡、翻译、回复和 Skill 都稳定，再补 macOS 打包配置。
 4. macOS 先做内部测试包，确认功能稳定后再做签名和公证。
@@ -189,3 +192,5 @@ curl http://127.0.0.1:8088/healthz
 ## 相关文档
 
 - Agent Skill / 话术包管理：`docs/agent-skills.md`
+- 生产就绪审查：`docs/production-readiness.md`
+- 一账号一固定 IP 方案：`docs/account-level-proxy-design.md`

@@ -2667,7 +2667,7 @@ function normalizeAssistantReplyOption(value: unknown, index: number): Assistant
 function parseFallbackReplyOptions(text: string): AssistantReplyOption[] {
   const matches = Array.from(
     text.matchAll(
-      /(?:^|\n)\s*(?:(?:回复方案|方案)\s*)?(#?\s*[1-3]|[一二三])(?:\s*[\.、\)]|\s*[：:])\s*([\s\S]*?)(?=\n\s*(?:(?:回复方案|方案)\s*)?(?:#?\s*[1-3]|[一二三])(?:\s*[\.、\)]|\s*[：:])|$)/g,
+      /(?:^|\n)\s*(?:(?:回复方案|方案)\s*)?(#?\s*[1-3]|[一二三])(?:\s*[.、)]|\s*[：:])\s*([\s\S]*?)(?=\n\s*(?:(?:回复方案|方案)\s*)?(?:#?\s*[1-3]|[一二三])(?:\s*[.、)]|\s*[：:])|$)/g,
     ),
   )
 

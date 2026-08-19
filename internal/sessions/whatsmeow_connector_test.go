@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"whatsapp-agent-platform/internal/ingest"
+
 	"go.mau.fi/whatsmeow"
+	waProto "go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/store"
 	waTypes "go.mau.fi/whatsmeow/types"
@@ -115,6 +118,27 @@ func TestHistoryConversationLastMessageAtFallsBackToConversationTimestamp(t *tes
 	}
 	if !lastMessageAt.Equal(time.Unix(1700000456, 0).UTC()) {
 		t.Fatalf("lastMessageAt = %v, want conversation timestamp", lastMessageAt)
+	}
+}
+
+func TestInternalProtocolMessagesAreIgnored(t *testing.T) {
+	protocolText := "protocol:HISTORY_SYNC_NOTIFICATION"
+	if !shouldIgnoreInboundMessage(ingest.MessageTypeSystem, &protocolText) {
+		t.Fatal("internal protocol message should be ignored")
+	}
+
+	customerText := "protocol:客户自己发送的普通文本"
+	if shouldIgnoreInboundMessage(ingest.MessageTypeText, &customerText) {
+		t.Fatal("customer text should not be ignored")
+	}
+}
+
+func TestInternalProtocolPayloadIsDetectedBeforeChatCreation(t *testing.T) {
+	if !isInternalProtocolMessage(&waProto.Message{ProtocolMessage: &waProto.ProtocolMessage{}}) {
+		t.Fatal("protocol payload should be detected")
+	}
+	if isInternalProtocolMessage(&waProto.Message{Conversation: proto.String("hello")}) {
+		t.Fatal("customer text payload should not be detected as protocol")
 	}
 }
 

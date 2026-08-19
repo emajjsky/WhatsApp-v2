@@ -2,6 +2,7 @@ package agents
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -194,14 +195,14 @@ type UpsertSkillFileInput struct {
 }
 
 type SettingsView struct {
-	AccountID      string    `json:"account_id"`
-	Provider       string    `json:"provider"`
-	Model          string    `json:"model"`
-	BaseURL        string    `json:"base_url"`
-	APIKey         string    `json:"api_key"`
-	PromptTemplate string    `json:"prompt_template"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	AccountID        string    `json:"account_id"`
+	Provider         string    `json:"provider"`
+	Model            string    `json:"model"`
+	BaseURL          string    `json:"base_url"`
+	APIKeyConfigured bool      `json:"api_key_configured"`
+	PromptTemplate   string    `json:"prompt_template"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type UpsertSettingsInput struct {
@@ -508,13 +509,13 @@ func mapRuleToView(rule AgentRule) RuleView {
 
 func mapSettingsToView(settings AgentSettings) SettingsView {
 	return SettingsView{
-		AccountID:      settings.AccountID,
-		Provider:       settings.Provider,
-		Model:          settings.Model,
-		BaseURL:        settings.BaseURL,
-		APIKey:         settings.APIKey,
-		PromptTemplate: settings.PromptTemplate,
-		CreatedAt:      settings.CreatedAt,
-		UpdatedAt:      settings.UpdatedAt,
+		AccountID:        settings.AccountID,
+		Provider:         settings.Provider,
+		Model:            settings.Model,
+		BaseURL:          settings.BaseURL,
+		APIKeyConfigured: strings.TrimSpace(settings.APIKey) != "",
+		PromptTemplate:   settings.PromptTemplate,
+		CreatedAt:        settings.CreatedAt,
+		UpdatedAt:        settings.UpdatedAt,
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"whatsapp-agent-platform/internal/accounts"
 	"whatsapp-agent-platform/internal/agents"
@@ -40,6 +41,7 @@ func New(cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	logDeploymentSecurityWarnings(cfg, logger)
 
 	var (
 		database        *storage.Postgres
@@ -329,6 +331,23 @@ func New(cfg config.Config) (*App, error) {
 	app.logger.Info("application assembled", "http_addr", cfg.HTTP.Address())
 
 	return app, nil
+}
+
+func logDeploymentSecurityWarnings(cfg config.Config, logger *slog.Logger) {
+	environment := strings.ToLower(strings.TrimSpace(cfg.Environment))
+	if environment != "electron-cloud" && environment != "production" && environment != "staging" {
+		return
+	}
+
+	if cfg.Auth.BootstrapAdminEmail == "admin@example.com" || cfg.Auth.BootstrapAdminPassword == "admin123456" {
+		logger.Warn("insecure bootstrap administrator defaults are configured; replace them before production traffic")
+	}
+	if !cfg.Auth.SecureCookie {
+		logger.Warn("secure auth cookies are disabled; terminate HTTPS before the web service and set AUTH_SECURE_COOKIE=true")
+	}
+	if strings.Contains(cfg.Database.DSN, "postgres:postgres@") {
+		logger.Warn("default postgres password is configured; rotate it before production traffic")
+	}
 }
 
 func databaseSQL(database *storage.Postgres) *sql.DB {

@@ -26,6 +26,12 @@
 - 断线期间消息目前是“尽量补齐”，不是“绝对全量补齐”
 - 如果部署机器无法直连 `web.whatsapp.com`，仍需要设置 `WHATSAPP_PROXY_URL`
 - 导出任务当前仍在 API 进程内异步执行，还没有拆成独立 worker
+- 当前代理配置是客户端全局代理，还没有实现“一账号一固定 IP”
+
+生产上线前请先阅读：
+
+- [生产就绪审查](docs/production-readiness.md)
+- [WhatsApp 一账号一固定 IP 方案](docs/account-level-proxy-design.md)
 
 ## 目录结构
 

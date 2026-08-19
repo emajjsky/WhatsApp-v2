@@ -2,6 +2,8 @@
 
 这份文档用于服务器版本部署。当前示例按 DigitalOcean Ubuntu 服务器编写，腾讯云、阿里云等 Linux 服务器也基本一样。
 
+`Electron-desktop` 云端鉴权服务请优先参考 `docs/electron-cloud-test-deploy.md`；正式生产要求统一参考 `docs/production-readiness.md`。
+
 ## 日常更新
 
 代码已经推送后，在服务器终端执行：

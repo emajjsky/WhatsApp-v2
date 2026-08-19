@@ -346,7 +346,7 @@ export interface AgentSettingsView {
   provider: string
   model: string
   base_url: string
-  api_key: string
+  api_key_configured: boolean
   prompt_template: string
   created_at: string
   updated_at: string
