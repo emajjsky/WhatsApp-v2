@@ -311,19 +311,15 @@ function UserAdminPanel() {
     }
   }
 
-  async function handleResetPassword(user: AuthUser) {
-    const nextPassword = window.prompt(`请输入 ${user.email} 的新密码，至少 8 位`)
-    if (!nextPassword) {
-      return
-    }
-
+  async function handleResetPassword(user: AuthUser, nextPassword: string) {
     setError(undefined)
     setNotice(undefined)
     try {
       await resetUserPassword(user.id, nextPassword)
-      setNotice('密码已重置')
+      setNotice(`${user.email} 的密码已更新`)
     } catch (resetError) {
       setError(resetError instanceof Error ? resetError.message : '重置密码失败')
+      throw resetError
     }
   }
 
@@ -395,41 +391,12 @@ function UserAdminPanel() {
 
         <div className="admin-user-list">
           {users.map((user) => (
-            <div key={user.id} className="admin-user-row">
-              <div>
-                <strong>{user.display_name}</strong>
-                <span>{user.email}</span>
-                <small>{user.role === 'admin' ? '管理员' : permissionLabel(user.permissions ?? [])}</small>
-              </div>
-              <select
-                value={user.role}
-                onChange={(event) => void handlePatchUser(user, { role: event.target.value as UserRole })}
-              >
-                <option value="user">普通用户</option>
-                <option value="admin">管理员</option>
-              </select>
-              <select
-                value={user.status}
-                onChange={(event) =>
-                  void handlePatchUser(user, { status: event.target.value as UserStatus })
-                }
-              >
-                <option value="active">启用</option>
-                <option value="disabled">禁用</option>
-              </select>
-              {user.role === 'user' ? (
-                <PermissionPicker
-                  value={user.permissions ?? []}
-                  compact
-                  onChange={(next) => void handlePatchUser(user, { permissions: next })}
-                />
-              ) : null}
-              <DesktopUserControls user={user} onUpdate={handlePatchUser} />
-              <button className="secondary-button" type="button" onClick={() => void handleResetPassword(user)}>
-                <Icon name="key" />
-                重置密码
-              </button>
-            </div>
+            <UserAdminRow
+              key={user.id}
+              user={user}
+              onUpdate={handlePatchUser}
+              onResetPassword={handleResetPassword}
+            />
           ))}
         </div>
       </article>
@@ -520,6 +487,158 @@ function DesktopGrantEditor({
         />
       </label>
     </div>
+  )
+}
+
+function UserAdminRow({
+  user,
+  onUpdate,
+  onResetPassword,
+}: {
+  user: AuthUser
+  onUpdate: (
+    user: AuthUser,
+    patch: { role?: UserRole; status?: UserStatus; permissions?: UserPermission[]; desktop?: DesktopGrant },
+  ) => Promise<void>
+  onResetPassword: (user: AuthUser, password: string) => Promise<void>
+}) {
+  const [passwordEditorOpen, setPasswordEditorOpen] = useState(false)
+  const [nextPassword, setNextPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordError, setPasswordError] = useState<string>()
+  const [savingPassword, setSavingPassword] = useState(false)
+
+  function closePasswordEditor() {
+    setPasswordEditorOpen(false)
+    setNextPassword('')
+    setConfirmPassword('')
+    setPasswordError(undefined)
+  }
+
+  async function submitPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setPasswordError(undefined)
+
+    if (nextPassword.length < 8) {
+      setPasswordError('密码至少需要 8 位')
+      return
+    }
+    if (nextPassword !== confirmPassword) {
+      setPasswordError('两次输入的密码不一致')
+      return
+    }
+
+    setSavingPassword(true)
+    try {
+      await onResetPassword(user, nextPassword)
+      closePasswordEditor()
+    } catch (resetError) {
+      setPasswordError(resetError instanceof Error ? resetError.message : '修改密码失败')
+    } finally {
+      setSavingPassword(false)
+    }
+  }
+
+  return (
+    <section className="admin-user-row">
+      <header className="admin-user-identity">
+        <div>
+          <strong>{user.display_name}</strong>
+          <span>{user.email}</span>
+        </div>
+        <span className={`admin-user-status ${user.status}`}>
+          {user.status === 'active' ? '正常' : '已停用'}
+        </span>
+      </header>
+
+      <div className="admin-user-primary-settings">
+        <label className="field compact-field">
+          <span>角色</span>
+          <select
+            value={user.role}
+            onChange={(event) => void onUpdate(user, { role: event.target.value as UserRole })}
+          >
+            <option value="user">普通用户</option>
+            <option value="admin">管理员</option>
+          </select>
+        </label>
+        <label className="field compact-field">
+          <span>账号状态</span>
+          <select
+            value={user.status}
+            onChange={(event) => void onUpdate(user, { status: event.target.value as UserStatus })}
+          >
+            <option value="active">启用</option>
+            <option value="disabled">禁用</option>
+          </select>
+        </label>
+        <div className="admin-user-permissions">
+          <span className="admin-control-label">功能权限</span>
+          {user.role === 'user' ? (
+            <PermissionPicker
+              value={user.permissions ?? []}
+              compact
+              onChange={(next) => void onUpdate(user, { permissions: next })}
+            />
+          ) : (
+            <span className="admin-permission-summary">管理员全部权限</span>
+          )}
+        </div>
+      </div>
+
+      <div className="admin-user-secondary-settings">
+        <div className="admin-user-desktop-settings">
+          <span className="admin-control-label">桌面授权</span>
+          <DesktopUserControls user={user} onUpdate={onUpdate} />
+        </div>
+        <button
+          className="secondary-button admin-password-toggle"
+          type="button"
+          onClick={() => {
+            if (passwordEditorOpen) {
+              closePasswordEditor()
+            } else {
+              setPasswordEditorOpen(true)
+            }
+          }}
+        >
+          <Icon name="key" />
+          {passwordEditorOpen ? '取消修改' : '修改密码'}
+        </button>
+      </div>
+
+      {passwordEditorOpen ? (
+        <form className="admin-password-form" onSubmit={submitPassword}>
+          <label className="field compact-field">
+            <span>新密码</span>
+            <input
+              type="password"
+              value={nextPassword}
+              minLength={8}
+              autoComplete="new-password"
+              onChange={(event) => setNextPassword(event.target.value)}
+              required
+            />
+          </label>
+          <label className="field compact-field">
+            <span>确认新密码</span>
+            <input
+              type="password"
+              value={confirmPassword}
+              minLength={8}
+              autoComplete="new-password"
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              required
+            />
+          </label>
+          <button className="primary-button" type="submit" disabled={savingPassword}>
+            <Icon name="key" />
+            {savingPassword ? '保存中...' : '保存新密码'}
+          </button>
+          {passwordError ? <span className="admin-password-error">{passwordError}</span> : null}
+        </form>
+      ) : null}
+    </section>
   )
 }
 
@@ -1014,17 +1133,6 @@ function normalizeUserDesktopGrant(value?: DesktopGrant): DesktopGrant {
     license_expires_at: value?.license_expires_at,
     max_devices: value?.max_devices && value.max_devices > 0 ? value.max_devices : 1,
   }
-}
-
-function permissionLabel(value: UserPermission[]) {
-  if (value.length === 0) {
-    return '未分配权限'
-  }
-
-  const labels = permissionOptions
-    .filter((item) => value.includes(item.value))
-    .map((item) => item.label)
-  return labels.join('、')
 }
 
 function InvitationAdminPanel() {

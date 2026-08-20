@@ -10,6 +10,13 @@ This folder builds the Windows desktop installer. The installer bundles:
 
 Users do not need Docker, PostgreSQL, Go, Node.js, or Python installed.
 
+The Windows installer requests administrator permission once to register the
+bundled PostgreSQL runtime as a local Windows service. The desktop app itself
+runs normally after installation and keeps its database under the current
+user's `%APPDATA%/whatsapp-agent-desktop/` directory.
+
+Current packaging version: `0.1.25`.
+
 ## Build
 
 Run from `desktop/`:
@@ -47,6 +54,9 @@ Important subdirectories:
 - `data/`: exported files, scripts, media cache
 - `logs/`: local process logs
 
+Uninstalling the desktop app removes the Windows service but preserves this
+local data directory so an upgrade or reinstall does not erase chat data.
+
 ## Cloud Auth Plan
 
 The first desktop cut keeps the local API and bundled local database so the Windows installer can run without Docker. The next step is to add a cloud auth proxy:
@@ -56,3 +66,9 @@ desktop app -> local API -> cloud auth server
 ```
 
 WhatsApp sessions and chat data remain local. Cloud only validates user registration, invite code, and license status.
+
+## Admin User Management
+
+The cloud admin page supports changing any user's password, including the
+administrator account. Open **用户管理**, select **修改密码**, enter the new
+password twice, and save it. Passwords must contain at least 8 characters.

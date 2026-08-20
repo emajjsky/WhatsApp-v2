@@ -497,7 +497,9 @@ a {
 .detail-stack,
 .dropdown-stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
+  min-width: 0;
 }
 
 .account-detail-stack {
@@ -536,6 +538,7 @@ a {
 .field {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .field span {
@@ -549,6 +552,7 @@ a {
 .field textarea,
 .dropdown-trigger {
   width: 100%;
+  min-width: 0;
   padding: 14px 16px;
   border-radius: var(--radius-md);
   border: 1px solid var(--line);
@@ -3531,6 +3535,7 @@ a {
   gap: 14px;
   align-items: center;
   padding-right: 6px;
+  min-width: 0;
 }
 
 .admin-tab-list {
@@ -3542,6 +3547,9 @@ a {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.72);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .admin-tab-button {
@@ -3580,6 +3588,7 @@ a {
 
 .admin-content {
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding-right: 6px;
   display: grid;
@@ -3591,46 +3600,179 @@ a {
 
 .admin-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 0.8fr) minmax(520px, 1.2fr);
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+  min-width: 0;
+}
+
+.admin-create-panel {
+  position: sticky;
+  top: 0;
+}
+
+.admin-users-panel {
+  min-width: 0;
 }
 
 .admin-user-list {
   display: grid;
-  gap: 10px;
+  gap: 0;
+  min-width: 0;
+  border-top: 1px solid var(--line);
 }
 
 .admin-user-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 120px 110px minmax(220px, auto) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.78);
+  grid-template-columns: minmax(150px, 180px) minmax(0, 1fr);
+  gap: 10px 16px;
+  align-items: start;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
 }
 
-.admin-user-row strong,
-.admin-user-row span {
+.admin-user-identity {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: grid;
+  align-items: flex-start;
+  justify-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.admin-user-identity > div {
+  min-width: 0;
+}
+
+.admin-user-identity strong,
+.admin-user-identity span {
   display: block;
 }
 
-.admin-user-row span {
-  color: var(--text-soft);
-  line-height: 1.5;
-}
-
-.admin-user-row small {
-  display: block;
-  margin-top: 3px;
-  color: var(--text-muted);
+.admin-user-identity strong {
+  font-size: 15px;
   line-height: 1.4;
+}
+
+.admin-user-identity > div > span {
+  margin-top: 2px;
+  color: var(--text-soft);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-user-status {
+  flex: 0 0 auto;
+  min-width: 48px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #edf2f0;
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.admin-user-status.active {
+  background: #e7f7ef;
+  color: #137451;
+}
+
+.admin-user-status.disabled {
+  background: #f4eeee;
+  color: #9b4343;
+}
+
+.admin-user-primary-settings {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: minmax(116px, 140px) minmax(116px, 140px) minmax(260px, 1fr);
+  gap: 10px;
+  align-items: end;
+  min-width: 0;
+}
+
+.admin-user-permissions,
+.admin-user-desktop-settings {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.admin-control-label {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.admin-permission-summary {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.admin-user-secondary-settings {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: max-content 120px;
+  gap: 12px;
+  align-items: end;
+  justify-content: start;
+  min-width: 0;
+}
+
+.admin-password-toggle {
+  width: 100%;
+}
+
+.admin-password-form {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) 132px;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid rgba(18, 140, 126, 0.22);
+  border-radius: var(--radius-sm);
+  background: #f4faf7;
+}
+
+.admin-password-form .primary-button {
+  min-height: 38px;
+}
+
+.admin-password-error {
+  grid-column: 1 / -1;
+  color: var(--danger);
+  font-size: 11px;
 }
 
 .invitation-row {
   grid-template-columns: minmax(260px, 1fr) 110px auto auto;
+  align-items: center;
+}
+
+.invitation-row > div strong,
+.invitation-row > div span,
+.invitation-row > div small {
+  display: block;
+}
+
+.invitation-row > div span,
+.invitation-row > div small {
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.invitation-row > div small {
+  margin-top: 3px;
 }
 
 .permission-picker {
@@ -3640,7 +3782,7 @@ a {
 }
 
 .permission-picker.compact {
-  max-width: 260px;
+  max-width: none;
 }
 
 .permission-picker .checkbox-row {
@@ -3659,8 +3801,17 @@ a {
   grid-template-columns: minmax(150px, 1fr) 92px minmax(170px, 1fr);
 }
 
+.admin-create-panel .desktop-grant-editor {
+  grid-template-columns: 92px minmax(0, 1fr);
+}
+
+.admin-create-panel .desktop-grant-editor > .checkbox-row {
+  grid-column: 1 / -1;
+}
+
 .desktop-user-controls {
-  grid-template-columns: 96px 62px 96px;
+  grid-template-columns: 92px 68px 96px;
+  min-width: 0;
 }
 
 .desktop-user-controls input[type='number'] {
@@ -5605,6 +5756,14 @@ a {
     width: 100%;
   }
 
+  .admin-create-panel {
+    position: static;
+  }
+
+  .admin-user-primary-settings {
+    grid-template-columns: minmax(116px, 140px) minmax(116px, 140px) minmax(240px, 1fr);
+  }
+
   .admin-agent-sidebar {
     position: static;
   }
@@ -5773,6 +5932,36 @@ a {
 
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .admin-user-primary-settings,
+  .admin-user-secondary-settings,
+  .admin-password-form,
+  .invitation-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-user-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-user-identity,
+  .admin-user-primary-settings,
+  .admin-user-secondary-settings {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .admin-user-secondary-settings {
+    justify-content: stretch;
+  }
+
+  .admin-user-identity {
+    gap: 10px;
+  }
+
+  .desktop-user-controls {
+    grid-template-columns: minmax(90px, 1fr) 68px 96px;
   }
 
   .chat-frame {

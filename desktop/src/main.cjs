@@ -17,7 +17,6 @@ const POSTGRES_SERVICE_NAME = process.env.WA_DESKTOP_POSTGRES_SERVICE || 'WhatsA
 const children = new Set()
 let webServer
 let apiProcess
-let postgresServiceActive = false
 
 function repoRoot() {
   return path.resolve(__dirname, '..', '..')
@@ -350,23 +349,19 @@ async function startPostgresFixed() {
     }
   }
 
-  if (mustUsePostgresService()) {
-    await startPostgresService(pgBin, pgData)
-  } else {
-    const postgresChild = spawnManaged('postgres', postgresExe, ['-D', pgData, '-h', '127.0.0.1', '-p', String(POSTGRES_PORT)])
+  if (process.platform === 'win32') {
     try {
+      await waitForPort(POSTGRES_PORT, 1500)
+    } catch {
+      const start = runSync('postgres-service', systemTool('sc.exe'), ['start', POSTGRES_SERVICE_NAME])
+      if (start.status !== 0 && !/1056|started|running|已启动|正在运行/i.test(`${start.stdout}\n${start.stderr}`)) {
+        throw new Error('本地数据库服务未正确安装或无法启动，请重新运行安装程序并允许管理员权限。')
+      }
       await waitForPort(POSTGRES_PORT, 45000)
-    } catch (error) {
-      try {
-        postgresChild.kill()
-      } catch {
-        // ignore fallback shutdown races
-      }
-      if (!canFallbackToPostgresService()) {
-        throw error
-      }
-      await startPostgresService(pgBin, pgData)
     }
+  } else {
+    spawnManaged('postgres', postgresExe, ['-D', pgData, '-h', '127.0.0.1', '-p', String(POSTGRES_PORT)])
+    await waitForPort(POSTGRES_PORT, 45000)
   }
 
   await ensurePostgresDatabaseSafe(psqlExe, createdbExe)
@@ -450,69 +445,10 @@ async function postgresDatabaseExists(psqlExe, env) {
   return exists.code === 0 && exists.stdout.trim() === '1'
 }
 
-function mustUsePostgresService() {
-  if (process.platform !== 'win32') {
-    return false
-  }
-  return String(os.userInfo().username || '').toLowerCase() === 'administrator'
-}
-
-function canFallbackToPostgresService() {
-  if (process.platform !== 'win32') {
-    return false
-  }
-  const logPath = path.join(logRoot(), 'postgres.log')
-  const logText = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : ''
-  return mustUsePostgresService() || /administrator|superuser|root|管理员权限/i.test(logText)
-}
-
-async function startPostgresService(pgBin, pgData) {
-  const pgCtlExe = requiredFile(path.join(pgBin, 'pg_ctl.exe'), 'PostgreSQL pg_ctl.exe')
-  const scExe = systemTool('sc.exe')
-
-  runSync('postgres-service', scExe, ['stop', POSTGRES_SERVICE_NAME])
-  runSync('postgres-service', pgCtlExe, ['unregister', '-N', POSTGRES_SERVICE_NAME])
-  grantPostgresServiceAccess(pgData)
-
-  const register = runSync('postgres-service', pgCtlExe, [
-    'register',
-    '-N',
-    POSTGRES_SERVICE_NAME,
-    '-D',
-    pgData,
-    '-S',
-    'demand',
-    '-U',
-    'NT AUTHORITY\\NetworkService',
-    '-o',
-    `-h 127.0.0.1 -p ${POSTGRES_PORT}`,
-  ])
-  if (register.status !== 0) {
-    throw new Error(`Register local PostgreSQL service failed: ${register.stderr || register.stdout || resultError(register)}`)
-  }
-
-  const start = runSync('postgres-service', scExe, ['start', POSTGRES_SERVICE_NAME])
-  if (start.status !== 0 && !/started|running|已启动|正在运行/i.test(`${start.stdout}\n${start.stderr}`)) {
-    throw new Error(`Start local PostgreSQL service failed: ${start.stderr || start.stdout || resultError(start)}`)
-  }
-  postgresServiceActive = true
-  await waitForPort(POSTGRES_PORT, 45000)
-}
-
-function grantPostgresServiceAccess(pgData) {
-  const icaclsExe = systemTool('icacls.exe')
-  runSync('postgres-service', icaclsExe, [pgData, '/grant', '*S-1-5-20:(OI)(CI)F', '/T', '/C'])
-  runSync('postgres-service', icaclsExe, [pgData, '/setowner', '*S-1-5-20', '/T', '/C'])
-}
-
 function systemTool(name) {
   const systemRoot = process.env.SystemRoot || 'C:\\Windows'
   const candidate = path.join(systemRoot, 'System32', name)
   return fs.existsSync(candidate) ? candidate : name
-}
-
-function resultError(result) {
-  return result.error ? result.error.message : 'unknown error'
 }
 
 function openPathOrShowError(filePath) {
@@ -825,10 +761,6 @@ function stopChildren() {
   if (webServer) {
     webServer.close()
     webServer = undefined
-  }
-  if (postgresServiceActive) {
-    runSync('postgres-service', systemTool('sc.exe'), ['stop', POSTGRES_SERVICE_NAME])
-    postgresServiceActive = false
   }
   for (const child of children) {
     try {
