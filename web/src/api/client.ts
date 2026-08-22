@@ -965,6 +965,23 @@ export async function getDesktopProxyRuntimeStatus(force = false) {
   return (await response.json()) as DesktopProxyRuntimeView
 }
 
+export interface LocalExitIPView {
+  ip: string
+  checked_at: string
+  message?: string
+}
+
+export async function getLocalExitIP() {
+  const response = await fetch(`${baseUrl}/desktop/local-ip`, {
+    credentials: 'include',
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    throw new ApiError(response.status, '读取本机 IP 失败')
+  }
+  return (await response.json()) as LocalExitIPView
+}
+
 export async function getAccountProxy(accountId: string) {
   return request<{ proxy?: LocalProxyView }>(`/api/accounts/${accountId}/proxy`)
 }

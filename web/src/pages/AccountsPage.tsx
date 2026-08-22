@@ -4,6 +4,7 @@ import {
   createAccount,
   deleteAccount,
   getAccountProxy,
+  getLocalExitIP,
   listLocalProxies,
   listAccounts,
   logoutAccount,
@@ -44,6 +45,8 @@ export function AccountsPage() {
   const [localTestAccounts, setLocalTestAccounts] = useState<Record<string, boolean>>({})
   const [loadingAccountProxy, setLoadingAccountProxy] = useState(false)
   const [savingAccountProxy, setSavingAccountProxy] = useState(false)
+  const [localExitIP, setLocalExitIP] = useState('')
+  const [localExitIPLoading, setLocalExitIPLoading] = useState(true)
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) ?? accounts[0]
   const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
@@ -115,6 +118,37 @@ export function AccountsPage() {
   useEffect(() => {
     void loadAccounts()
   }, [loadAccounts])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadLocalExitIP() {
+      try {
+        const response = await getLocalExitIP()
+        if (!cancelled) {
+          setLocalExitIP(response.ip.trim())
+        }
+      } catch {
+        if (!cancelled) {
+          setLocalExitIP('')
+        }
+      } finally {
+        if (!cancelled) {
+          setLocalExitIPLoading(false)
+        }
+      }
+    }
+
+    void loadLocalExitIP()
+    const timer = window.setInterval(() => {
+      void loadLocalExitIP()
+    }, 20000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -254,7 +288,7 @@ export function AccountsPage() {
       }
       accountProxyIDsRef.current = { ...accountProxyIDsRef.current, [selectedAccount.id]: value }
       setAccountProxyIDs(accountProxyIDsRef.current)
-      setNotice(value ? '账号代理已保存，重新连接后生效' : '已选择本机网络测试模式，重新连接后生效')
+      setNotice(value ? '账号代理已保存，重新连接后生效' : '已选择本机网络，重新连接后生效')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存账号代理失败')
     } finally {
@@ -390,9 +424,13 @@ export function AccountsPage() {
                     <div className="desktop-network-head">
                       <div>
                         <strong>当前账号网络</strong>
-                        <span>{selectedProxy ? `只修改“${selectedAccount.display_name}”，不会影响其他账号` : '当前未绑定独立代理，仅允许明确选择本机网络测试模式'}</span>
+                        <span>{selectedProxy ? `只修改“${selectedAccount.display_name}”，不会影响其他账号` : '当前未绑定独立代理，使用本机网络'}</span>
                       </div>
-                      <strong className={`account-exit-ip${selectedProxy?.last_check_error ? ' account-exit-ip-error' : ''}`}>{selectedProxy ? (selectedProxy.last_check_error ? '代理检测失败' : selectedProxy.exit_ip ?? '出口未返回') : '本机网络'}</strong>
+                      <strong className={`account-exit-ip${selectedProxy?.last_check_error ? ' account-exit-ip-error' : ''}`}>
+                        {selectedProxy
+                          ? (selectedProxy.last_check_error ? '代理检测失败' : selectedProxy.exit_ip ?? '出口未返回')
+                          : (localExitIP || (localExitIPLoading ? '获取中...' : '未返回'))}
+                      </strong>
                     </div>
                     <label className="field compact-field">
                       <span>为此账号选择网络出口</span>
@@ -401,7 +439,7 @@ export function AccountsPage() {
                         disabled={loadingAccountProxy || savingAccountProxy}
                         onChange={(event) => void handleSaveAccountProxy(event.target.value)}
                       >
-                        <option value="">本机网络（仅测试，需手动选择）</option>
+                        <option value="">本机网络</option>
                         {localProxies.map((proxy) => (
                           <option key={proxy.id} value={proxy.id} disabled={!proxy.enabled}>
                             {proxy.name} · {proxy.country ?? proxy.host} · {routeModeLabel(proxy.route_mode)}
@@ -411,18 +449,18 @@ export function AccountsPage() {
                     </label>
                     <div className="account-proxy-meta">
                       <span>账号出口 IP</span>
-                      <strong>{selectedProxy?.exit_ip ?? (localTestModeSelected ? '本机出口（仅测试）' : '请先配置并验证代理')}</strong>
+                      <strong>{selectedProxy?.exit_ip ?? (localExitIP || (localExitIPLoading ? '获取中...' : '未返回'))}</strong>
                       <span>连接路径</span>
-                      <strong>{selectedProxy ? routeModeLabel(selectedProxy.route_mode) : '本机网络（仅测试）'}</strong>
+                      <strong>{selectedProxy ? routeModeLabel(selectedProxy.route_mode) : '本机网络'}</strong>
                     </div>
                     {pairingBlocked ? (
                       <p className="field-hint account-pairing-hint">
                         {!selectedProxyID
-                          ? '请先选择并验证账号代理；仅测试本机网络时，请手动选择“本机网络（仅测试）”。'
+                          ? '请先选择并验证账号代理；使用本机网络时，请先选择“本机网络”。'
                           : '该代理尚未验证通过，请先到“IP代理”页面点击“检测此代理”。'}
                       </p>
                     ) : localTestModeSelected ? (
-                      <p className="field-hint account-pairing-hint account-pairing-hint-warning">当前为本机网络测试模式，不保证一号一 IP。</p>
+                      <p className="field-hint account-pairing-hint account-pairing-hint-warning">当前使用本机网络，不能保证一号一 IP。</p>
                     ) : null}
                   </div>
                 ) : null}

@@ -623,6 +623,52 @@ async function systemProxyRuntimeView(force = false) {
   }
 }
 
+function localExitIPView() {
+  return new Promise((resolve) => {
+    let request
+    try {
+      request = electronNet.request({ url: 'https://api.ipify.org', session: session.defaultSession })
+    } catch (error) {
+      resolve({ ip: '', checked_at: new Date().toISOString(), message: `本机 IP 检测失败：${error.message}` })
+      return
+    }
+
+    let body = ''
+    let settled = false
+    let timer
+    const finish = (payload) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(payload)
+    }
+
+    timer = setTimeout(() => {
+      request.abort()
+      finish({ ip: '', checked_at: new Date().toISOString(), message: '本机 IP 检测超时' })
+    }, 5000)
+
+    request.on('response', (response) => {
+      response.on('data', (chunk) => {
+        body += chunk.toString()
+        if (body.length > 64) body = body.slice(0, 64)
+      })
+      response.on('end', () => {
+        const ip = response.statusCode === 200 ? body.trim() : ''
+        finish({
+          ip,
+          checked_at: new Date().toISOString(),
+          message: ip ? '本机 IP 已更新' : `本机 IP 服务返回 HTTP ${response.statusCode || 0}`,
+        })
+      })
+    })
+    request.on('error', (error) => {
+      finish({ ip: '', checked_at: new Date().toISOString(), message: `本机 IP 检测失败：${error.message}` })
+    })
+    request.end()
+  })
+}
+
 function updateSystemProxyStatus(patch) {
   systemProxyStatus = {
     ...systemProxyStatus,
@@ -1045,6 +1091,18 @@ function startWebServer() {
           res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
           res.end(JSON.stringify({ error: error.message }))
         })
+      return
+    }
+    if (requestURL.pathname === '/desktop/local-ip') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { allow: 'GET' })
+        res.end()
+        return
+      }
+      void localExitIPView().then((payload) => {
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(JSON.stringify(payload))
+      })
       return
     }
     if (req.url.startsWith('/api/') || req.url === '/healthz') {
