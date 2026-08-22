@@ -15,7 +15,7 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.38`.
+Current packaging version: `0.1.39`.
 
 ## Build
 
@@ -103,7 +103,7 @@ password twice, and save it. Passwords must contain at least 8 characters.
 - 不删除 WhatsApp 账号、聊天记录或本地会话数据。
 - 删除后的账号会回到本机网络；如需立即使用新出口，请重新连接账号。
 
-## 0.1.38 自动链式代理（开发中）
+## 0.1.39 自动链式代理状态
 
 - IP 代理页面增加连接方式：自动判断、直连代理、强制通过 Clash/系统代理链式。
 - 客户端自动读取 Windows 系统代理/Clash 当前入口，用户不需要手工填写 Clash 端口。

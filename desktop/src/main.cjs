@@ -24,6 +24,18 @@ let tray
 let isQuitting = false
 let shutdownStarted = false
 let systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: 0 }
+let systemProxyDetectionPromise
+let systemProxyStatus = {
+  mode: 'auto',
+  status: 'checking',
+  proxyURL: '',
+  proxyRules: '',
+  endpointReachable: false,
+  exitIP: '',
+  routeKey: '',
+  checkedAt: '',
+  message: '尚未检测本机系统代理',
+}
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -588,20 +600,58 @@ async function desktopRuntimeConfigView() {
   }
 }
 
-async function systemProxyRuntimeView() {
-  const proxyURL = await resolveWhatsAppProxyURL()
+async function systemProxyRuntimeView(force = false) {
+  if (force) {
+    systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: 0 }
+  }
+  const proxyURL = await resolveWhatsAppProxyURL({ force })
+  const config = publicDesktopConfig()
+  const routeKey = config.whatsAppProxyMode === 'auto'
+    ? await resolveSystemProxyRouteKey(proxyURL, force)
+    : ''
   return {
+    mode: config.whatsAppProxyMode,
+    status: systemProxyStatus.status,
     proxy_url: proxyURL,
-    route_key: await resolveSystemProxyRouteKey(proxyURL),
+    proxy_display_url: redactProxyURL(systemProxyStatus.proxyURL),
+    proxy_rules: systemProxyStatus.proxyRules,
+    endpoint_reachable: systemProxyStatus.endpointReachable,
+    exit_ip: systemProxyStatus.exitIP,
+    route_key: routeKey,
+    checked_at: systemProxyStatus.checkedAt,
+    message: systemProxyStatus.message,
   }
 }
 
-async function resolveSystemProxyRouteKey(proxyURL) {
+function updateSystemProxyStatus(patch) {
+  systemProxyStatus = {
+    ...systemProxyStatus,
+    ...patch,
+  }
+}
+
+function redactProxyURL(proxyURL) {
   if (!proxyURL) {
-    systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: Date.now() }
     return ''
   }
-  if (systemProxyRouteCache.proxyURL === proxyURL && Date.now() - systemProxyRouteCache.checkedAt < 15000) {
+  try {
+    const parsed = new URL(proxyURL)
+    parsed.username = ''
+    parsed.password = ''
+    return parsed.toString().replace(/\/$/, '')
+  } catch {
+    return proxyURL.replace(/:\/\/[^@/]+@/, '://')
+  }
+}
+
+async function resolveSystemProxyRouteKey(proxyURL, force = false) {
+  if (!proxyURL) {
+    systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: Date.now() }
+    updateSystemProxyStatus({ routeKey: '', exitIP: '' })
+    return ''
+  }
+  if (!force && systemProxyRouteCache.proxyURL === proxyURL && Date.now() - systemProxyRouteCache.checkedAt < 15000) {
+    updateSystemProxyStatus({ routeKey: systemProxyRouteCache.routeKey })
     return systemProxyRouteCache.routeKey
   }
 
@@ -610,12 +660,14 @@ async function resolveSystemProxyRouteKey(proxyURL) {
     try {
       request = electronNet.request({ url: 'https://api.ipify.org', session: session.defaultSession })
     } catch {
+      updateSystemProxyStatus({ exitIP: '', message: '系统代理端口可达，但无法启动出口 IP 检测' })
       resolve(proxyURL)
       return
     }
     let body = ''
     const timer = setTimeout(() => {
       request.abort()
+      updateSystemProxyStatus({ exitIP: '', message: '系统代理端口可达，但出口 IP 检测超时' })
       resolve(proxyURL)
     }, 5000)
     request.on('response', (response) => {
@@ -626,16 +678,23 @@ async function resolveSystemProxyRouteKey(proxyURL) {
       response.on('end', () => {
         clearTimeout(timer)
         const exitIP = body.trim()
+        if (response.statusCode === 200 && exitIP) {
+          updateSystemProxyStatus({ exitIP, message: '已检测到系统代理，账号独立代理可通过它链式连接' })
+        } else {
+          updateSystemProxyStatus({ exitIP: '', message: '系统代理端口可达，但出口 IP 暂未返回' })
+        }
         resolve(response.statusCode === 200 && exitIP ? `${proxyURL}\x00${exitIP}` : proxyURL)
       })
     })
     request.on('error', () => {
       clearTimeout(timer)
+      updateSystemProxyStatus({ exitIP: '', message: '系统代理端口可达，但出口 IP 检测失败' })
       resolve(proxyURL)
     })
     request.end()
   })
   systemProxyRouteCache = { proxyURL, routeKey, checkedAt: Date.now() }
+  updateSystemProxyStatus({ routeKey })
   return routeKey
 }
 
@@ -654,15 +713,38 @@ function startAgentRunner() {
   return waitForHTTP(`http://127.0.0.1:${AGENT_PORT}/healthz`, 30000)
 }
 
-async function resolveWhatsAppProxyURL() {
+async function resolveWhatsAppProxyURL({ force = false } = {}) {
   const config = desktopConfig()
   const mode = normalizeProxyMode(configString(config, 'whatsAppProxyMode', 'proxyMode'))
   if (mode === 'direct') {
+    updateSystemProxyStatus({
+      mode,
+      status: 'direct',
+      proxyURL: '',
+      proxyRules: 'DIRECT',
+      endpointReachable: false,
+      exitIP: '',
+      routeKey: '',
+      checkedAt: new Date().toISOString(),
+      message: '已设置直连，不使用 Clash/系统代理',
+    })
     return ''
   }
 
   const manualProxyURL = configString(config, 'whatsAppProxyUrl', 'whatsappProxyUrl', 'whatsAppProxyURL', 'proxyUrl')
   if (mode === 'manual') {
+    const endpointReachable = manualProxyURL ? await isProxyEndpointReachable(manualProxyURL) : false
+    updateSystemProxyStatus({
+      mode,
+      status: endpointReachable ? 'manual' : 'unavailable',
+      proxyURL: manualProxyURL,
+      proxyRules: manualProxyURL ? `MANUAL ${redactProxyURL(manualProxyURL)}` : '',
+      endpointReachable,
+      exitIP: '',
+      routeKey: '',
+      checkedAt: new Date().toISOString(),
+      message: endpointReachable ? '已采用手动代理，端口可达' : '手动代理未配置或端口不可达',
+    })
     return manualProxyURL
   }
 
@@ -670,27 +752,79 @@ async function resolveWhatsAppProxyURL() {
 }
 
 async function detectSystemProxyURL(targetURL) {
+  if (systemProxyDetectionPromise) {
+    return systemProxyDetectionPromise
+  }
+
+  systemProxyDetectionPromise = detectSystemProxyURLOnce(targetURL)
+  try {
+    return await systemProxyDetectionPromise
+  } finally {
+    systemProxyDetectionPromise = undefined
+  }
+}
+
+async function detectSystemProxyURLOnce(targetURL) {
+  updateSystemProxyStatus({
+    mode: 'auto',
+    status: 'checking',
+    proxyURL: '',
+    proxyRules: '',
+    endpointReachable: false,
+    exitIP: '',
+    routeKey: '',
+    checkedAt: '',
+    message: `正在检测本机系统代理：${targetURL}`,
+  })
   try {
     const defaultSession = session.defaultSession
     if (!defaultSession) {
+      updateSystemProxyStatus({
+        status: 'error',
+        checkedAt: new Date().toISOString(),
+        message: '桌面网络会话尚未就绪，无法检测系统代理',
+      })
       return ''
     }
 
     const proxyRules = await defaultSession.resolveProxy(targetURL)
     const proxyURL = firstProxyURL(proxyRules)
+    updateSystemProxyStatus({ proxyRules: String(proxyRules || '') })
     if (!proxyURL) {
+      updateSystemProxyStatus({
+        status: 'direct',
+        checkedAt: new Date().toISOString(),
+        message: '未检测到 Windows 系统代理规则；TUN 模式无法通过此接口确认',
+      })
       appendLog('desktop-network', `No system proxy detected for ${targetURL}; using direct network. Rules: ${proxyRules}\n`)
       return ''
     }
 
-    if (!(await isProxyEndpointReachable(proxyURL))) {
+    const endpointReachable = await isProxyEndpointReachable(proxyURL)
+    updateSystemProxyStatus({ proxyURL, endpointReachable })
+    if (!endpointReachable) {
+      updateSystemProxyStatus({
+        status: 'unavailable',
+        checkedAt: new Date().toISOString(),
+        message: '已发现系统代理，但代理地址/端口不可达；自动模式不会采用它',
+      })
       appendLog('desktop-network', `Detected system proxy is not reachable: ${proxyURL}; using direct network. Rules: ${proxyRules}\n`)
       return ''
     }
 
+    updateSystemProxyStatus({
+      status: 'detected',
+      checkedAt: new Date().toISOString(),
+      message: '已检测到系统代理，正在验证出口并准备链式连接',
+    })
     appendLog('desktop-network', `Using detected system proxy: ${proxyURL}. Rules: ${proxyRules}\n`)
     return proxyURL
   } catch (error) {
+    updateSystemProxyStatus({
+      status: 'error',
+      checkedAt: new Date().toISOString(),
+      message: `系统代理检测失败：${error.message}`,
+    })
     appendLog('desktop-network', `Failed to detect system proxy: ${error.message}\n`)
     return ''
   }
@@ -895,13 +1029,14 @@ function startWebServer() {
   const baseDir = path.dirname(root)
 
   webServer = http.createServer((req, res) => {
-    if (req.url === '/desktop/runtime-proxy') {
+    const requestURL = new URL(req.url || '/', `http://127.0.0.1:${WEB_PORT}`)
+    if (requestURL.pathname === '/desktop/runtime-proxy') {
       if (req.method !== 'GET') {
         res.writeHead(405, { allow: 'GET' })
         res.end()
         return
       }
-      void systemProxyRuntimeView()
+      void systemProxyRuntimeView(requestURL.searchParams.get('force') === '1')
         .then((payload) => {
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
           res.end(JSON.stringify(payload))

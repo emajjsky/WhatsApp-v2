@@ -433,7 +433,12 @@ func (r accountProxyResolver) ResolveProxyPlan(ctx context.Context, accountID st
 	}
 	outerRoute, providerErr := r.provider.ResolveRoute(ctx)
 	if providerErr != nil {
-		return sessions.ProxyPlan{}, providerErr
+		// 自动模式允许系统代理暂时不可读，继续走账号自己的独立代理；
+		// 强制链式必须把错误返回，不能静默泄漏到本机出口。
+		if localPlan.RouteMode == proxies.RouteModeSystem {
+			return sessions.ProxyPlan{}, providerErr
+		}
+		outerRoute = systemProxyRoute{}
 	}
 
 	if localPlan.ProxyURL != "" {

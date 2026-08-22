@@ -690,6 +690,132 @@ a {
   background: #ffffff;
 }
 
+.desktop-proxy-runtime-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+  border-color: rgba(31, 122, 77, 0.2);
+  background: #f5fbf7;
+}
+
+.desktop-proxy-runtime-heading,
+.desktop-proxy-runtime-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.desktop-proxy-runtime-heading h3,
+.desktop-proxy-runtime-message {
+  margin: 0;
+}
+
+.desktop-proxy-runtime-message {
+  margin-top: 5px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.proxy-runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.proxy-runtime-badge::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.proxy-runtime-detected,
+.proxy-runtime-manual {
+  color: #126b43;
+  background: rgba(37, 211, 102, 0.14);
+}
+
+.proxy-runtime-direct {
+  color: #315d86;
+  background: rgba(79, 147, 207, 0.14);
+}
+
+.proxy-runtime-checking {
+  color: #936515;
+  background: rgba(240, 182, 65, 0.18);
+}
+
+.proxy-runtime-unavailable,
+.proxy-runtime-error {
+  color: #a33b31;
+  background: rgba(220, 83, 69, 0.12);
+}
+
+.desktop-proxy-runtime-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.desktop-proxy-runtime-grid > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.desktop-proxy-runtime-grid span,
+.desktop-proxy-runtime-grid strong {
+  display: block;
+}
+
+.desktop-proxy-runtime-grid span,
+.desktop-proxy-runtime-rules > span {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.desktop-proxy-runtime-grid strong {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-proxy-runtime-grid .proxy-runtime-value {
+  font-family: 'Consolas', 'SFMono-Regular', monospace;
+}
+
+.desktop-proxy-runtime-rules {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.desktop-proxy-runtime-rules code {
+  min-width: 0;
+  overflow: hidden;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: rgba(31, 42, 36, 0.06);
+  color: var(--text-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .page-proxies .page-heading {
   display: flex;
   justify-content: space-between;
@@ -854,6 +980,112 @@ a {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+/* Keep the form and saved list usable at normal laptop heights. */
+.page-proxies {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-content: start;
+  overflow-y: auto;
+}
+
+.proxy-workspace {
+  grid-template-columns: minmax(380px, 0.92fr) minmax(0, 1.08fr);
+  align-items: stretch;
+}
+
+.proxy-form-panel,
+.proxy-saved-panel {
+  max-height: min(700px, calc(100vh - 230px));
+}
+
+.proxy-form-grid {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.proxy-help-panel {
+  align-self: start;
+  height: fit-content;
+  max-height: 150px;
+  overflow: hidden;
+}
+
+.proxy-rules-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.proxy-rule-item {
+  min-height: 72px;
+  padding: 9px 10px;
+}
+
+.proxy-row {
+  grid-template-columns: minmax(0, 1.2fr) minmax(150px, 0.8fr) auto;
+  gap: 10px;
+  padding: 11px 12px;
+}
+
+.proxy-row .button-row {
+  gap: 6px;
+}
+
+.proxy-row .button-row button {
+  padding: 9px 11px;
+  font-size: 12px;
+}
+
+@media (max-width: 1200px) {
+  .desktop-proxy-runtime-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .proxy-rules-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .proxy-form-panel,
+  .proxy-saved-panel {
+    max-height: none;
+  }
+
+  .proxy-help-panel {
+    max-height: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .desktop-proxy-runtime-heading,
+  .desktop-proxy-runtime-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .desktop-proxy-runtime-actions {
+    width: 100%;
+  }
+
+  .desktop-proxy-runtime-actions .secondary-button {
+    width: 100%;
+  }
+
+  .desktop-proxy-runtime-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .desktop-proxy-runtime-rules {
+    grid-template-columns: 1fr;
+  }
+
+  .account-proxy-meta {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .proxy-rules-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1139,9 +1371,49 @@ a {
   font-size: 13px;
 }
 
+.page-accounts .account-card .account-card-proxy {
+  color: #128c7e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .page-accounts .account-card .status-badge {
   min-height: 28px;
   padding: 0 10px;
+}
+
+.account-proxy-card {
+  margin-top: 14px;
+  padding: 12px 14px;
+  gap: 10px;
+  background: rgba(247, 250, 249, 0.92);
+}
+
+.account-proxy-card .desktop-network-head {
+  align-items: flex-start;
+}
+
+.account-exit-ip {
+  color: #128c7e;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.account-proxy-meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: baseline;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.account-proxy-meta strong {
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-frame {

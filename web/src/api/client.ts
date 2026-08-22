@@ -57,6 +57,28 @@ export interface LocalProxyView {
   updated_at: string
 }
 
+export type DesktopProxyRuntimeMode = 'auto' | 'direct' | 'manual'
+export type DesktopProxyRuntimeStatus =
+  | 'checking'
+  | 'detected'
+  | 'direct'
+  | 'unavailable'
+  | 'manual'
+  | 'error'
+
+export interface DesktopProxyRuntimeView {
+  mode: DesktopProxyRuntimeMode
+  status: DesktopProxyRuntimeStatus
+  proxy_url: string
+  proxy_display_url: string
+  proxy_rules: string
+  endpoint_reachable: boolean
+  exit_ip: string
+  route_key: string
+  checked_at: string
+  message: string
+}
+
 export interface HealthResponse {
   service: string
   environment: string
@@ -929,6 +951,18 @@ export async function deleteLocalProxy(proxyId: string) {
 
 export async function testLocalProxy(proxyId: string) {
   return request<{ proxy: LocalProxyView }>(`/api/proxies/${proxyId}/test`, { method: 'POST', timeoutMs: 25000 })
+}
+
+export async function getDesktopProxyRuntimeStatus(force = false) {
+  const query = force ? '?force=1' : ''
+  const response = await fetch(`${baseUrl}/desktop/runtime-proxy${query}`, {
+    credentials: 'include',
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    throw new ApiError(response.status, '读取本机代理状态失败')
+  }
+  return (await response.json()) as DesktopProxyRuntimeView
 }
 
 export async function getAccountProxy(accountId: string) {

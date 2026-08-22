@@ -195,12 +195,20 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	outerProxyURL := ""
-	if normalizeRouteMode(item.RouteMode) != RouteModeDirect && s.systemProxy != nil {
+	mode := normalizeRouteMode(item.RouteMode)
+	if mode == RouteModeSystem && s.systemProxy == nil {
+		return View{}, fmt.Errorf("代理“通过系统代理链式”需要先启用可用的 Clash/系统代理")
+	}
+	if mode != RouteModeDirect && s.systemProxy != nil {
 		outerProxyURL, err = s.systemProxy(ctx)
 		if err != nil {
-			return View{}, fmt.Errorf("detect system proxy for test: %w", err)
+			if mode == RouteModeSystem {
+				return View{}, fmt.Errorf("detect system proxy for test: %w", err)
+			}
+			// 自动模式的定义就是系统代理不可用时直连独立代理。
+			outerProxyURL = ""
 		}
-		if normalizeRouteMode(item.RouteMode) == RouteModeSystem && strings.TrimSpace(outerProxyURL) == "" {
+		if mode == RouteModeSystem && strings.TrimSpace(outerProxyURL) == "" {
 			return View{}, fmt.Errorf("代理“通过系统代理链式”需要先启用可用的 Clash/系统代理")
 		}
 	}
@@ -224,41 +232,79 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 		transport.Proxy = http.ProxyURL(parsed)
 	}
 	client := &http.Client{Transport: transport, Timeout: 20 * time.Second}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org", nil)
-	if err != nil {
-		return View{}, err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		_ = s.repository.UpdateCheck(ctx, id, "", err.Error())
-		return View{}, fmt.Errorf("proxy connectivity test failed: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		message := fmt.Sprintf("proxy check returned HTTP %d", response.StatusCode)
+	exitIP, ipErr := probeExitIP(ctx, client)
+	whatsappErr := probeWhatsAppWeb(ctx, client)
+	if whatsappErr != nil {
+		message := fmt.Sprintf("WhatsApp Web 不可达；出口 IP 检测：%s；WhatsApp 检测：%s", compactProbeError(ipErr), compactProbeError(whatsappErr))
 		_ = s.repository.UpdateCheck(ctx, id, "", message)
 		return View{}, fmt.Errorf("%s", message)
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 128))
-	if err != nil {
-		message := fmt.Sprintf("read proxy check response: %v", err)
-		_ = s.repository.UpdateCheck(ctx, id, "", message)
-		return View{}, fmt.Errorf("%s", message)
-	}
-	exitIP := strings.TrimSpace(string(body))
-	if net.ParseIP(exitIP) == nil {
-		message := "proxy check returned invalid exit IP"
-		_ = s.repository.UpdateCheck(ctx, id, "", message)
-		return View{}, fmt.Errorf("%s", message)
-	}
+	// 某些代理商会拦截 api.ipify.org，但并不影响 WhatsApp Web。此时
+	// 代理仍然可用，保留旧出口 IP并把检测标记为成功，避免误报“代理失败”。
 	if err := s.repository.UpdateCheck(ctx, id, exitIP, ""); err != nil {
 		return View{}, err
 	}
-	item.ExitIP = &exitIP
+	if exitIP != "" {
+		item.ExitIP = &exitIP
+	}
 	now := time.Now().UTC()
 	item.LastCheckedAt = &now
 	item.LastCheckError = nil
 	return mapView(item), nil
+}
+
+func probeExitIP(ctx context.Context, client *http.Client) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org", nil)
+	if err != nil {
+		return "", err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 128))
+	if err != nil {
+		return "", err
+	}
+	exitIP := strings.TrimSpace(string(body))
+	if net.ParseIP(exitIP) == nil {
+		return "", errors.New("返回内容不是有效 IP")
+	}
+	return exitIP, nil
+}
+
+func probeWhatsAppWeb(ctx context.Context, client *http.Client) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://web.whatsapp.com/", nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("User-Agent", "Mozilla/5.0 WhatsApp-Agent-Desktop")
+	request.Header.Set("Range", "bytes=0-0")
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1024))
+	if response.StatusCode >= 500 {
+		return fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+func compactProbeError(err error) string {
+	if err == nil {
+		return "成功"
+	}
+	message := strings.Join(strings.Fields(err.Error()), " ")
+	if len(message) > 220 {
+		return message[:220] + "..."
+	}
+	return message
 }
 
 func (s *Service) normalizeInput(input Input, requirePassword bool) (Proxy, error) {

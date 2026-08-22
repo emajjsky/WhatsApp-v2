@@ -1,5 +1,5 @@
 import QRCode from 'qrcode'
-import { type FormEvent, useCallback, useEffect, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
   createAccount,
   deleteAccount,
@@ -38,11 +38,14 @@ export function AccountsPage() {
   const [form, setForm] = useState(initialForm)
   const [qrDataUrl, setQrDataUrl] = useState<string>()
   const [localProxies, setLocalProxies] = useState<LocalProxyView[]>([])
+  const [accountProxyIDs, setAccountProxyIDs] = useState<Record<string, string>>({})
+  const accountProxyIDsRef = useRef<Record<string, string>>({})
   const [selectedProxyID, setSelectedProxyID] = useState('')
   const [loadingAccountProxy, setLoadingAccountProxy] = useState(false)
   const [savingAccountProxy, setSavingAccountProxy] = useState(false)
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) ?? accounts[0]
+  const selectedProxy = localProxies.find((item) => item.id === selectedProxyID)
   const selectedBusyAction = busyAction && busyAction.accountId === selectedAccount?.id ? busyAction.method : undefined
   const isSelectedAccountBusy = selectedBusyAction !== undefined
   const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
@@ -55,6 +58,31 @@ export function AccountsPage() {
     try {
       const response = await listAccounts()
       setAccounts(response.accounts)
+      const activeAccountIDs = new Set(response.accounts.map((item) => item.id))
+      const nextProxyIDs = { ...accountProxyIDsRef.current }
+      Object.keys(nextProxyIDs).forEach((accountID) => {
+        if (!activeAccountIDs.has(accountID)) {
+          delete nextProxyIDs[accountID]
+        }
+      })
+      const pendingAccounts = response.accounts.filter((item) => !(item.id in nextProxyIDs))
+      if (pendingAccounts.length > 0) {
+        const bindings = await Promise.all(
+          pendingAccounts.map(async (account) => {
+            try {
+              const binding = await getAccountProxy(account.id)
+              return [account.id, binding.proxy?.id ?? ''] as const
+            } catch {
+              return [account.id, ''] as const
+            }
+          }),
+        )
+        bindings.forEach(([accountID, proxyID]) => {
+          nextProxyIDs[accountID] = proxyID
+        })
+      }
+      accountProxyIDsRef.current = nextProxyIDs
+      setAccountProxyIDs(nextProxyIDs)
       setSelectedAccountId((current) => {
         if (preferredAccountId) {
           return preferredAccountId
@@ -110,7 +138,10 @@ export function AccountsPage() {
     void getAccountProxy(selectedAccount.id)
       .then((response) => {
         if (!cancelled) {
-          setSelectedProxyID(response.proxy?.id ?? '')
+          const proxyID = response.proxy?.id ?? ''
+          setSelectedProxyID(proxyID)
+          accountProxyIDsRef.current = { ...accountProxyIDsRef.current, [selectedAccount.id]: proxyID }
+          setAccountProxyIDs(accountProxyIDsRef.current)
         }
       })
       .catch(() => {
@@ -208,6 +239,8 @@ export function AccountsPage() {
     try {
       await setAccountProxy(selectedAccount.id, value)
       setSelectedProxyID(value)
+      accountProxyIDsRef.current = { ...accountProxyIDsRef.current, [selectedAccount.id]: value }
+      setAccountProxyIDs(accountProxyIDsRef.current)
       setNotice(value ? '账号代理已保存，重新连接后生效' : '已改为本机直连，重新连接后生效')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存账号代理失败')
@@ -298,33 +331,6 @@ export function AccountsPage() {
             </button>
           </form>
 
-          {isDesktopRuntime ? (
-            <div className="desktop-network-card account-proxy-card">
-              <div className="desktop-network-head">
-                <div>
-                  <strong>账号出口 IP</strong>
-                  <span>{selectedAccount ? '每个 WhatsApp 账号单独选择' : '先选择账号'}</span>
-                </div>
-              </div>
-              <label className="field compact-field">
-                <span>当前账号使用的代理</span>
-                <select
-                  value={selectedProxyID}
-                  disabled={!selectedAccount || loadingAccountProxy || savingAccountProxy}
-                  onChange={(event) => void handleSaveAccountProxy(event.target.value)}
-                >
-                  <option value="">本机网络（自动检测系统代理）</option>
-                  {localProxies.map((proxy) => (
-                    <option key={proxy.id} value={proxy.id} disabled={!proxy.enabled}>
-                      {proxy.name} · {proxy.country ?? proxy.host} · {proxy.route_mode === 'direct' ? '直连' : proxy.route_mode === 'system' ? '强制链式' : '自动链式'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p className="field-hint">自动链式会检测本机 Clash/系统代理：检测到则先经过它，再连接此账号的独立出口；境外没有系统代理时自动直连。Clash 切换节点后已连接账号会自动重连。</p>
-            </div>
-          ) : null}
-
         </article>
 
         <article className="panel panel-stretch">
@@ -365,6 +371,39 @@ export function AccountsPage() {
                     <dd>{formatDateTime(selectedAccount.created_at)}</dd>
                   </div>
                 </dl>
+
+                {isDesktopRuntime ? (
+                  <div className="desktop-network-card account-proxy-card">
+                    <div className="desktop-network-head">
+                      <div>
+                        <strong>当前账号出口</strong>
+                        <span>只修改“{selectedAccount.display_name}”，不会影响其他账号</span>
+                      </div>
+                      <strong className="account-exit-ip">{selectedProxy?.exit_ip ?? '未检测'}</strong>
+                    </div>
+                    <label className="field compact-field">
+                      <span>连接方式与代理</span>
+                      <select
+                        value={selectedProxyID}
+                        disabled={loadingAccountProxy || savingAccountProxy}
+                        onChange={(event) => void handleSaveAccountProxy(event.target.value)}
+                      >
+                        <option value="">本机网络（自动检测系统代理）</option>
+                        {localProxies.map((proxy) => (
+                          <option key={proxy.id} value={proxy.id} disabled={!proxy.enabled}>
+                            {proxy.name} · {proxy.country ?? proxy.host} · {routeModeLabel(proxy.route_mode)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="account-proxy-meta">
+                      <span>实际出口 IP</span>
+                      <strong>{selectedProxy?.exit_ip ?? '请先在 IP 代理页检测'}</strong>
+                      <span>路由</span>
+                      <strong>{selectedProxy ? routeModeLabel(selectedProxy.route_mode) : '本机网络 / 系统代理'}</strong>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="button-row">
                   <button
@@ -471,6 +510,11 @@ export function AccountsPage() {
                   </div>
                   <p>{account.platform_label ?? '未填写内部标签'}</p>
                   <span>{account.phone_number ?? '未填写手机号'}</span>
+                  <span className="account-card-proxy">
+                    {accountProxyIDs[account.id]
+                      ? `出口 ${localProxies.find((proxy) => proxy.id === accountProxyIDs[account.id])?.exit_ip ?? '未检测'}`
+                      : '本机网络 / 系统代理'}
+                  </span>
                   <small>{formatDateTime(account.session?.updated_at ?? account.updated_at)}</small>
                 </button>
               ))}
@@ -498,4 +542,15 @@ function formatDateTime(value?: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function routeModeLabel(value: LocalProxyView['route_mode']) {
+  switch (value) {
+    case 'direct':
+      return '直连代理'
+    case 'system':
+      return '强制链式'
+    default:
+      return '自动链式'
+  }
 }

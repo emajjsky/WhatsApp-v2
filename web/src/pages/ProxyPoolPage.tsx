@@ -1,10 +1,12 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   createLocalProxy,
   deleteLocalProxy,
+  getDesktopProxyRuntimeStatus,
   listLocalProxies,
   testLocalProxy,
   updateLocalProxy,
+  type DesktopProxyRuntimeView,
   type LocalProxyView,
 } from '../api/client'
 import { Icon } from '../components/Icon'
@@ -42,6 +44,46 @@ export function ProxyPoolPage() {
   const [busyID, setBusyID] = useState<string>()
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [runtimeStatus, setRuntimeStatus] = useState<DesktopProxyRuntimeView>()
+  const [runtimeLoading, setRuntimeLoading] = useState(false)
+  const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
+
+  const loadRuntimeStatus = useCallback(async (force = false) => {
+    if (!isDesktopRuntime) return
+    setRuntimeLoading(true)
+    setRuntimeStatus((current) => ({
+      mode: current?.mode ?? 'auto',
+      status: 'checking',
+      proxy_url: current?.proxy_url ?? '',
+      proxy_display_url: current?.proxy_display_url ?? '',
+      proxy_rules: current?.proxy_rules ?? '',
+      endpoint_reachable: false,
+      exit_ip: '',
+      route_key: '',
+      checked_at: '',
+      message: force ? '正在强制重新检测本机系统代理...' : '正在检测本机系统代理...',
+    }))
+    try {
+      const response = await getDesktopProxyRuntimeStatus(force)
+      setRuntimeStatus(response)
+    } catch (statusError) {
+      const message = statusError instanceof Error ? statusError.message : '读取本机代理状态失败'
+      setRuntimeStatus((current) => ({
+        mode: current?.mode ?? 'auto',
+        status: 'error',
+        proxy_url: current?.proxy_url ?? '',
+        proxy_display_url: current?.proxy_display_url ?? '',
+        proxy_rules: current?.proxy_rules ?? '',
+        endpoint_reachable: false,
+        exit_ip: '',
+        route_key: '',
+        checked_at: new Date().toISOString(),
+        message,
+      }))
+    } finally {
+      setRuntimeLoading(false)
+    }
+  }, [isDesktopRuntime])
 
   async function load() {
     try {
@@ -58,6 +100,15 @@ export function ProxyPoolPage() {
   useEffect(() => {
     void load()
   }, [])
+
+  useEffect(() => {
+    if (!isDesktopRuntime) return
+    void loadRuntimeStatus()
+    const timer = window.setInterval(() => {
+      void loadRuntimeStatus(true)
+    }, 30_000)
+    return () => window.clearInterval(timer)
+  }, [isDesktopRuntime, loadRuntimeStatus])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -204,6 +255,38 @@ export function ProxyPoolPage() {
         <span className="subtle-text">代理账号密码只保存在当前电脑</span>
       </div>
 
+      {isDesktopRuntime ? (
+        <section className="panel desktop-proxy-runtime-panel">
+          <div className="desktop-proxy-runtime-heading">
+            <div>
+              <p className="eyebrow">实时检测</p>
+              <h3>本机链路状态</h3>
+              <p className="desktop-proxy-runtime-message">{runtimeStatus?.message ?? '正在准备本机代理检测...'}</p>
+            </div>
+            <div className="desktop-proxy-runtime-actions">
+              <span className={`proxy-runtime-badge proxy-runtime-${runtimeStatus?.status ?? 'checking'}`}>
+                {runtimeLoading || runtimeStatus?.status === 'checking' ? '检测中' : runtimeStatusLabel(runtimeStatus?.status)}
+              </span>
+              <button className="secondary-button" type="button" disabled={runtimeLoading} onClick={() => void loadRuntimeStatus(true)}>
+                <Icon name="shield" />
+                {runtimeLoading ? '检测中...' : '立即检测'}
+              </button>
+            </div>
+          </div>
+          <div className="desktop-proxy-runtime-grid">
+            <div><span>当前模式</span><strong>{runtimeModeLabel(runtimeStatus?.mode)}</strong></div>
+            <div><span>系统代理</span><strong>{runtimeStatus?.endpoint_reachable ? '已发现且端口可达' : runtimeStatus?.status === 'direct' ? '未发现 Windows 规则' : '未确认'}</strong></div>
+            <div><span>检测地址</span><strong className="proxy-runtime-value">{runtimeStatus?.proxy_display_url || '无'}</strong></div>
+            <div><span>外层出口 IP</span><strong>{runtimeStatus?.exit_ip || '未返回'}</strong></div>
+            <div><span>最近检测</span><strong>{runtimeStatus?.checked_at ? formatDateTime(runtimeStatus.checked_at) : '尚未完成'}</strong></div>
+          </div>
+          <div className="desktop-proxy-runtime-rules">
+            <span>系统代理规则</span>
+            <code>{runtimeStatus?.proxy_rules || '等待检测结果'}</code>
+          </div>
+        </section>
+      ) : null}
+
       <section className="proxy-workspace">
         <article className="panel proxy-form-panel">
           <div className="panel-heading"><div><p className="eyebrow">{editingID ? '编辑代理' : '新增代理'}</p><h3>{editingID ? '更新固定出口配置' : '添加一个固定出口'}</h3></div></div>
@@ -228,8 +311,8 @@ export function ProxyPoolPage() {
           <div className="proxy-list-scroll">
             {items.length === 0 && !loading ? <p className="subtle-text proxy-empty-state">还没有添加代理。</p> : <div className="proxy-list">{items.map((item) => (
               <div className="proxy-row" key={item.id}>
-                <div><strong>{item.name}</strong><span>{item.scheme.toUpperCase()} · {item.host}:{item.port}</span><span>{routeModeLabel(item.route_mode)}</span><span className={item.enabled ? 'proxy-status-enabled' : 'proxy-status-disabled'}>{item.enabled ? '已启用' : '已停用'}</span></div>
-                <div><span>{item.country ?? '未设置地区'}</span><span>{item.exit_ip ? `出口 ${item.exit_ip}` : '未检测'}</span>{item.last_check_error ? <span className="proxy-error-text">检测失败：{item.last_check_error}</span> : null}</div>
+                <div><strong>{item.name}</strong><span>{item.scheme.toUpperCase()} · {item.host}:{item.port}</span><span>{routeModeLabel(item.route_mode)} · {item.country ?? '未设置地区'}</span><span className={item.enabled ? 'proxy-status-enabled' : 'proxy-status-disabled'}>{item.enabled ? '已启用' : '已停用'}</span></div>
+                <div><span>{item.exit_ip ? `出口 IP ${item.exit_ip}` : '出口 IP 未检测'}</span><span className={item.last_check_error ? 'proxy-error-text' : item.last_checked_at ? 'proxy-status-enabled' : ''}>{proxyCheckLabel(item)}</span>{item.last_check_error ? <span className="proxy-error-text">{item.last_check_error}</span> : null}</div>
                 <div className="button-row"><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => handleEdit(item)}><Icon name="edit" />编辑</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleTest(item)}><Icon name="shield" />{busyID === item.id ? '检测中...' : '检测'}</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleToggle(item)}>{item.enabled ? '停用' : '启用'}</button><button className="danger-button" type="button" disabled={busyID === item.id} onClick={() => void handleDelete(item)}><Icon name="delete" />删除</button></div>
               </div>
             ))}</div>}
@@ -263,4 +346,45 @@ function routeModeLabel(value: LocalProxyView['route_mode']) {
     default:
       return '自动链式'
   }
+}
+
+function runtimeModeLabel(value: DesktopProxyRuntimeView['mode'] | undefined) {
+  switch (value) {
+    case 'direct':
+      return '直连'
+    case 'manual':
+      return '手动代理'
+    default:
+      return '自动检测'
+  }
+}
+
+function runtimeStatusLabel(value: DesktopProxyRuntimeView['status'] | undefined) {
+  switch (value) {
+    case 'detected':
+      return '已检测到'
+    case 'direct':
+      return '直连生效'
+    case 'manual':
+      return '手动生效'
+    case 'unavailable':
+      return '不可用'
+    case 'error':
+      return '检测失败'
+    default:
+      return '待检测'
+  }
+}
+
+function proxyCheckLabel(item: LocalProxyView) {
+  if (item.last_check_error) return '链路检测失败'
+  if (item.last_checked_at) return `链路检测通过 · ${formatDateTime(item.last_checked_at)}`
+  return '尚未检测真实链路'
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return '未记录'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '未记录'
+  return date.toLocaleString('zh-CN', { hour12: false })
 }
