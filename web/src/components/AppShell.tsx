@@ -14,6 +14,7 @@ const baseNavItems: Array<{
   { to: '/chats', label: '对话', icon: 'chat', permission: 'chats' },
   { to: '/scripts', label: '话术', icon: 'script', permission: 'scripts' },
   { to: '/exports', label: '导出', icon: 'export', permission: 'exports' },
+  { to: '/proxies', label: 'IP代理', icon: 'shield', permission: 'accounts' },
 ]
 
 const adminNavItems = [{ to: '/admin', label: '后台', icon: 'admin' as IconName }]
@@ -22,14 +23,16 @@ export function AppShell() {
   const auth = useAuth()
   const navigate = useNavigate()
   const [appVersion, setAppVersion] = useState('')
+  const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
   const userPermissions = new Set<UserPermission>(auth.user?.permissions ?? [])
   const visibleBaseNavItems = auth.cloudAdminOnly
     ? []
     : auth.user?.role === 'admin'
       ? baseNavItems
       : baseNavItems.filter((item) => userPermissions.has(item.permission))
-  const navItems =
-    auth.user?.role === 'admin' ? [...visibleBaseNavItems, ...adminNavItems] : visibleBaseNavItems
+  const navItems = (auth.user?.role === 'admin' ? [...visibleBaseNavItems, ...adminNavItems] : visibleBaseNavItems).filter(
+    (item) => item.to !== '/proxies' || isDesktopRuntime,
+  )
 
   async function handleLogout() {
     await auth.logout()

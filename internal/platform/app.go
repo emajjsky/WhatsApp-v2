@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"whatsapp-agent-platform/internal/accounts"
 	"whatsapp-agent-platform/internal/agents"
@@ -18,6 +19,7 @@ import (
 	"whatsapp-agent-platform/internal/exports"
 	"whatsapp-agent-platform/internal/health"
 	"whatsapp-agent-platform/internal/ingest"
+	"whatsapp-agent-platform/internal/proxies"
 	"whatsapp-agent-platform/internal/scripts"
 	"whatsapp-agent-platform/internal/sessions"
 	"whatsapp-agent-platform/internal/storage"
@@ -44,13 +46,14 @@ func New(cfg config.Config) (*App, error) {
 	logDeploymentSecurityWarnings(cfg, logger)
 
 	var (
-		database        *storage.Postgres
-		sessionManager  *sessions.Manager
-		eventBridge     *sessions.EventBridge
-		deps            RouteDependencies
-		agentAutomation *agents.Automation
-		authService     *auth.Service
-		bootstrapAdmin  auth.User
+		database          *storage.Postgres
+		sessionManager    *sessions.Manager
+		eventBridge       *sessions.EventBridge
+		deps              RouteDependencies
+		agentAutomation   *agents.Automation
+		authService       *auth.Service
+		bootstrapAdmin    auth.User
+		restoreAccountIDs []string
 	)
 
 	if cfg.Database.DSN != "" {
@@ -120,13 +123,35 @@ func New(cfg config.Config) (*App, error) {
 			return nil, err
 		}
 
-		realConnector, err := sessions.NewWhatsmeowConnector(
-			database.DB(),
-			credentialStore,
-			accountPhoneLookup{repository: accountRepo},
-			cfg.Integrations.WhatsAppProxyURL,
-			logger,
-		)
+		var localProxyService *proxies.Service
+		var proxyHandler *proxies.Handler
+		if strings.TrimSpace(cfg.Integrations.LocalProxyCredentialKey) != "" {
+			proxyRepo, proxyErr := proxies.NewRepository(database.DB())
+			if proxyErr != nil {
+				_ = database.Close()
+				return nil, proxyErr
+			}
+			localProxyService, proxyErr = proxies.NewService(proxyRepo, cfg.Integrations.LocalProxyCredentialKey)
+			if proxyErr != nil {
+				_ = database.Close()
+				return nil, proxyErr
+			}
+			proxyHandler = proxies.NewHandler(localProxyService)
+		}
+
+		var realConnector *sessions.WhatsmeowConnector
+		if localProxyService != nil {
+			realConnector, err = sessions.NewWhatsmeowConnectorWithProxyResolver(
+				database.DB(), credentialStore, accountPhoneLookup{repository: accountRepo}, accountProxyResolver{
+					local:    localProxyService,
+					fallback: cfg.Integrations.WhatsAppProxyURL,
+				}, logger,
+			)
+		} else {
+			realConnector, err = sessions.NewWhatsmeowConnector(
+				database.DB(), credentialStore, accountPhoneLookup{repository: accountRepo}, cfg.Integrations.WhatsAppProxyURL, logger,
+			)
+		}
 		if err != nil {
 			_ = database.Close()
 			return nil, err
@@ -158,6 +183,7 @@ func New(cfg config.Config) (*App, error) {
 			_ = database.Close()
 			return nil, err
 		}
+		accountService.SetProxyService(localProxyService)
 
 		accountHandler, err := accounts.NewHandler(accountService)
 		if err != nil {
@@ -269,13 +295,13 @@ func New(cfg config.Config) (*App, error) {
 			_ = database.Close()
 			return nil, err
 		}
+		restoreAccountIDs = make([]string, 0, len(existingAccounts))
 		for _, account := range existingAccounts {
-			if restoreErr := sessionManager.Restore(context.Background(), account.ID); restoreErr != nil {
-				logger.Warn("failed to restore whatsapp session", "account_id", account.ID, "error", restoreErr)
-			}
+			restoreAccountIDs = append(restoreAccountIDs, account.ID)
 		}
 
 		deps.AccountHandler = accountHandler
+		deps.ProxyHandler = proxyHandler
 		deps.AuthHandler = authHandler
 		deps.AuthService = authService
 		deps.AuditHandler = auditHandler
@@ -330,6 +356,21 @@ func New(cfg config.Config) (*App, error) {
 
 	app.logger.Info("application assembled", "http_addr", cfg.HTTP.Address())
 
+	// Restore persisted WhatsApp sessions after the HTTP server can accept requests.
+	// A remote WhatsApp timeout must not prevent the local API from becoming ready.
+	if sessionManager != nil && len(restoreAccountIDs) > 0 {
+		go func(manager *sessions.Manager, accountIDs []string) {
+			for _, accountID := range accountIDs {
+				restoreCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				restoreErr := manager.Restore(restoreCtx, accountID)
+				cancel()
+				if restoreErr != nil {
+					logger.Warn("failed to restore whatsapp session", "account_id", accountID, "error", restoreErr)
+				}
+			}
+		}(sessionManager, restoreAccountIDs)
+	}
+
 	return app, nil
 }
 
@@ -360,6 +401,22 @@ func databaseSQL(database *storage.Postgres) *sql.DB {
 
 type accountPhoneLookup struct {
 	repository *accounts.Repository
+}
+
+type accountProxyResolver struct {
+	local    *proxies.Service
+	fallback string
+}
+
+func (r accountProxyResolver) ResolveProxyURL(ctx context.Context, accountID string) (string, error) {
+	proxyURL, err := r.local.ResolveProxyURL(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	if proxyURL != "" {
+		return proxyURL, nil
+	}
+	return strings.TrimSpace(r.fallback), nil
 }
 
 func (l accountPhoneLookup) LookupPhone(ctx context.Context, accountID string) (*string, error) {

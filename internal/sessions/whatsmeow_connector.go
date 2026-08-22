@@ -28,12 +28,17 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"go.mau.fi/whatsmeow"
+	xproxy "golang.org/x/net/proxy"
 
 	"whatsapp-agent-platform/internal/ingest"
 )
 
 type AccountPhoneLookup interface {
 	LookupPhone(ctx context.Context, accountID string) (*string, error)
+}
+
+type AccountProxyResolver interface {
+	ResolveProxyURL(ctx context.Context, accountID string) (string, error)
 }
 
 type restorableConnector interface {
@@ -57,14 +62,15 @@ type historyChatMeta struct {
 }
 
 type WhatsmeowConnector struct {
-	mu           sync.RWMutex
-	db           *sql.DB
-	container    *sqlstore.Container
-	bindingStore *CredentialStoreAdapter
-	phoneLookup  AccountPhoneLookup
-	proxyURL     string
-	logger       *slog.Logger
-	now          func() time.Time
+	mu            sync.RWMutex
+	db            *sql.DB
+	container     *sqlstore.Container
+	bindingStore  *CredentialStoreAdapter
+	phoneLookup   AccountPhoneLookup
+	proxyURL      string
+	proxyResolver AccountProxyResolver
+	logger        *slog.Logger
+	now           func() time.Time
 
 	sessions map[string]*whatsmeowSession
 	handler  func(Event)
@@ -92,6 +98,27 @@ func NewWhatsmeowConnector(
 	proxyURL string,
 	logger *slog.Logger,
 ) (*WhatsmeowConnector, error) {
+	return newWhatsmeowConnector(db, bindingStore, phoneLookup, proxyURL, nil, logger)
+}
+
+func NewWhatsmeowConnectorWithProxyResolver(
+	db *sql.DB,
+	bindingStore *CredentialStoreAdapter,
+	phoneLookup AccountPhoneLookup,
+	proxyResolver AccountProxyResolver,
+	logger *slog.Logger,
+) (*WhatsmeowConnector, error) {
+	return newWhatsmeowConnector(db, bindingStore, phoneLookup, "", proxyResolver, logger)
+}
+
+func newWhatsmeowConnector(
+	db *sql.DB,
+	bindingStore *CredentialStoreAdapter,
+	phoneLookup AccountPhoneLookup,
+	proxyURL string,
+	proxyResolver AccountProxyResolver,
+	logger *slog.Logger,
+) (*WhatsmeowConnector, error) {
 	if db == nil {
 		return nil, fmt.Errorf("whatsmeow connector requires a database handle")
 	}
@@ -105,15 +132,16 @@ func NewWhatsmeowConnector(
 	}
 
 	return &WhatsmeowConnector{
-		db:           db,
-		container:    container,
-		bindingStore: bindingStore,
-		phoneLookup:  phoneLookup,
-		proxyURL:     strings.TrimSpace(proxyURL),
-		logger:       logger.With("component", "whatsmeow_connector"),
-		now:          func() time.Time { return time.Now().UTC() },
-		sessions:     make(map[string]*whatsmeowSession),
-		handler:      nil,
+		db:            db,
+		container:     container,
+		bindingStore:  bindingStore,
+		phoneLookup:   phoneLookup,
+		proxyURL:      strings.TrimSpace(proxyURL),
+		proxyResolver: proxyResolver,
+		logger:        logger.With("component", "whatsmeow_connector"),
+		now:           func() time.Time { return time.Now().UTC() },
+		sessions:      make(map[string]*whatsmeowSession),
+		handler:       nil,
 	}, nil
 }
 
@@ -123,7 +151,7 @@ func (c *WhatsmeowConnector) SetEventHandler(handler func(Event)) {
 	c.mu.Unlock()
 }
 
-func (c *WhatsmeowConnector) refreshWAVersion(ctx context.Context, force bool) error {
+func (c *WhatsmeowConnector) refreshWAVersion(ctx context.Context, accountID string, force bool) error {
 	c.waVersionMu.Lock()
 	defer c.waVersionMu.Unlock()
 
@@ -134,7 +162,11 @@ func (c *WhatsmeowConnector) refreshWAVersion(ctx context.Context, force bool) e
 	refreshCtx, cancel := context.WithTimeout(ctx, waVersionRefreshTimeout)
 	defer cancel()
 
-	httpClient, err := c.newWAVersionHTTPClient()
+	proxyURL, err := c.resolveProxyURL(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	httpClient, err := c.newWAVersionHTTPClient(proxyURL)
 	if err != nil {
 		return err
 	}
@@ -150,13 +182,13 @@ func (c *WhatsmeowConnector) refreshWAVersion(ctx context.Context, force bool) e
 	return nil
 }
 
-func (c *WhatsmeowConnector) newWAVersionHTTPClient() (*http.Client, error) {
+func (c *WhatsmeowConnector) newWAVersionHTTPClient(proxyURLValue string) (*http.Client, error) {
 	httpClient := newWhatsmeowHTTPClient()
-	if strings.TrimSpace(c.proxyURL) == "" {
+	if strings.TrimSpace(proxyURLValue) == "" {
 		return httpClient, nil
 	}
 
-	proxyURL, err := url.Parse(c.proxyURL)
+	proxyURL, err := url.Parse(proxyURLValue)
 	if err != nil {
 		return nil, fmt.Errorf("parse whatsapp proxy for version refresh: %w", err)
 	}
@@ -166,13 +198,24 @@ func (c *WhatsmeowConnector) newWAVersionHTTPClient() (*http.Client, error) {
 		return nil, fmt.Errorf("unexpected whatsapp http transport %T", httpClient.Transport)
 	}
 	transport = transport.Clone()
-	transport.Proxy = http.ProxyURL(proxyURL)
+	if proxyURL.Scheme == "socks5" {
+		dialer, dialErr := xproxy.FromURL(proxyURL, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
+		if dialErr != nil {
+			return nil, fmt.Errorf("configure whatsapp socks5 version proxy: %w", dialErr)
+		}
+		transport.Proxy = nil
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			return dialer.Dial(network, address)
+		}
+	} else {
+		transport.Proxy = http.ProxyURL(proxyURL)
+	}
 	httpClient.Transport = transport
 	return httpClient, nil
 }
 
 func (c *WhatsmeowConnector) StartPairing(ctx context.Context, accountID string, request StartPairingRequest) (SessionSnapshot, error) {
-	if err := c.refreshWAVersion(ctx, false); err != nil {
+	if err := c.refreshWAVersion(ctx, accountID, false); err != nil {
 		c.logger.Warn("failed to refresh whatsapp web version before pairing", "account_id", accountID, "error", err)
 	}
 
@@ -246,7 +289,7 @@ func (c *WhatsmeowConnector) StartPairing(ctx context.Context, accountID string,
 }
 
 func (c *WhatsmeowConnector) Restore(ctx context.Context, accountID string) error {
-	if err := c.refreshWAVersion(ctx, false); err != nil {
+	if err := c.refreshWAVersion(ctx, accountID, false); err != nil {
 		c.logger.Warn("failed to refresh whatsapp web version before restore", "account_id", accountID, "error", err)
 	}
 
@@ -263,6 +306,26 @@ func (c *WhatsmeowConnector) Restore(ctx context.Context, accountID string) erro
 		return err
 	}
 	return nil
+}
+
+// Reconnect rebuilds the per-account client so a changed proxy takes effect
+// without deleting the WhatsApp device binding or requiring another QR scan.
+func (c *WhatsmeowConnector) Reconnect(ctx context.Context, accountID string) error {
+	c.mu.Lock()
+	session := c.sessions[accountID]
+	delete(c.sessions, accountID)
+	c.mu.Unlock()
+
+	if session != nil {
+		if session.cancelQR != nil {
+			session.cancelQR()
+		}
+		if session.client != nil && session.client.IsConnected() {
+			session.client.Disconnect()
+		}
+	}
+
+	return c.Restore(ctx, accountID)
 }
 
 func (c *WhatsmeowConnector) Status(ctx context.Context, accountID string) (SessionSnapshot, error) {
@@ -569,6 +632,13 @@ func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID s
 	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
 }
 
+func (c *WhatsmeowConnector) resolveProxyURL(ctx context.Context, accountID string) (string, error) {
+	if c.proxyResolver != nil {
+		return c.proxyResolver.ResolveProxyURL(ctx, accountID)
+	}
+	return strings.TrimSpace(c.proxyURL), nil
+}
+
 func (c *WhatsmeowConnector) ListSnapshots(_ context.Context) ([]SessionSnapshot, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -630,12 +700,16 @@ func (c *WhatsmeowConnector) ensureSession(ctx context.Context, accountID string
 
 	client := whatsmeow.NewClient(device, newWhatsmeowLogger(c.logger.With("account_id", accountID)))
 	client.EnableAutoReconnect = true
-	if c.proxyURL == "" {
+	proxyURL, err := c.resolveProxyURL(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL == "" {
 		httpClient := newWhatsmeowHTTPClient()
 		client.SetPreLoginHTTPClient(httpClient)
 		client.SetWebsocketHTTPClient(httpClient)
 		client.SetMediaHTTPClient(httpClient)
-	} else if err := client.SetProxyAddress(c.proxyURL); err != nil {
+	} else if err := client.SetProxyAddress(proxyURL); err != nil {
 		return nil, fmt.Errorf("configure whatsapp proxy: %w", err)
 	}
 	client.AddEventHandler(func(evt any) {
@@ -674,7 +748,7 @@ func (c *WhatsmeowConnector) connectExistingSession(ctx context.Context, account
 	})
 	c.emitSnapshot(snapshot)
 
-	if err := c.refreshWAVersion(ctx, false); err != nil {
+	if err := c.refreshWAVersion(ctx, accountID, false); err != nil {
 		c.logger.Warn("failed to refresh whatsapp web version before reconnect", "account_id", accountID, "error", err)
 	}
 
@@ -687,7 +761,7 @@ func (c *WhatsmeowConnector) connectExistingSession(ctx context.Context, account
 
 func (c *WhatsmeowConnector) startQRFlow(accountID string, firstItem whatsmeow.QRChannelItem) (SessionSnapshot, error) {
 	if firstItem.Event == whatsmeow.QRChannelClientOutdated.Event {
-		if err := c.refreshWAVersion(context.Background(), true); err != nil {
+		if err := c.refreshWAVersion(context.Background(), accountID, true); err != nil {
 			c.logger.Warn("failed to force refresh whatsapp web version after outdated qr event", "account_id", accountID, "error", err)
 		}
 		return SessionSnapshot{}, c.failSnapshot(accountID, "failed", "WhatsApp Web 客户端版本已过期，系统已尝试刷新，请重新点击二维码配对。")
@@ -812,7 +886,7 @@ func (c *WhatsmeowConnector) handleQRChannelItem(accountID string, item whatsmeo
 	case whatsmeow.QRChannelEventError:
 		c.failSnapshot(accountID, "failed", fmt.Sprintf("pairing error: %v", item.Error))
 	case whatsmeow.QRChannelClientOutdated.Event:
-		if err := c.refreshWAVersion(context.Background(), true); err != nil {
+		if err := c.refreshWAVersion(context.Background(), accountID, true); err != nil {
 			c.logger.Warn("failed to force refresh whatsapp web version after outdated qr channel event", "account_id", accountID, "error", err)
 		}
 		c.failSnapshot(accountID, "failed", "WhatsApp Web 客户端版本已过期，系统已尝试刷新，请重新点击二维码配对。")

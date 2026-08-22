@@ -541,7 +541,7 @@ func (a *Automation) AnalyzeDesktopStatusCard(ctx context.Context, input Desktop
 		recentMessages = recentMessages[len(recentMessages)-historyLimit:]
 	}
 	if len(recentMessages) == 0 {
-		return StatusCardView{}, fmt.Errorf("chat has no messages to analyze")
+		return StatusCardView{}, fmt.Errorf("当前对话没有可用于分析的消息")
 	}
 
 	requestID := strings.TrimSpace(input.RequestID)
@@ -618,7 +618,7 @@ func (a *Automation) AnalyzeStatusCard(ctx context.Context, input AnalyzeStatusC
 		return StatusCardView{}, err
 	}
 	if len(messages) == 0 {
-		return StatusCardView{}, fmt.Errorf("chat has no messages to analyze")
+		return StatusCardView{}, fmt.Errorf("当前对话没有可用于分析的消息")
 	}
 
 	response, err := a.runner.AnalyzeStatusCard(ctx, RunnerStatusCardRequest{
@@ -1167,7 +1167,7 @@ func (a *Automation) resolveManualTrigger(
 	}
 
 	if len(recentMessages) == 0 {
-		return manualTrigger{}, nil, fmt.Errorf("chat has no messages to use as agent context")
+		return manualTrigger{}, nil, fmt.Errorf("当前对话没有可用于分析的消息")
 	}
 
 	overrideText := ""
@@ -1184,14 +1184,14 @@ func (a *Automation) resolveManualTrigger(
 			trigger.Text = overrideText
 			return trigger, recentMessages, nil
 		}
-		return manualTrigger{}, nil, fmt.Errorf("chat has no text message to anchor agent run")
+		return manualTrigger{}, nil, fmt.Errorf("当前对话没有可用于生成回复的文字消息")
 	}
 
 	if trigger, ok := latestTextTrigger(recentMessages, true); ok {
 		return trigger, recentMessages, nil
 	}
 
-	return manualTrigger{}, nil, fmt.Errorf("chat has no incoming text message to reply to")
+	return manualTrigger{}, nil, fmt.Errorf("当前对话没有可回复的客户文字消息，请等待客户发送文字消息后再生成")
 }
 
 func (a *Automation) resolveManualRule(

@@ -38,6 +38,24 @@ export interface AccountView {
   session?: SessionView
 }
 
+export interface LocalProxyView {
+  id: string
+  name: string
+  scheme: 'http' | 'https' | 'socks5'
+  host: string
+  port: number
+  username?: string
+  exit_ip?: string
+  country?: string
+  enabled: boolean
+  expires_at?: string
+  last_checked_at?: string
+  last_check_error?: string
+  has_credentials: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface HealthResponse {
   service: string
   environment: string
@@ -872,6 +890,54 @@ export async function deleteAccount(accountId: string) {
 
 export async function getAccountStatus(accountId: string) {
   return request<{ account: AccountView }>(`/api/accounts/${accountId}/status`)
+}
+
+export async function listLocalProxies() {
+  return request<{ proxies: LocalProxyView[] }>('/api/proxies')
+}
+
+export interface CreateLocalProxyPayload {
+  name: string
+  scheme: 'http' | 'https' | 'socks5'
+  host: string
+  port: number
+  username?: string
+  password: string
+  exit_ip?: string
+  country?: string
+  expires_at?: string
+}
+
+export async function createLocalProxy(payload: CreateLocalProxyPayload) {
+  return request<{ proxy: LocalProxyView }>('/api/proxies', { method: 'POST', jsonBody: payload })
+}
+
+export type UpdateLocalProxyPayload = Partial<Omit<CreateLocalProxyPayload, 'password'>> & {
+  password?: string
+  enabled?: boolean
+}
+
+export async function updateLocalProxy(proxyId: string, payload: UpdateLocalProxyPayload) {
+  return request<{ proxy: LocalProxyView }>(`/api/proxies/${proxyId}`, { method: 'PATCH', jsonBody: payload })
+}
+
+export async function deleteLocalProxy(proxyId: string) {
+  return request<void>(`/api/proxies/${proxyId}`, { method: 'DELETE' })
+}
+
+export async function testLocalProxy(proxyId: string) {
+  return request<{ proxy: LocalProxyView }>(`/api/proxies/${proxyId}/test`, { method: 'POST', timeoutMs: 25000 })
+}
+
+export async function getAccountProxy(accountId: string) {
+  return request<{ proxy?: LocalProxyView }>(`/api/accounts/${accountId}/proxy`)
+}
+
+export async function setAccountProxy(accountId: string, proxyId: string) {
+  return request<{ proxy?: LocalProxyView }>(`/api/accounts/${accountId}/proxy`, {
+    method: 'PUT',
+    jsonBody: { proxy_id: proxyId },
+  })
 }
 
 export async function listChats(params: {

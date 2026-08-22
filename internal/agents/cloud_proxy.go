@@ -368,7 +368,7 @@ func (p *CloudProxy) prepareDraftPayload(r *http.Request) (DesktopAgentDraftInpu
 		trigger.Text = strings.TrimSpace(*payload.MessageText)
 	}
 	if strings.TrimSpace(trigger.Text) == "" || !ok {
-		return DesktopAgentDraftInput{}, preparedManualRun{}, fmt.Errorf("no text message is available for agent draft")
+		return DesktopAgentDraftInput{}, preparedManualRun{}, fmt.Errorf("当前对话没有可用于生成回复的客户文字消息，请等待客户发送文字消息后再生成")
 	}
 
 	runID := ids.NewUUID()

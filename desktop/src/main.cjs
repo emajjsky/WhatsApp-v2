@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require('electron')
+const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, ipcMain, session, shell } = require('electron')
 const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const http = require('node:http')
@@ -13,10 +13,35 @@ const POSTGRES_PORT = Number(process.env.WA_DESKTOP_POSTGRES_PORT || 15432)
 const WEB_PORT = Number(process.env.WA_DESKTOP_WEB_PORT || 18100)
 const DATABASE_NAME = 'whatsapp_agent_platform'
 const POSTGRES_SERVICE_NAME = process.env.WA_DESKTOP_POSTGRES_SERVICE || 'WhatsAppAgentPostgres'
+const TRAY_ICON_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAqElEQVR4nO2T2w2AIBAELcX+LNSytAE49nWaGC/xB4GZPWDb/iJrP4+r+l4Dt4mw4KiIC7ckUnBJAtlwVBEJBcyIyAJK0QJucrQTj6Snu5BOT3eBhbtzLYHE85QFRv/ZNTEBZLxNoGp1VABNiozHBZA7AAs4EhE4IzDbHJlTCqwkZpcPBS/hrsBqLSRQSbAwCT6SUNPKcPQ4WuEpCQvuiMTArEgb+LN1A/nLvdQMEJ6pAAAAAElFTkSuQmCC'
 
 const children = new Set()
 let webServer
 let apiProcess
+let mainWindow
+let tray
+let isQuitting = false
+let shutdownStarted = false
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const windows = BrowserWindow.getAllWindows()
+    const window = mainWindow || windows[0]
+    if (!window) {
+      return
+    }
+    if (window.isMinimized()) {
+      window.restore()
+    }
+    window.show()
+    window.focus()
+  })
+}
 
 function repoRoot() {
   return path.resolve(__dirname, '..', '..')
@@ -146,6 +171,25 @@ function userDataRoot() {
 
 function dataRoot() {
   return path.join(userDataRoot(), 'data')
+}
+
+function localProxyCredentialKeyPath() {
+  return path.join(userDataRoot(), 'local-proxy-credential.key')
+}
+
+function localProxyCredentialKey() {
+  ensureDir(userDataRoot())
+  const filePath = localProxyCredentialKeyPath()
+  if (fs.existsSync(filePath)) {
+    const value = fs.readFileSync(filePath, 'utf8').trim()
+    if (value) {
+      return value
+    }
+  }
+
+  const value = crypto.randomBytes(32).toString('base64')
+  fs.writeFileSync(filePath, `${value}\n`, { encoding: 'utf8', mode: 0o600 })
+  return value
 }
 
 function desktopIdentityPath() {
@@ -491,6 +535,40 @@ function configureAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore()
+  }
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function createTray() {
+  if (tray) {
+    return
+  }
+
+  tray = new Tray(nativeImage.createFromBuffer(Buffer.from(TRAY_ICON_PNG_BASE64, 'base64')))
+  tray.setToolTip('WhatsApp Agent')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: '打开主界面', click: showMainWindow },
+      { type: 'separator' },
+      {
+        label: '退出程序',
+        click: () => {
+          quitApplication()
+        },
+      },
+    ]),
+  )
+  tray.on('click', showMainWindow)
+  tray.on('double-click', showMainWindow)
+}
+
 function registerDesktopIPC() {
   ipcMain.handle('desktop-app:version', () => app.getVersion())
   ipcMain.handle('desktop-config:get', async () => desktopRuntimeConfigView())
@@ -546,12 +624,53 @@ async function detectSystemProxyURL(targetURL) {
       return ''
     }
 
-    const proxy = await defaultSession.resolveProxy(targetURL)
-    return firstProxyURL(proxy)
+    const proxyRules = await defaultSession.resolveProxy(targetURL)
+    const proxyURL = firstProxyURL(proxyRules)
+    if (!proxyURL) {
+      appendLog('desktop-network', `No system proxy detected for ${targetURL}; using direct network. Rules: ${proxyRules}\n`)
+      return ''
+    }
+
+    if (!(await isProxyEndpointReachable(proxyURL))) {
+      appendLog('desktop-network', `Detected system proxy is not reachable: ${proxyURL}; using direct network. Rules: ${proxyRules}\n`)
+      return ''
+    }
+
+    appendLog('desktop-network', `Using detected system proxy: ${proxyURL}. Rules: ${proxyRules}\n`)
+    return proxyURL
   } catch (error) {
     appendLog('desktop-network', `Failed to detect system proxy: ${error.message}\n`)
     return ''
   }
+}
+
+function isProxyEndpointReachable(proxyURL) {
+  let parsed
+  try {
+    parsed = new URL(proxyURL)
+  } catch {
+    return Promise.resolve(false)
+  }
+
+  const port = Number(parsed.port || (parsed.protocol.startsWith('socks') ? 1080 : 80))
+  if (!parsed.hostname || !Number.isInteger(port) || port < 1 || port > 65535) {
+    return Promise.resolve(false)
+  }
+
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: parsed.hostname, port })
+    const timer = setTimeout(() => {
+      socket.destroy()
+      resolve(false)
+    }, 1000)
+    const finish = (reachable) => {
+      clearTimeout(timer)
+      socket.destroy()
+      resolve(reachable)
+    }
+    socket.once('connect', () => finish(true))
+    socket.once('error', () => finish(false))
+  })
 }
 
 function firstProxyURL(proxyRules) {
@@ -603,7 +722,10 @@ async function startAPI() {
       AUTH_SECURE_COOKIE: 'false',
       AGENT_RUNNER_BASE_URL: `http://127.0.0.1:${AGENT_PORT}`,
       CLOUD_AUTH_BASE_URL: process.env.CLOUD_AUTH_BASE_URL || config.cloudAuthBaseUrl || '',
+      // Account-level proxy bindings take precedence. The detected Clash/system
+      // proxy remains the fallback for accounts without a local binding.
       WHATSAPP_PROXY_URL: whatsAppProxyURL,
+      LOCAL_PROXY_CREDENTIAL_KEY: localProxyCredentialKey(),
       WA_DESKTOP_DEVICE_ID: identity.deviceID,
       WA_DESKTOP_DEVICE_NAME: identity.deviceName,
       WA_DESKTOP_APP_VERSION: app.getVersion(),
@@ -663,6 +785,18 @@ function contentType(filePath) {
 }
 
 function proxyToAPI(req, res) {
+  const fail = (error) => {
+    if (res.destroyed || res.writableEnded) {
+      return
+    }
+    if (res.headersSent) {
+      res.destroy(error)
+      return
+    }
+    res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ error: error.message }))
+  }
+
   const upstream = http.request(
     {
       hostname: '127.0.0.1',
@@ -672,14 +806,18 @@ function proxyToAPI(req, res) {
       headers: req.headers,
     },
     (apiRes) => {
+      if (res.destroyed || res.writableEnded) {
+        apiRes.destroy()
+        return
+      }
       res.writeHead(apiRes.statusCode || 502, apiRes.headers)
+      apiRes.once('error', fail)
       apiRes.pipe(res)
     },
   )
-  upstream.on('error', (error) => {
-    res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ error: error.message }))
-  })
+  upstream.once('error', fail)
+  req.once('aborted', () => upstream.destroy())
+  req.once('error', (error) => upstream.destroy(error))
   req.pipe(upstream)
 }
 
@@ -694,6 +832,10 @@ function safeStaticPath(urlPath) {
 }
 
 function startWebServer() {
+  if (webServer) {
+    return Promise.resolve()
+  }
+
   const root = requiredFile(path.join(webRoot(), 'index.html'), '前端构建产物')
   const baseDir = path.dirname(root)
 
@@ -724,7 +866,7 @@ function startWebServer() {
 }
 
 async function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
     minWidth: 1180,
@@ -742,6 +884,14 @@ async function createWindow() {
     return { action: 'deny' }
   })
 
+  mainWindow.on('close', (event) => {
+    if (isQuitting) {
+      return
+    }
+    event.preventDefault()
+    mainWindow.hide()
+  })
+
   await mainWindow.loadURL(`http://127.0.0.1:${WEB_PORT}/`)
 }
 
@@ -755,6 +905,7 @@ async function boot() {
   await startAPI()
   await startWebServer()
   await createWindow()
+  createTray()
 }
 
 function stopChildren() {
@@ -764,26 +915,53 @@ function stopChildren() {
   }
   for (const child of children) {
     try {
-      child.kill()
+      if (process.platform === 'win32' && child.pid) {
+        spawnSync(systemTool('taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], {
+          windowsHide: true,
+          stdio: 'ignore',
+        })
+      } else {
+        child.kill()
+      }
     } catch {
       // ignore shutdown races
     }
   }
 }
 
-app.whenReady().then(async () => {
+function quitApplication() {
+  if (shutdownStarted) {
+    return
+  }
+  shutdownStarted = true
+  isQuitting = true
+  if (tray) {
+    tray.destroy()
+    tray = undefined
+  }
+  stopChildren()
+  app.exit(0)
+}
+
+if (gotSingleInstanceLock) {
+  app.whenReady().then(async () => {
   try {
     await boot()
   } catch (error) {
     dialog.showErrorBox('WhatsApp Agent 启动失败', `${error.message}\n\n日志目录：${logRoot()}`)
     app.quit()
   }
-})
+  })
+}
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  // The tray keeps the application alive until the user chooses "退出程序".
 })
 
-app.on('before-quit', stopChildren)
+app.on('before-quit', (event) => {
+  if (shutdownStarted) {
+    return
+  }
+  event.preventDefault()
+  quitApplication()
+})

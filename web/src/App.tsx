@@ -8,6 +8,7 @@ import { ExportsPage } from './pages/ExportsPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ScriptsPage } from './pages/ScriptsPage'
+import { ProxyPoolPage } from './pages/ProxyPoolPage'
 
 export default function App() {
   const auth = useAuth()
@@ -27,6 +28,7 @@ export default function App() {
               <Route path="/chats" element={<ChatsPage />} />
               <Route path="/exports" element={<ExportsPage />} />
               <Route path="/scripts" element={<ScriptsPage />} />
+              <Route path="/proxies" element={<ProxyPoolPage />} />
             </>
           ) : null}
           <Route element={<RequireAdmin />}>

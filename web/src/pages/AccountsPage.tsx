@@ -3,47 +3,25 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   createAccount,
   deleteAccount,
+  getAccountProxy,
+  listLocalProxies,
   listAccounts,
   logoutAccount,
+  setAccountProxy,
   startPairing,
   subscribeLiveUpdates,
   type AccountView,
+  type LocalProxyView,
   type PairingMethod,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
 import { Icon } from '../components/Icon'
 import { StatusBadge } from '../components/StatusBadge'
 
-declare global {
-  interface Window {
-    desktopRuntime?: {
-      platform: string
-      appVersion?: () => Promise<string>
-      getConfig?: () => Promise<DesktopRuntimeConfig>
-      saveConfig?: (config: Partial<DesktopRuntimeConfig>) => Promise<DesktopRuntimeConfig>
-    }
-  }
-}
-
-type DesktopProxyMode = 'auto' | 'direct' | 'manual'
-
-interface DesktopRuntimeConfig {
-  cloudAuthBaseUrl: string
-  whatsAppProxyMode: DesktopProxyMode
-  whatsAppProxyUrl: string
-  resolvedWhatsAppProxyUrl: string
-}
-
 const initialForm = {
   displayName: '',
   phoneNumber: '',
   platformLabel: '',
-}
-
-const initialNetworkSettings = {
-  mode: 'auto' as DesktopProxyMode,
-  proxyUrl: '',
-  resolvedProxyUrl: '',
 }
 
 export function AccountsPage() {
@@ -59,14 +37,15 @@ export function AccountsPage() {
   const [notice, setNotice] = useState<string>()
   const [form, setForm] = useState(initialForm)
   const [qrDataUrl, setQrDataUrl] = useState<string>()
-  const [networkSettings, setNetworkSettings] = useState(initialNetworkSettings)
-  const [loadingNetworkSettings, setLoadingNetworkSettings] = useState(Boolean(window.desktopRuntime?.getConfig))
-  const [savingNetworkSettings, setSavingNetworkSettings] = useState(false)
+  const [localProxies, setLocalProxies] = useState<LocalProxyView[]>([])
+  const [selectedProxyID, setSelectedProxyID] = useState('')
+  const [loadingAccountProxy, setLoadingAccountProxy] = useState(false)
+  const [savingAccountProxy, setSavingAccountProxy] = useState(false)
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) ?? accounts[0]
   const selectedBusyAction = busyAction && busyAction.accountId === selectedAccount?.id ? busyAction.method : undefined
   const isSelectedAccountBusy = selectedBusyAction !== undefined
-  const isDesktopRuntime = Boolean(window.desktopRuntime?.saveConfig)
+  const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
 
   const loadAccounts = useCallback(async (preferredAccountId?: string, background = false) => {
     if (!background) {
@@ -102,6 +81,54 @@ export function AccountsPage() {
   }, [loadAccounts])
 
   useEffect(() => {
+    let cancelled = false
+    async function loadProxyPool() {
+      try {
+        const response = await listLocalProxies()
+        if (!cancelled) {
+          setLocalProxies(response.proxies)
+        }
+      } catch {
+        if (!cancelled) {
+          setLocalProxies([])
+        }
+      }
+    }
+    void loadProxyPool()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!selectedAccount?.id) {
+      setSelectedProxyID('')
+      return
+    }
+    let cancelled = false
+    setLoadingAccountProxy(true)
+    void getAccountProxy(selectedAccount.id)
+      .then((response) => {
+        if (!cancelled) {
+          setSelectedProxyID(response.proxy?.id ?? '')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedProxyID('')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingAccountProxy(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedAccount?.id])
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       void loadAccounts(undefined, true)
     }, 4000)
@@ -114,42 +141,6 @@ export function AccountsPage() {
       void loadAccounts(undefined, true)
     })
   }, [loadAccounts])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadDesktopConfig() {
-      if (!window.desktopRuntime?.getConfig) {
-        setLoadingNetworkSettings(false)
-        return
-      }
-
-      try {
-        const config = await window.desktopRuntime.getConfig()
-        if (!cancelled) {
-          setNetworkSettings({
-            mode: config.whatsAppProxyMode,
-            proxyUrl: config.whatsAppProxyUrl.trim(),
-            resolvedProxyUrl: config.resolvedWhatsAppProxyUrl.trim(),
-          })
-        }
-      } catch (configError) {
-        if (!cancelled) {
-          setError(configError instanceof Error ? configError.message : '读取桌面网络配置失败')
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingNetworkSettings(false)
-        }
-      }
-    }
-
-    void loadDesktopConfig()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -209,37 +200,19 @@ export function AccountsPage() {
     }
   }
 
-  async function handleSaveNetworkSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!window.desktopRuntime?.saveConfig) {
-      return
-    }
-
-    const proxyUrl = networkSettings.mode === 'manual' ? networkSettings.proxyUrl.trim() : ''
-    if (networkSettings.mode === 'manual' && !isValidProxyURL(proxyUrl)) {
-      setError('代理地址格式不正确，请填写 http://127.0.0.1:7890 或 socks5://127.0.0.1:7890')
-      return
-    }
-
-    setSavingNetworkSettings(true)
+  async function handleSaveAccountProxy(value: string) {
+    if (!selectedAccount) return
+    setSavingAccountProxy(true)
     setError(undefined)
     setNotice(undefined)
-
     try {
-      const config = await window.desktopRuntime.saveConfig({
-        whatsAppProxyMode: networkSettings.mode,
-        whatsAppProxyUrl: proxyUrl,
-      })
-      setNetworkSettings({
-        mode: config.whatsAppProxyMode,
-        proxyUrl: config.whatsAppProxyUrl.trim(),
-        resolvedProxyUrl: config.resolvedWhatsAppProxyUrl.trim(),
-      })
-      setNotice('网络连接方式已保存，本地连接服务已重启')
+      await setAccountProxy(selectedAccount.id, value)
+      setSelectedProxyID(value)
+      setNotice(value ? '账号代理已保存，重新连接后生效' : '已改为本机直连，重新连接后生效')
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : '保存桌面网络配置失败')
+      setError(saveError instanceof Error ? saveError.message : '保存账号代理失败')
     } finally {
-      setSavingNetworkSettings(false)
+      setSavingAccountProxy(false)
     }
   }
 
@@ -326,59 +299,32 @@ export function AccountsPage() {
           </form>
 
           {isDesktopRuntime ? (
-            <form className="desktop-network-card" onSubmit={handleSaveNetworkSettings}>
+            <div className="desktop-network-card account-proxy-card">
               <div className="desktop-network-head">
                 <div>
-                  <strong>网络连接方式</strong>
-                  <span>{getNetworkModeLabel(networkSettings.mode, networkSettings.resolvedProxyUrl)}</span>
+                  <strong>账号出口 IP</strong>
+                  <span>{selectedAccount ? '每个 WhatsApp 账号单独选择' : '先选择账号'}</span>
                 </div>
               </div>
-
-              <div className="desktop-network-mode-row">
-                {(['auto', 'direct', 'manual'] as DesktopProxyMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    className={`desktop-network-mode${networkSettings.mode === mode ? ' active' : ''}`}
-                    disabled={loadingNetworkSettings || savingNetworkSettings}
-                    onClick={() =>
-                      setNetworkSettings((current) => ({
-                        ...current,
-                        mode,
-                      }))
-                    }
-                  >
-                    {getProxyModeText(mode)}
-                  </button>
-                ))}
-              </div>
-
-              {networkSettings.mode === 'manual' ? (
-                <label className="field compact-field">
-                  <span>代理地址</span>
-                  <input
-                    value={networkSettings.proxyUrl}
-                    disabled={loadingNetworkSettings || savingNetworkSettings}
-                    onChange={(event) =>
-                      setNetworkSettings((current) => ({
-                        ...current,
-                        proxyUrl: event.target.value,
-                      }))
-                    }
-                    placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7890"
-                  />
-                </label>
-              ) : null}
-
-              <div className="desktop-network-actions">
-                <p className="field-hint">{getNetworkHint(networkSettings.mode, networkSettings.resolvedProxyUrl)}</p>
-                <button className="secondary-button" type="submit" disabled={loadingNetworkSettings || savingNetworkSettings}>
-                  <Icon name="save" />
-                  {savingNetworkSettings ? '保存中...' : '保存'}
-                </button>
-              </div>
-            </form>
+              <label className="field compact-field">
+                <span>当前账号使用的代理</span>
+                <select
+                  value={selectedProxyID}
+                  disabled={!selectedAccount || loadingAccountProxy || savingAccountProxy}
+                  onChange={(event) => void handleSaveAccountProxy(event.target.value)}
+                >
+                  <option value="">本机网络（自动检测系统代理）</option>
+                  {localProxies.map((proxy) => (
+                    <option key={proxy.id} value={proxy.id} disabled={!proxy.enabled}>
+                      {proxy.name} · {proxy.country ?? proxy.host}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="field-hint">已选择独立代理时直接使用该代理，不需要 Clash；未选择时才使用 Clash 或系统代理。</p>
+            </div>
           ) : null}
+
         </article>
 
         <article className="panel panel-stretch">
@@ -539,46 +485,6 @@ export function AccountsPage() {
       {error ? <div className="error-banner">{error}</div> : null}
     </div>
   )
-}
-
-function isValidProxyURL(value: string) {
-  try {
-    const parsed = new URL(value)
-    return ['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol) && parsed.hostname !== ''
-  } catch {
-    return false
-  }
-}
-
-function getProxyModeText(mode: DesktopProxyMode) {
-  switch (mode) {
-    case 'direct':
-      return '直连'
-    case 'manual':
-      return '手动代理'
-    default:
-      return '自动检测'
-  }
-}
-
-function getNetworkModeLabel(mode: DesktopProxyMode, resolvedProxyUrl: string) {
-  if (mode === 'direct') {
-    return '不使用代理'
-  }
-  if (mode === 'manual') {
-    return '使用手动代理'
-  }
-  return resolvedProxyUrl ? '已自动检测到系统代理' : '自动检测，未发现代理则直连'
-}
-
-function getNetworkHint(mode: DesktopProxyMode, resolvedProxyUrl: string) {
-  if (mode === 'manual') {
-    return '只有代理软件没有设置系统代理时，才需要手动填写。'
-  }
-  if (mode === 'direct') {
-    return '国外用户或可直连 WhatsApp 的网络可使用直连。'
-  }
-  return resolvedProxyUrl ? `当前检测到：${resolvedProxyUrl}` : '推荐保持自动；系统没有代理时会自动直连。'
 }
 
 function formatDateTime(value?: string) {

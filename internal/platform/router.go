@@ -13,6 +13,7 @@ import (
 	"whatsapp-agent-platform/internal/config"
 	"whatsapp-agent-platform/internal/exports"
 	"whatsapp-agent-platform/internal/health"
+	"whatsapp-agent-platform/internal/proxies"
 	"whatsapp-agent-platform/internal/scripts"
 )
 
@@ -25,6 +26,7 @@ type RouteDependencies struct {
 	ExportHandler  *exports.Handler
 	AgentHandler   *agents.Handler
 	ScriptHandler  *scripts.Handler
+	ProxyHandler   *proxies.Handler
 	LiveHandler    interface{ RegisterRoutes(mux *http.ServeMux) }
 	HealthService  *health.Service
 }
@@ -52,6 +54,9 @@ func registerRoutes(mux *http.ServeMux, cfg config.Config, _ *slog.Logger, deps 
 	}
 	if deps.ScriptHandler != nil {
 		deps.ScriptHandler.RegisterRoutes(mux)
+	}
+	if deps.ProxyHandler != nil {
+		deps.ProxyHandler.RegisterRoutes(mux)
 	}
 	if deps.LiveHandler != nil {
 		deps.LiveHandler.RegisterRoutes(mux)

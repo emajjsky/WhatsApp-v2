@@ -1,3 +1,10 @@
+!macro customCheckAppRunning
+  DetailPrint "Closing previous WhatsApp Agent processes..."
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "WhatsApp Agent.exe"'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "api-server.exe"'
+  Sleep 1000
+!macroend
+
 !macro customInstall
   DetailPrint "Preparing WhatsApp Agent local PostgreSQL service..."
   nsExec::ExecToLog 'sc stop WhatsAppAgentPostgres'

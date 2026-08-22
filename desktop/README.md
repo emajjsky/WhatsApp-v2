@@ -15,7 +15,7 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.25`.
+Current packaging version: `0.1.37`.
 
 ## Build
 
@@ -72,3 +72,33 @@ WhatsApp sessions and chat data remain local. Cloud only validates user registra
 The cloud admin page supports changing any user's password, including the
 administrator account. Open **用户管理**, select **修改密码**, enter the new
 password twice, and save it. Passwords must contain at least 8 characters.
+
+## 0.1.33 修复
+
+- 生成回复时没有客户文字消息，右下角显示明确的中文错误提示。
+- 安装新版前自动结束旧版 `WhatsApp Agent.exe` 和本地 API 进程，减少“请先退出软件”的安装失败提示。
+- 安装包桌面快捷方式使用与托盘一致的 WhatsApp Agent 图标。
+
+## 0.1.34 代理页面布局
+
+- 新增代理表单改为双列布局，减少页面纵向占用。
+- 已保存代理列表与新增表单同屏显示，并支持独立滚动。
+- 账号连接说明固定完整显示，避免被窗口底部截断。
+
+## 0.1.35 退出与升级修复
+
+- Windows 退出时按进程树结束本地 API、Agent Runner 等子进程，避免客户端主进程退出后留下运行残留。
+- 修正 NSIS 安装器的运行中检查钩子，安装新版前自动结束旧版 `WhatsApp Agent.exe` 及其子进程。
+
+## 0.1.36 本机代理编辑修复
+
+- 已保存代理支持直接编辑，不需要为了更换地址而删除代理。
+- 编辑代理时密码留空表示保持原密码，账号绑定关系不会改变。
+- 代理仍被 WhatsApp 账号绑定时禁止删除，并提示先解除绑定，避免误断连接。
+- 创建或编辑时使用重复名称会提示直接编辑原代理或更换名称。
+
+## 0.1.37 代理删除修复
+
+- 删除代理时，在同一数据库事务内解除当前用户的账号绑定后再删除代理。
+- 不删除 WhatsApp 账号、聊天记录或本地会话数据。
+- 删除后的账号会回到本机网络；如需立即使用新出口，请重新连接账号。

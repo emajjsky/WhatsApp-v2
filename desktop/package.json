@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-agent-desktop",
-  "version": "0.1.25",
+  "version": "0.1.37",
   "private": true,
   "description": "Windows desktop shell for WhatsApp Agent",
   "main": "src/main.cjs",
@@ -20,6 +20,7 @@
   "build": {
     "appId": "com.whatsappagent.desktop",
     "productName": "WhatsApp Agent",
+    "icon": "build/icon.ico",
     "asar": true,
     "directories": {
       "output": "release"

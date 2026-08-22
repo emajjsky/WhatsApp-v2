@@ -119,6 +119,27 @@ func (h *Handler) handleAccountByID(w http.ResponseWriter, r *http.Request) {
 	action := parts[1]
 
 	switch {
+	case r.Method == http.MethodGet && action == "proxy":
+		proxy, err := h.service.GetAccountProxy(r.Context(), accountID)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"proxy": proxy})
+	case r.Method == http.MethodPut && action == "proxy":
+		var payload struct {
+			ProxyID string `json:"proxy_id"`
+		}
+		if err := httpx.DecodeJSON(r, &payload); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		proxy, err := h.service.SetAccountProxy(r.Context(), accountID, payload.ProxyID)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"proxy": proxy})
 	case r.Method == http.MethodGet && action == "status":
 		account, err := h.service.GetAccountStatus(r.Context(), accountID)
 		if err != nil {

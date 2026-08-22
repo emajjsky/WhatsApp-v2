@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"whatsapp-agent-platform/internal/auth"
+	"whatsapp-agent-platform/internal/proxies"
 	"whatsapp-agent-platform/internal/sessions"
 	"whatsapp-agent-platform/internal/support/ids"
 )
@@ -24,13 +25,19 @@ type SessionLifecycle interface {
 type Service struct {
 	repository       *Repository
 	sessionLifecycle SessionLifecycle
+	proxyService     *proxies.Service
 	now              func() time.Time
 }
 
 const (
 	sessionStatusTimeout   = 350 * time.Millisecond
 	logoutOperationTimeout = 8 * time.Second
+	proxyReconnectTimeout  = 30 * time.Second
 )
+
+type sessionReconnector interface {
+	Reconnect(ctx context.Context, accountID string) error
+}
 
 type CreateAccountInput struct {
 	DisplayName   string  `json:"display_name"`
@@ -69,6 +76,10 @@ func NewService(repository *Repository, sessionLifecycle SessionLifecycle) (*Ser
 		sessionLifecycle: sessionLifecycle,
 		now:              func() time.Time { return time.Now().UTC() },
 	}, nil
+}
+
+func (s *Service) SetProxyService(proxyService *proxies.Service) {
+	s.proxyService = proxyService
 }
 
 func (s *Service) CreateAccount(ctx context.Context, input CreateAccountInput) (AccountView, error) {
@@ -184,6 +195,54 @@ func (s *Service) Logout(ctx context.Context, accountID string) (AccountView, er
 		Status:    "logged_out",
 		UpdatedAt: s.now(),
 	}), nil
+}
+
+func (s *Service) GetAccountProxy(ctx context.Context, accountID string) (*proxies.View, error) {
+	if _, err := s.repository.GetByID(ctx, accountID); err != nil {
+		return nil, mapRepositoryError(accountID, err)
+	}
+	if s.proxyService == nil {
+		return nil, fmt.Errorf("local proxy pool is not configured")
+	}
+	return s.proxyService.GetAccountProxy(ctx, accountID)
+}
+
+func (s *Service) SetAccountProxy(ctx context.Context, accountID, proxyID string) (*proxies.View, error) {
+	if _, err := s.repository.GetByID(ctx, accountID); err != nil {
+		return nil, mapRepositoryError(accountID, err)
+	}
+	if s.proxyService == nil {
+		return nil, fmt.Errorf("local proxy pool is not configured")
+	}
+
+	proxyID = strings.TrimSpace(proxyID)
+	current, err := s.proxyService.GetAccountProxy(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	currentID := ""
+	if current != nil {
+		currentID = current.ID
+	}
+	if currentID == proxyID {
+		return current, nil
+	}
+
+	updated, err := s.proxyService.SetAccountProxy(ctx, accountID, proxyID)
+	if err != nil {
+		return nil, err
+	}
+
+	reconnector, ok := s.sessionLifecycle.(sessionReconnector)
+	if !ok {
+		return updated, nil
+	}
+	reconnectCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), proxyReconnectTimeout)
+	defer cancel()
+	if err := reconnector.Reconnect(reconnectCtx, accountID); err != nil {
+		return updated, fmt.Errorf("proxy binding was saved but reconnect failed: %w", err)
+	}
+	return updated, nil
 }
 
 func (s *Service) DeleteAccount(ctx context.Context, accountID string) (AccountView, error) {

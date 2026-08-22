@@ -97,6 +97,10 @@ type restoreSource interface {
 	Restore(ctx context.Context, accountID string) error
 }
 
+type reconnectSource interface {
+	Reconnect(ctx context.Context, accountID string) error
+}
+
 func NewManager(connector Connector, credentialStore *CredentialStoreAdapter, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
@@ -174,6 +178,15 @@ func (m *Manager) Restore(ctx context.Context, accountID string) error {
 	}
 
 	return source.Restore(ctx, accountID)
+}
+
+func (m *Manager) Reconnect(ctx context.Context, accountID string) error {
+	source, ok := m.connector.(reconnectSource)
+	if !ok {
+		return nil
+	}
+
+	return source.Reconnect(ctx, accountID)
 }
 
 func (m *Manager) StartPairing(ctx context.Context, accountID string, request StartPairingRequest) (SessionSnapshot, error) {
