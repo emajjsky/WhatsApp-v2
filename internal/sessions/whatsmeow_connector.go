@@ -31,6 +31,7 @@ import (
 	xproxy "golang.org/x/net/proxy"
 
 	"whatsapp-agent-platform/internal/ingest"
+	"whatsapp-agent-platform/internal/proxychain"
 )
 
 type AccountPhoneLookup interface {
@@ -39,6 +40,17 @@ type AccountPhoneLookup interface {
 
 type AccountProxyResolver interface {
 	ResolveProxyURL(ctx context.Context, accountID string) (string, error)
+}
+
+type AccountProxyPlanResolver interface {
+	ResolveProxyPlan(ctx context.Context, accountID string) (ProxyPlan, error)
+}
+
+type ProxyPlan struct {
+	ProxyURL      string
+	OuterProxyURL string
+	UsesSystem    bool
+	RouteKey      string
 }
 
 type restorableConnector interface {
@@ -77,6 +89,8 @@ type WhatsmeowConnector struct {
 
 	waVersionMu          sync.Mutex
 	waVersionRefreshedAt time.Time
+	routeFingerprints    map[string]string
+	proxyMonitorOnce     sync.Once
 }
 
 const (
@@ -131,18 +145,21 @@ func newWhatsmeowConnector(
 		return nil, fmt.Errorf("upgrade whatsmeow sqlstore: %w", err)
 	}
 
-	return &WhatsmeowConnector{
-		db:            db,
-		container:     container,
-		bindingStore:  bindingStore,
-		phoneLookup:   phoneLookup,
-		proxyURL:      strings.TrimSpace(proxyURL),
-		proxyResolver: proxyResolver,
-		logger:        logger.With("component", "whatsmeow_connector"),
-		now:           func() time.Time { return time.Now().UTC() },
-		sessions:      make(map[string]*whatsmeowSession),
-		handler:       nil,
-	}, nil
+	connector := &WhatsmeowConnector{
+		db:                db,
+		container:         container,
+		bindingStore:      bindingStore,
+		phoneLookup:       phoneLookup,
+		proxyURL:          strings.TrimSpace(proxyURL),
+		proxyResolver:     proxyResolver,
+		logger:            logger.With("component", "whatsmeow_connector"),
+		now:               func() time.Time { return time.Now().UTC() },
+		sessions:          make(map[string]*whatsmeowSession),
+		routeFingerprints: make(map[string]string),
+		handler:           nil,
+	}
+	connector.startProxyMonitor()
+	return connector, nil
 }
 
 func (c *WhatsmeowConnector) SetEventHandler(handler func(Event)) {
@@ -162,11 +179,11 @@ func (c *WhatsmeowConnector) refreshWAVersion(ctx context.Context, accountID str
 	refreshCtx, cancel := context.WithTimeout(ctx, waVersionRefreshTimeout)
 	defer cancel()
 
-	proxyURL, err := c.resolveProxyURL(ctx, accountID)
+	proxyPlan, err := c.resolveProxyPlan(ctx, accountID)
 	if err != nil {
 		return err
 	}
-	httpClient, err := c.newWAVersionHTTPClient(proxyURL)
+	httpClient, err := c.newWAVersionHTTPClient(proxyPlan)
 	if err != nil {
 		return err
 	}
@@ -182,13 +199,13 @@ func (c *WhatsmeowConnector) refreshWAVersion(ctx context.Context, accountID str
 	return nil
 }
 
-func (c *WhatsmeowConnector) newWAVersionHTTPClient(proxyURLValue string) (*http.Client, error) {
+func (c *WhatsmeowConnector) newWAVersionHTTPClient(plan ProxyPlan) (*http.Client, error) {
 	httpClient := newWhatsmeowHTTPClient()
-	if strings.TrimSpace(proxyURLValue) == "" {
+	if strings.TrimSpace(plan.ProxyURL) == "" {
 		return httpClient, nil
 	}
 
-	proxyURL, err := url.Parse(proxyURLValue)
+	proxyURL, err := url.Parse(plan.ProxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse whatsapp proxy for version refresh: %w", err)
 	}
@@ -198,7 +215,14 @@ func (c *WhatsmeowConnector) newWAVersionHTTPClient(proxyURLValue string) (*http
 		return nil, fmt.Errorf("unexpected whatsapp http transport %T", httpClient.Transport)
 	}
 	transport = transport.Clone()
-	if proxyURL.Scheme == "socks5" {
+	if strings.TrimSpace(plan.OuterProxyURL) != "" {
+		dialer, dialErr := proxychain.New(plan.OuterProxyURL, plan.ProxyURL)
+		if dialErr != nil {
+			return nil, fmt.Errorf("configure chained whatsapp version proxy: %w", dialErr)
+		}
+		transport.Proxy = nil
+		transport.DialContext = dialer.DialContext
+	} else if proxyURL.Scheme == "socks5" {
 		dialer, dialErr := xproxy.FromURL(proxyURL, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
 		if dialErr != nil {
 			return nil, fmt.Errorf("configure whatsapp socks5 version proxy: %w", dialErr)
@@ -632,7 +656,93 @@ func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID s
 	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
 }
 
+func (c *WhatsmeowConnector) resolveProxyPlan(ctx context.Context, accountID string) (ProxyPlan, error) {
+	if c.proxyResolver != nil {
+		if resolver, ok := c.proxyResolver.(AccountProxyPlanResolver); ok {
+			return resolver.ResolveProxyPlan(ctx, accountID)
+		}
+		proxyURL, err := c.proxyResolver.ResolveProxyURL(ctx, accountID)
+		return ProxyPlan{ProxyURL: proxyURL}, err
+	}
+	return ProxyPlan{ProxyURL: strings.TrimSpace(c.proxyURL)}, nil
+}
+
 func (c *WhatsmeowConnector) resolveProxyURL(ctx context.Context, accountID string) (string, error) {
+	plan, err := c.resolveProxyPlan(ctx, accountID)
+	return plan.ProxyURL, err
+}
+
+func (c *WhatsmeowConnector) rememberRouteFingerprint(accountID string, plan ProxyPlan) {
+	c.mu.Lock()
+	if c.routeFingerprints == nil {
+		c.routeFingerprints = make(map[string]string)
+	}
+	c.routeFingerprints[accountID] = routeFingerprint(plan)
+	c.mu.Unlock()
+}
+
+func routeFingerprint(plan ProxyPlan) string {
+	if strings.TrimSpace(plan.RouteKey) != "" {
+		return strings.TrimSpace(plan.ProxyURL) + "\x00" + strings.TrimSpace(plan.RouteKey)
+	}
+	return strings.TrimSpace(plan.ProxyURL) + "\x00" + strings.TrimSpace(plan.OuterProxyURL)
+}
+
+func (c *WhatsmeowConnector) startProxyMonitor() {
+	if c.proxyResolver == nil {
+		return
+	}
+	if _, ok := c.proxyResolver.(AccountProxyPlanResolver); !ok {
+		return
+	}
+	c.proxyMonitorOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(20 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				c.refreshProxyRoutes()
+			}
+		}()
+	})
+}
+
+func (c *WhatsmeowConnector) refreshProxyRoutes() {
+	c.mu.RLock()
+	accountIDs := make([]string, 0, len(c.sessions))
+	for accountID := range c.sessions {
+		accountIDs = append(accountIDs, accountID)
+	}
+	c.mu.RUnlock()
+
+	for _, accountID := range accountIDs {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		plan, err := c.resolveProxyPlan(ctx, accountID)
+		cancel()
+		if err != nil {
+			c.logger.Warn("failed to refresh account proxy route", "account_id", accountID, "error", err)
+			continue
+		}
+		fingerprint := routeFingerprint(plan)
+		c.mu.Lock()
+		if c.routeFingerprints == nil {
+			c.routeFingerprints = make(map[string]string)
+		}
+		previous, known := c.routeFingerprints[accountID]
+		c.routeFingerprints[accountID] = fingerprint
+		session := c.sessions[accountID]
+		c.mu.Unlock()
+		if known && previous != fingerprint && session != nil && session.client != nil && session.client.IsConnected() {
+			c.logger.Info("proxy route changed; reconnecting account", "account_id", accountID)
+			go func(id string) {
+				if err := c.Reconnect(context.Background(), id); err != nil {
+					c.logger.Warn("failed to reconnect account after proxy route change", "account_id", id, "error", err)
+				}
+			}(accountID)
+		}
+	}
+}
+
+func (c *WhatsmeowConnector) resolveLegacyProxyURL(ctx context.Context, accountID string) (string, error) {
 	if c.proxyResolver != nil {
 		return c.proxyResolver.ResolveProxyURL(ctx, accountID)
 	}
@@ -700,18 +810,28 @@ func (c *WhatsmeowConnector) ensureSession(ctx context.Context, accountID string
 
 	client := whatsmeow.NewClient(device, newWhatsmeowLogger(c.logger.With("account_id", accountID)))
 	client.EnableAutoReconnect = true
-	proxyURL, err := c.resolveProxyURL(ctx, accountID)
+	proxyPlan, err := c.resolveProxyPlan(ctx, accountID)
 	if err != nil {
 		return nil, err
 	}
-	if proxyURL == "" {
+	if proxyPlan.ProxyURL == "" {
 		httpClient := newWhatsmeowHTTPClient()
 		client.SetPreLoginHTTPClient(httpClient)
 		client.SetWebsocketHTTPClient(httpClient)
 		client.SetMediaHTTPClient(httpClient)
-	} else if err := client.SetProxyAddress(proxyURL); err != nil {
+	} else if proxyPlan.OuterProxyURL != "" {
+		dialer, dialErr := proxychain.New(proxyPlan.OuterProxyURL, proxyPlan.ProxyURL)
+		if dialErr != nil {
+			return nil, fmt.Errorf("configure chained whatsapp proxy: %w", dialErr)
+		}
+		client.SetSOCKSProxy(dialer)
+	} else if err := client.SetProxyAddress(proxyPlan.ProxyURL); err != nil {
 		return nil, fmt.Errorf("configure whatsapp proxy: %w", err)
 	}
+	if c.routeFingerprints == nil {
+		c.routeFingerprints = make(map[string]string)
+	}
+	c.routeFingerprints[accountID] = routeFingerprint(proxyPlan)
 	client.AddEventHandler(func(evt any) {
 		c.handleWhatsmeowEvent(accountID, evt)
 	})

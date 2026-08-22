@@ -34,9 +34,9 @@ func (r *Repository) Create(ctx context.Context, proxy Proxy) error {
 	const query = `
 INSERT INTO local_proxy_endpoints (
     id, user_id, name, scheme, host, port, username, password_ciphertext,
-    exit_ip, country, enabled, expires_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
-	_, err = r.db.ExecContext(ctx, query, proxy.ID, userID, proxy.Name, proxy.Scheme, proxy.Host, proxy.Port, proxy.Username, proxy.PasswordCiphertext, proxy.ExitIP, proxy.Country, proxy.Enabled, proxy.ExpiresAt)
+    route_mode, exit_ip, country, enabled, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+	_, err = r.db.ExecContext(ctx, query, proxy.ID, userID, proxy.Name, proxy.Scheme, proxy.Host, proxy.Port, proxy.Username, proxy.PasswordCiphertext, proxy.RouteMode, proxy.ExitIP, proxy.Country, proxy.Enabled, proxy.ExpiresAt)
 	if err != nil {
 		return fmt.Errorf("create local proxy %q: %w", proxy.ID, err)
 	}
@@ -85,10 +85,10 @@ func (r *Repository) Update(ctx context.Context, proxy Proxy) error {
 	const query = `
 UPDATE local_proxy_endpoints
 SET name = $3, scheme = $4, host = $5, port = $6, username = $7,
-    password_ciphertext = $8, exit_ip = $9, country = $10, enabled = $11,
-    expires_at = $12, updated_at = NOW()
+    password_ciphertext = $8, route_mode = $9, exit_ip = $10, country = $11, enabled = $12,
+    expires_at = $13, updated_at = NOW()
 WHERE id = $1 AND user_id = $2`
-	result, err := r.db.ExecContext(ctx, query, proxy.ID, userID, proxy.Name, proxy.Scheme, proxy.Host, proxy.Port, proxy.Username, proxy.PasswordCiphertext, proxy.ExitIP, proxy.Country, proxy.Enabled, proxy.ExpiresAt)
+	result, err := r.db.ExecContext(ctx, query, proxy.ID, userID, proxy.Name, proxy.Scheme, proxy.Host, proxy.Port, proxy.Username, proxy.PasswordCiphertext, proxy.RouteMode, proxy.ExitIP, proxy.Country, proxy.Enabled, proxy.ExpiresAt)
 	if err != nil {
 		return fmt.Errorf("update local proxy %q: %w", proxy.ID, err)
 	}
@@ -212,6 +212,7 @@ SELECT local_proxy_endpoints.id,
        local_proxy_endpoints.port,
        local_proxy_endpoints.username,
        local_proxy_endpoints.password_ciphertext,
+       local_proxy_endpoints.route_mode,
        local_proxy_endpoints.exit_ip,
        local_proxy_endpoints.country,
        local_proxy_endpoints.enabled,
@@ -230,7 +231,7 @@ func scanProxy(row rowScanner) (Proxy, error) {
 	var item Proxy
 	var exitIP, country, lastError sql.NullString
 	var expiresAt, checkedAt sql.NullTime
-	if err := row.Scan(&item.ID, &item.UserID, &item.Name, &item.Scheme, &item.Host, &item.Port, &item.Username, &item.PasswordCiphertext, &exitIP, &country, &item.Enabled, &expiresAt, &checkedAt, &lastError, &item.CreatedAt, &item.UpdatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.UserID, &item.Name, &item.Scheme, &item.Host, &item.Port, &item.Username, &item.PasswordCiphertext, &item.RouteMode, &exitIP, &country, &item.Enabled, &expiresAt, &checkedAt, &lastError, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return Proxy{}, err
 	}
 	item.ExitIP = nullableString(exitIP)

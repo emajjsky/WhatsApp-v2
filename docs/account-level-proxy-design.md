@@ -1,6 +1,6 @@
 # WhatsApp 一账号一固定 IP 方案
 
-更新日期：2026-08-20
+更新日期：2026-08-22
 
 ## 目标
 
@@ -10,7 +10,7 @@
 
 ## 当前能力
 
-Electron-desktop 已支持本地代理池和账号级绑定。代理地址、账号和密码保存在客户端本机，密码使用本机生成的 AES-256-GCM 密钥加密；未绑定代理的账号使用本机直连。切换绑定后，客户端会重建该账号连接，但不会删除 WhatsApp 设备凭据。
+Electron-desktop 已支持本地代理池和账号级绑定。代理地址、账号和密码保存在客户端本机，密码使用本机生成的 AES-256-GCM 密钥加密；未绑定代理的账号使用本机网络或系统代理。每条代理支持 `auto`、`direct`、`system` 三种路由模式，自动模式会根据本机 Clash/系统代理是否可用决定直连或链式。切换绑定或检测到 Clash 入口变化后，客户端会重建该账号连接，但不会删除 WhatsApp 设备凭据。
 
 云端不保存本地代理凭据，也不承载桌面端 WhatsApp 长连接。`WHATSAPP_PROXY_URL` 仅保留给没有启用本地代理池的开发或旧版启动方式。
 
@@ -41,15 +41,23 @@ Electron-desktop 已支持本地代理池和账号级绑定。代理地址、账
 
 每个本地 WhatsApp 账号继续拥有独立的 `whatsmeow.Client`。连接前，客户端使用云端授权身份取得该账号的代理配置，再为这个客户端实例设置独立 transport。
 
-实现接口建议从当前全局字符串改为：
+当前实现已经从全局字符串扩展为按账号解析连接计划：
 
 ```go
 type AccountProxyResolver interface {
-    ResolveProxy(ctx context.Context, accountID string) (*ProxyConfig, error)
+    ResolveProxyPlan(ctx context.Context, accountID string) (ProxyPlan, error)
 }
 ```
 
-`WhatsmeowConnector` 在创建或恢复账号会话时按 `accountID` 解析代理。二维码登录、WebSocket、历史同步、媒体上传下载、WhatsApp Web 版本检测都必须使用同一个账号代理。
+`WhatsmeowConnector` 在创建或恢复账号会话时按 `accountID` 解析代理。二维码登录、WebSocket、历史同步、媒体上传下载、WhatsApp Web 版本检测都使用同一个账号代理计划。桌面端通过本机运行时接口动态提供当前系统代理，不把 Clash 订阅或代理密码上传云端。
+
+### 路由模式
+
+- `auto`：检测到本机 Clash/系统代理时，使用 `系统代理 → 账号代理`；没有系统代理时，直接使用账号代理。
+- `direct`：始终直接连接账号代理，适合境外网络或不需要链式的环境。
+- `system`：始终要求经过本机 Clash/系统代理；系统代理不可用时失败，不回退到本机出口。
+
+Clash 节点切换不会在同一条 TCP 长连接上瞬移出口。客户端每 20 秒检查当前系统代理入口，发现变化后重连受影响账号，使新的 WhatsApp 连接跟随新节点。
 
 ## 粘性规则
 

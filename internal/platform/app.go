@@ -136,6 +136,7 @@ func New(cfg config.Config) (*App, error) {
 				_ = database.Close()
 				return nil, proxyErr
 			}
+			localProxyService.SetSystemProxyProvider(newSystemProxyProvider(cfg.Integrations.SystemProxyProviderURL).Resolve)
 			proxyHandler = proxies.NewHandler(localProxyService)
 		}
 
@@ -145,6 +146,7 @@ func New(cfg config.Config) (*App, error) {
 				database.DB(), credentialStore, accountPhoneLookup{repository: accountRepo}, accountProxyResolver{
 					local:    localProxyService,
 					fallback: cfg.Integrations.WhatsAppProxyURL,
+					provider: newSystemProxyProvider(cfg.Integrations.SystemProxyProviderURL),
 				}, logger,
 			)
 		} else {
@@ -406,17 +408,47 @@ type accountPhoneLookup struct {
 type accountProxyResolver struct {
 	local    *proxies.Service
 	fallback string
+	provider systemProxyProvider
 }
 
 func (r accountProxyResolver) ResolveProxyURL(ctx context.Context, accountID string) (string, error) {
-	proxyURL, err := r.local.ResolveProxyURL(ctx, accountID)
+	plan, err := r.ResolveProxyPlan(ctx, accountID)
 	if err != nil {
 		return "", err
 	}
-	if proxyURL != "" {
-		return proxyURL, nil
+	return plan.ProxyURL, nil
+}
+
+func (r accountProxyResolver) ResolveProxyPlan(ctx context.Context, accountID string) (sessions.ProxyPlan, error) {
+	localPlan, err := r.local.ResolveProxyPlan(ctx, accountID)
+	if err != nil {
+		return sessions.ProxyPlan{}, err
 	}
-	return strings.TrimSpace(r.fallback), nil
+
+	if localPlan.ProxyURL != "" {
+		switch localPlan.RouteMode {
+		case proxies.RouteModeDirect:
+			return sessions.ProxyPlan{ProxyURL: localPlan.ProxyURL}, nil
+		}
+	}
+	outerRoute, providerErr := r.provider.ResolveRoute(ctx)
+	if providerErr != nil {
+		return sessions.ProxyPlan{}, providerErr
+	}
+
+	if localPlan.ProxyURL != "" {
+		if localPlan.RouteMode == proxies.RouteModeSystem && outerRoute.ProxyURL == "" {
+			return sessions.ProxyPlan{}, fmt.Errorf("代理“通过系统代理链式”需要先启用可用的 Clash/系统代理")
+		}
+		if outerRoute.ProxyURL != "" {
+			return sessions.ProxyPlan{ProxyURL: localPlan.ProxyURL, OuterProxyURL: outerRoute.ProxyURL, UsesSystem: true, RouteKey: outerRoute.RouteKey}, nil
+		}
+		return sessions.ProxyPlan{ProxyURL: localPlan.ProxyURL}, nil
+	}
+	if outerRoute.ProxyURL != "" {
+		return sessions.ProxyPlan{ProxyURL: outerRoute.ProxyURL, UsesSystem: true, RouteKey: outerRoute.RouteKey}, nil
+	}
+	return sessions.ProxyPlan{ProxyURL: strings.TrimSpace(r.fallback)}, nil
 }
 
 func (l accountPhoneLookup) LookupPhone(ctx context.Context, accountID string) (*string, error) {

@@ -15,7 +15,7 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.37`.
+Current packaging version: `0.1.38`.
 
 ## Build
 
@@ -102,3 +102,11 @@ password twice, and save it. Passwords must contain at least 8 characters.
 - 删除代理时，在同一数据库事务内解除当前用户的账号绑定后再删除代理。
 - 不删除 WhatsApp 账号、聊天记录或本地会话数据。
 - 删除后的账号会回到本机网络；如需立即使用新出口，请重新连接账号。
+
+## 0.1.38 自动链式代理（开发中）
+
+- IP 代理页面增加连接方式：自动判断、直连代理、强制通过 Clash/系统代理链式。
+- 客户端自动读取 Windows 系统代理/Clash 当前入口，用户不需要手工填写 Clash 端口。
+- 自动模式在境内有 Clash 时走“Clash → 账号独立代理”，境外没有系统代理时直接走账号代理。
+- Clash 节点变化后，已连接账号会自动重连以使用新路径。
+- 每个账号仍必须绑定不同的独立代理，单个 Clash 节点不能提供多个独立出口 IP。

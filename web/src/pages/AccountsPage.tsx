@@ -316,12 +316,12 @@ export function AccountsPage() {
                   <option value="">本机网络（自动检测系统代理）</option>
                   {localProxies.map((proxy) => (
                     <option key={proxy.id} value={proxy.id} disabled={!proxy.enabled}>
-                      {proxy.name} · {proxy.country ?? proxy.host}
+                      {proxy.name} · {proxy.country ?? proxy.host} · {proxy.route_mode === 'direct' ? '直连' : proxy.route_mode === 'system' ? '强制链式' : '自动链式'}
                     </option>
                   ))}
                 </select>
               </label>
-              <p className="field-hint">已选择独立代理时直接使用该代理，不需要 Clash；未选择时才使用 Clash 或系统代理。</p>
+              <p className="field-hint">自动链式会检测本机 Clash/系统代理：检测到则先经过它，再连接此账号的独立出口；境外没有系统代理时自动直连。Clash 切换节点后已连接账号会自动重连。</p>
             </div>
           ) : null}
 

@@ -10,6 +10,7 @@ import {
 import { Icon } from '../components/Icon'
 
 type Scheme = 'http' | 'https' | 'socks5'
+type RouteMode = 'auto' | 'direct' | 'system'
 
 const initialForm = {
   name: '',
@@ -21,6 +22,7 @@ const initialForm = {
   exitIP: '',
   country: '',
   expiresAt: '',
+  routeMode: 'auto' as RouteMode,
   connectionString: '',
 }
 
@@ -72,6 +74,7 @@ export function ProxyPoolPage() {
         exit_ip: form.exitIP.trim() || undefined,
         country: form.country.trim() || undefined,
         expires_at: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
+        route_mode: form.routeMode,
       }
       if (editingID) {
         await updateLocalProxy(editingID, { ...payload, password: form.password.trim() || undefined })
@@ -102,6 +105,7 @@ export function ProxyPoolPage() {
       exitIP: item.exit_ip ?? '',
       country: item.country ?? '',
       expiresAt: item.expires_at ? toDateTimeLocal(item.expires_at) : '',
+      routeMode: item.route_mode ?? 'auto',
       connectionString: '',
     })
     setError('')
@@ -214,6 +218,7 @@ export function ProxyPoolPage() {
             <label className="field"><span>出口 IP</span><input value={form.exitIP} onChange={(e) => setForm({ ...form, exitIP: e.target.value })} placeholder="可选，用于展示" /></label>
             <label className="field"><span>国家地区</span><input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="印度尼西亚-日惹" /></label>
             <label className="field"><span>有效期</span><input type="datetime-local" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} /></label>
+            <label className="field"><span>连接方式</span><select value={form.routeMode} onChange={(e) => setForm({ ...form, routeMode: e.target.value as RouteMode })}><option value="auto">自动判断（有 Clash 就链式）</option><option value="direct">直连代理</option><option value="system">强制通过 Clash/系统代理链式</option></select></label>
             <div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name={editingID ? 'check' : 'plus'} />{saving ? '保存中...' : editingID ? '保存修改' : '保存到本机'}</button>{editingID ? <button className="secondary-button" type="button" onClick={cancelEdit}>取消编辑</button> : null}</div>
           </form>
         </article>
@@ -223,7 +228,7 @@ export function ProxyPoolPage() {
           <div className="proxy-list-scroll">
             {items.length === 0 && !loading ? <p className="subtle-text proxy-empty-state">还没有添加代理。</p> : <div className="proxy-list">{items.map((item) => (
               <div className="proxy-row" key={item.id}>
-                <div><strong>{item.name}</strong><span>{item.scheme.toUpperCase()} · {item.host}:{item.port}</span><span className={item.enabled ? 'proxy-status-enabled' : 'proxy-status-disabled'}>{item.enabled ? '已启用' : '已停用'}</span></div>
+                <div><strong>{item.name}</strong><span>{item.scheme.toUpperCase()} · {item.host}:{item.port}</span><span>{routeModeLabel(item.route_mode)}</span><span className={item.enabled ? 'proxy-status-enabled' : 'proxy-status-disabled'}>{item.enabled ? '已启用' : '已停用'}</span></div>
                 <div><span>{item.country ?? '未设置地区'}</span><span>{item.exit_ip ? `出口 ${item.exit_ip}` : '未检测'}</span>{item.last_check_error ? <span className="proxy-error-text">检测失败：{item.last_check_error}</span> : null}</div>
                 <div className="button-row"><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => handleEdit(item)}><Icon name="edit" />编辑</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleTest(item)}><Icon name="shield" />{busyID === item.id ? '检测中...' : '检测'}</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleToggle(item)}>{item.enabled ? '停用' : '启用'}</button><button className="danger-button" type="button" disabled={busyID === item.id} onClick={() => void handleDelete(item)}><Icon name="delete" />删除</button></div>
               </div>
@@ -235,10 +240,11 @@ export function ProxyPoolPage() {
       <section className="panel proxy-help-panel">
         <div className="panel-heading"><div><p className="eyebrow">使用规则</p><h3>账号连接说明</h3></div></div>
         <div className="proxy-rules-grid">
-          <div className="proxy-rule-item"><strong>绑定后</strong><p>账号直接使用所选出口 IP，不依赖 Clash。</p></div>
+          <div className="proxy-rule-item"><strong>自动判断</strong><p>检测到本机 Clash/系统代理时，账号通过它链式连接独立代理。</p></div>
+          <div className="proxy-rule-item"><strong>直连</strong><p>境外网络可直接连接账号绑定的独立代理。</p></div>
           <div className="proxy-rule-item"><strong>不绑定</strong><p>账号使用本机网络或 Clash 系统代理。</p></div>
           <div className="proxy-rule-item"><strong>代理失败</strong><p>不会自动回退到本机 IP。</p></div>
-          <div className="proxy-rule-item"><strong>切换代理</strong><p>退出并重新连接账号后生效。</p></div>
+          <div className="proxy-rule-item"><strong>切换节点</strong><p>Clash 节点变化后，已连接账号会自动重连并跟随新路径。</p></div>
         </div>
       </section>
 
@@ -246,4 +252,15 @@ export function ProxyPoolPage() {
       {error ? <div className="error-banner">{error}</div> : null}
     </div>
   )
+}
+
+function routeModeLabel(value: LocalProxyView['route_mode']) {
+  switch (value) {
+    case 'direct':
+      return '直连'
+    case 'system':
+      return '强制链式'
+    default:
+      return '自动链式'
+  }
 }

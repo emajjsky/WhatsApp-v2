@@ -52,6 +52,7 @@ export interface LocalProxyView {
   last_checked_at?: string
   last_check_error?: string
   has_credentials: boolean
+  route_mode: 'auto' | 'direct' | 'system'
   created_at: string
   updated_at: string
 }
@@ -906,6 +907,7 @@ export interface CreateLocalProxyPayload {
   exit_ip?: string
   country?: string
   expires_at?: string
+  route_mode?: 'auto' | 'direct' | 'system'
 }
 
 export async function createLocalProxy(payload: CreateLocalProxyPayload) {

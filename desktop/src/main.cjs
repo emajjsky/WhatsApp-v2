@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, ipcMain, session, shell } = require('electron')
+const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, ipcMain, session, shell, net: electronNet } = require('electron')
 const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const http = require('node:http')
@@ -23,6 +23,7 @@ let mainWindow
 let tray
 let isQuitting = false
 let shutdownStarted = false
+let systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: 0 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -587,6 +588,57 @@ async function desktopRuntimeConfigView() {
   }
 }
 
+async function systemProxyRuntimeView() {
+  const proxyURL = await resolveWhatsAppProxyURL()
+  return {
+    proxy_url: proxyURL,
+    route_key: await resolveSystemProxyRouteKey(proxyURL),
+  }
+}
+
+async function resolveSystemProxyRouteKey(proxyURL) {
+  if (!proxyURL) {
+    systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: Date.now() }
+    return ''
+  }
+  if (systemProxyRouteCache.proxyURL === proxyURL && Date.now() - systemProxyRouteCache.checkedAt < 15000) {
+    return systemProxyRouteCache.routeKey
+  }
+
+  const routeKey = await new Promise((resolve) => {
+    let request
+    try {
+      request = electronNet.request({ url: 'https://api.ipify.org', session: session.defaultSession })
+    } catch {
+      resolve(proxyURL)
+      return
+    }
+    let body = ''
+    const timer = setTimeout(() => {
+      request.abort()
+      resolve(proxyURL)
+    }, 5000)
+    request.on('response', (response) => {
+      response.on('data', (chunk) => {
+        body += chunk.toString()
+        if (body.length > 64) body = body.slice(0, 64)
+      })
+      response.on('end', () => {
+        clearTimeout(timer)
+        const exitIP = body.trim()
+        resolve(response.statusCode === 200 && exitIP ? `${proxyURL}\x00${exitIP}` : proxyURL)
+      })
+    })
+    request.on('error', () => {
+      clearTimeout(timer)
+      resolve(proxyURL)
+    })
+    request.end()
+  })
+  systemProxyRouteCache = { proxyURL, routeKey, checkedAt: Date.now() }
+  return routeKey
+}
+
 function startAgentRunner() {
   const pythonExe = requiredFile(path.join(runtimeRoot(), 'python', 'python.exe'), 'Python 运行时')
   requiredFile(path.join(runtimeRoot(), 'agent_runner', 'app.py'), 'agent_runner')
@@ -699,7 +751,9 @@ function firstProxyURL(proxyRules) {
 async function startAPI() {
   const identity = desktopIdentity()
   const config = desktopConfig()
-  const whatsAppProxyURL = process.env.WHATSAPP_PROXY_URL || (await resolveWhatsAppProxyURL())
+  const proxyMode = normalizeProxyMode(configString(config, 'whatsAppProxyMode', 'proxyMode'))
+  const configuredProxyURL = configString(config, 'whatsAppProxyUrl', 'whatsappProxyUrl', 'whatsAppProxyURL', 'proxyUrl')
+  const whatsAppProxyURL = process.env.WHATSAPP_PROXY_URL || (proxyMode === 'manual' ? configuredProxyURL : '')
   const apiExe = requiredFile(path.join(runtimeRoot(), 'api', 'api-server.exe'), '本地 API 服务')
   ensureDir(dataRoot())
   apiProcess = spawnManaged('api-server', apiExe, [], {
@@ -722,9 +776,10 @@ async function startAPI() {
       AUTH_SECURE_COOKIE: 'false',
       AGENT_RUNNER_BASE_URL: `http://127.0.0.1:${AGENT_PORT}`,
       CLOUD_AUTH_BASE_URL: process.env.CLOUD_AUTH_BASE_URL || config.cloudAuthBaseUrl || '',
-      // Account-level proxy bindings take precedence. The detected Clash/system
-      // proxy remains the fallback for accounts without a local binding.
+      // The desktop endpoint dynamically supplies the current Clash/system
+      // proxy so account connections follow node changes without restarting.
       WHATSAPP_PROXY_URL: whatsAppProxyURL,
+      SYSTEM_PROXY_PROVIDER_URL: `http://127.0.0.1:${WEB_PORT}/desktop/runtime-proxy`,
       LOCAL_PROXY_CREDENTIAL_KEY: localProxyCredentialKey(),
       WA_DESKTOP_DEVICE_ID: identity.deviceID,
       WA_DESKTOP_DEVICE_NAME: identity.deviceName,
@@ -840,6 +895,23 @@ function startWebServer() {
   const baseDir = path.dirname(root)
 
   webServer = http.createServer((req, res) => {
+    if (req.url === '/desktop/runtime-proxy') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { allow: 'GET' })
+        res.end()
+        return
+      }
+      void systemProxyRuntimeView()
+        .then((payload) => {
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+          res.end(JSON.stringify(payload))
+        })
+        .catch((error) => {
+          res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ error: error.message }))
+        })
+      return
+    }
     if (req.url.startsWith('/api/') || req.url === '/healthz') {
       proxyToAPI(req, res)
       return
@@ -902,8 +974,8 @@ async function boot() {
   registerDesktopIPC()
   await startPostgresFixed()
   await startAgentRunner()
-  await startAPI()
   await startWebServer()
+  await startAPI()
   await createWindow()
   createTray()
 }

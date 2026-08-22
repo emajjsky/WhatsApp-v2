@@ -14,14 +14,21 @@ import (
 	"time"
 
 	xproxy "golang.org/x/net/proxy"
+	"whatsapp-agent-platform/internal/proxychain"
 	"whatsapp-agent-platform/internal/support/ids"
 )
 
 var ErrProxyNotFound = errors.New("proxy not found")
 
+type Plan struct {
+	ProxyURL  string
+	RouteMode RouteMode
+}
+
 type Service struct {
-	repository *Repository
-	secrets    *secretBox
+	repository  *Repository
+	secrets     *secretBox
+	systemProxy func(context.Context) (string, error)
 }
 
 func NewService(repository *Repository, encodedKey string) (*Service, error) {
@@ -33,6 +40,10 @@ func NewService(repository *Repository, encodedKey string) (*Service, error) {
 		return nil, err
 	}
 	return &Service{repository: repository, secrets: secrets}, nil
+}
+
+func (s *Service) SetSystemProxyProvider(provider func(context.Context) (string, error)) {
+	s.systemProxy = provider
 }
 
 func (s *Service) List(ctx context.Context) ([]View, error) {
@@ -84,6 +95,9 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Vie
 		if err != nil {
 			return View{}, fmt.Errorf("encrypt proxy password: %w", err)
 		}
+	}
+	if input.RouteMode != nil {
+		proxy.RouteMode = normalizeRouteMode(*input.RouteMode)
 	}
 	if input.ExitIP != nil {
 		proxy.ExitIP = normalizedPointer(input.ExitIP)
@@ -140,24 +154,29 @@ func (s *Service) SetAccountProxy(ctx context.Context, accountID, proxyID string
 }
 
 func (s *Service) ResolveProxyURL(ctx context.Context, accountID string) (string, error) {
+	plan, err := s.ResolveProxyPlan(ctx, accountID)
+	return plan.ProxyURL, err
+}
+
+func (s *Service) ResolveProxyPlan(ctx context.Context, accountID string) (Plan, error) {
 	item, err := s.repository.ResolveBinding(ctx, accountID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return Plan{}, nil
 	}
 	if err != nil {
-		return "", err
+		return Plan{}, err
 	}
 	if !item.Enabled {
-		return "", fmt.Errorf("bound proxy %q is disabled", item.Name)
+		return Plan{}, fmt.Errorf("bound proxy %q is disabled", item.Name)
 	}
 	if item.ExpiresAt != nil && !item.ExpiresAt.After(time.Now()) {
-		return "", fmt.Errorf("bound proxy %q has expired", item.Name)
+		return Plan{}, fmt.Errorf("bound proxy %q has expired", item.Name)
 	}
 	password, err := s.secrets.open(item.PasswordCiphertext)
 	if err != nil {
-		return "", err
+		return Plan{}, err
 	}
-	return buildProxyURL(item.Scheme, item.Host, item.Port, item.Username, password), nil
+	return Plan{ProxyURL: buildProxyURL(item.Scheme, item.Host, item.Port, item.Username, password), RouteMode: normalizeRouteMode(item.RouteMode)}, nil
 }
 
 func (s *Service) Test(ctx context.Context, id string) (View, error) {
@@ -175,7 +194,24 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 		return View{}, fmt.Errorf("parse proxy URL: %w", err)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if parsed.Scheme == "socks5" {
+	outerProxyURL := ""
+	if normalizeRouteMode(item.RouteMode) != RouteModeDirect && s.systemProxy != nil {
+		outerProxyURL, err = s.systemProxy(ctx)
+		if err != nil {
+			return View{}, fmt.Errorf("detect system proxy for test: %w", err)
+		}
+		if normalizeRouteMode(item.RouteMode) == RouteModeSystem && strings.TrimSpace(outerProxyURL) == "" {
+			return View{}, fmt.Errorf("代理“通过系统代理链式”需要先启用可用的 Clash/系统代理")
+		}
+	}
+	if strings.TrimSpace(outerProxyURL) != "" {
+		dialer, dialErr := proxychain.New(outerProxyURL, proxyURL)
+		if dialErr != nil {
+			return View{}, fmt.Errorf("configure chained test proxy: %w", dialErr)
+		}
+		transport.Proxy = nil
+		transport.DialContext = dialer.DialContext
+	} else if parsed.Scheme == "socks5" {
 		dialer, dialErr := xproxy.FromURL(parsed, &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second})
 		if dialErr != nil {
 			return View{}, fmt.Errorf("configure socks5 test proxy: %w", dialErr)
@@ -236,7 +272,7 @@ func (s *Service) normalizeInput(input Input, requirePassword bool) (Proxy, erro
 	}
 	proxy := Proxy{
 		Name: strings.TrimSpace(input.Name), Scheme: normalizeScheme(input.Scheme), Host: strings.TrimSpace(input.Host), Port: input.Port,
-		Username: strings.TrimSpace(input.Username), PasswordCiphertext: ciphertext, ExitIP: normalizedPointer(input.ExitIP), Country: normalizedPointer(input.Country), Enabled: input.Enabled == nil || *input.Enabled, ExpiresAt: input.ExpiresAt,
+		Username: strings.TrimSpace(input.Username), PasswordCiphertext: ciphertext, RouteMode: normalizeRouteMode(input.RouteMode), ExitIP: normalizedPointer(input.ExitIP), Country: normalizedPointer(input.Country), Enabled: input.Enabled == nil || *input.Enabled, ExpiresAt: input.ExpiresAt,
 	}
 	if err := validateProxy(proxy); err != nil {
 		return Proxy{}, err
@@ -270,6 +306,17 @@ func normalizeScheme(value string) string {
 	}
 }
 
+func normalizeRouteMode(value RouteMode) RouteMode {
+	switch RouteMode(strings.ToLower(strings.TrimSpace(string(value)))) {
+	case RouteModeDirect:
+		return RouteModeDirect
+	case RouteModeSystem:
+		return RouteModeSystem
+	default:
+		return RouteModeAuto
+	}
+}
+
 func buildProxyURL(scheme, host string, port int, username, password string) string {
 	parsed := url.URL{Scheme: normalizeScheme(scheme), Host: net.JoinHostPort(host, strconv.Itoa(port))}
 	if strings.TrimSpace(username) != "" {
@@ -279,7 +326,7 @@ func buildProxyURL(scheme, host string, port int, username, password string) str
 }
 
 func mapView(item Proxy) View {
-	return View{ID: item.ID, Name: item.Name, Scheme: item.Scheme, Host: item.Host, Port: item.Port, Username: item.Username, ExitIP: item.ExitIP, Country: item.Country, Enabled: item.Enabled, ExpiresAt: item.ExpiresAt, LastCheckedAt: item.LastCheckedAt, LastCheckError: item.LastCheckError, HasCredentials: len(item.PasswordCiphertext) > 0, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	return View{ID: item.ID, Name: item.Name, Scheme: item.Scheme, Host: item.Host, Port: item.Port, Username: item.Username, ExitIP: item.ExitIP, Country: item.Country, Enabled: item.Enabled, ExpiresAt: item.ExpiresAt, LastCheckedAt: item.LastCheckedAt, LastCheckError: item.LastCheckError, HasCredentials: len(item.PasswordCiphertext) > 0, RouteMode: normalizeRouteMode(item.RouteMode), CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }
 
 func normalizedPointer(value *string) *string {

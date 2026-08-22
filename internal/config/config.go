@@ -56,6 +56,7 @@ type IntegrationConfig struct {
 	AgentRunnerBaseURL      string
 	WhatsAppProxyURL        string
 	LocalProxyCredentialKey string
+	SystemProxyProviderURL  string
 	CloudAuthBaseURL        string
 	AgentAutoSendEnabled    bool
 }
@@ -97,6 +98,7 @@ func Load() (Config, error) {
 			AgentRunnerBaseURL:      strings.TrimSpace(os.Getenv("AGENT_RUNNER_BASE_URL")),
 			WhatsAppProxyURL:        strings.TrimSpace(os.Getenv("WHATSAPP_PROXY_URL")),
 			LocalProxyCredentialKey: strings.TrimSpace(os.Getenv("LOCAL_PROXY_CREDENTIAL_KEY")),
+			SystemProxyProviderURL:  strings.TrimSpace(os.Getenv("SYSTEM_PROXY_PROVIDER_URL")),
 			CloudAuthBaseURL:        strings.TrimSpace(os.Getenv("CLOUD_AUTH_BASE_URL")),
 			AgentAutoSendEnabled:    boolEnv("AGENT_AUTO_SEND_ENABLED", false),
 		},
