@@ -26,7 +26,8 @@
 - 断线期间消息目前是“尽量补齐”，不是“绝对全量补齐”
 - 如果部署机器无法直连 `web.whatsapp.com`，仍需要设置 `WHATSAPP_PROXY_URL`
 - 导出任务当前仍在 API 进程内异步执行，还没有拆成独立 worker
-- 当前代理配置是客户端全局代理，还没有实现“一账号一固定 IP”
+- Electron 桌面端已经支持本地代理池和账号级代理绑定；云端不保存代理凭据
+- 国内网络可使用“Clash 普通代理 -> 账号独立代理”的链式路径，境外无 Clash 时可使用自动判断或直连代理
 
 生产上线前请先阅读：
 
@@ -43,6 +44,10 @@ cmd/
 deploy/
   docker/
   migrations/
+desktop/
+  src/
+  scripts/
+  build/
 docs/
 internal/
 scripts/
@@ -247,12 +252,16 @@ cd "path\to\repo"
 
 ## 已验证
 
-- `go test ./internal/... ./cmd/...`
+- `go test ./internal/proxychain ./internal/proxies ./internal/platform`
 - `cd web && npm run build`
 - `docker compose -f deploy/docker/docker-compose.all.yml up -d --build`
 - 导出文件下载到本地验证通过
 - `/api/live` SSE 实时推送验证通过
 - 智能回复 Agent 页面构建与浏览器检查通过
+- 普通 Clash 入口链式到静态 SOCKS5 代理的双层 TCP 连接验证通过
+- HTTP CONNECT 成功后的隧道复用和 SOCKS5 用户名密码握手已修复
+
+说明：全量 `go test ./...` 可能包含耗时较长的集成测试，本轮没有将其作为通过项；发布前仍应在 Docker 环境单独跑完整测试。
 
 ## 下一步建议
 

@@ -15,7 +15,7 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.40`.
+Current packaging version: `0.1.43`.
 
 ## Build
 
@@ -73,6 +73,15 @@ The cloud admin page supports changing any user's password, including the
 administrator account. Open **用户管理**, select **修改密码**, enter the new
 password twice, and save it. Passwords must contain at least 8 characters.
 
+## Network Routing
+
+- 在国内网络使用“自动判断（有 Clash 就链式）”和普通 Clash/系统代理，路径为 `Clash -> 账号独立代理`，最终出口仍是该账号绑定的独立代理。
+- 在境外且没有 Clash/系统代理时，“自动判断”会直连账号代理；也可以明确选择“直连代理”。
+- “强制通过 Clash/系统代理链式”在没有外层代理时会明确失败，不会静默回退到本机 IP。
+- 要实现一账号一出口 IP，每个 WhatsApp 账号必须绑定独立代理；单个 Clash 节点不能凭空产生多个独立出口 IP。
+
+0.1.43 修复了 HTTP CONNECT 隧道复用和 SOCKS5 用户名密码握手。已验证的链路为：本机 -> 普通 Clash 代理 -> 静态 SOCKS5 代理 -> 目标服务。
+
 ## 0.1.33 修复
 
 - 生成回复时没有客户文字消息，右下角显示明确的中文错误提示。
@@ -109,6 +118,13 @@ password twice, and save it. Passwords must contain at least 8 characters.
 - 当 Clash 当前出口与账号代理出口相同时，客户端直接使用 Clash 已完成的链路。
 - 账号必须绑定并验证代理后才能生成二维码或配对码。
 - 修改代理配置后旧检测结果自动失效；本机网络需要明确选择为仅测试模式。
+
+## 0.1.43 链式拨号修复
+
+- 修复 HTTP CONNECT 返回 `200` 后错误继续读取响应体，导致隧道连接卡住的问题。
+- 增加 SOCKS5 用户名密码认证握手，兼容需要认证的静态代理。
+- 增加 SOCKS5 目标连接和拒绝原因，便于定位代理服务端问题。
+- 版本号同步到安装包、`package-lock.json` 和客户端显示。
 
 ## 0.1.39 自动链式代理状态
 

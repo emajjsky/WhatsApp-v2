@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,11 +69,7 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 
 	switch d.inner.Scheme {
 	case "socks5":
-		innerDialer, err := xproxy.FromURL(d.inner, forward)
-		if err != nil {
-			return nil, fmt.Errorf("configure inner SOCKS5 proxy: %w", err)
-		}
-		return dialWithContext(ctx, innerDialer, network, address)
+		return d.dialSOCKS5(ctx, forward, network, address)
 	case "http", "https":
 		conn, err := forward.Dial(network, d.innerAddr)
 		if err != nil {
@@ -89,6 +86,175 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 		return connectHTTPProxy(ctx, conn, d.inner, address)
 	default:
 		return nil, fmt.Errorf("unsupported inner proxy scheme %q", d.inner.Scheme)
+	}
+}
+
+func (d *Dialer) dialSOCKS5(ctx context.Context, forward xproxy.Dialer, network, address string) (net.Conn, error) {
+	conn, err := dialWithContext(ctx, forward, "tcp", d.innerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("connect to inner SOCKS5 proxy %s: %w", d.innerAddr, err)
+	}
+	closeOnError := true
+	defer func() {
+		if closeOnError {
+			_ = conn.Close()
+		}
+	}()
+
+	deadline := time.Now().Add(defaultDialTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	_ = conn.SetDeadline(deadline)
+	username, password, authenticated := innerCredentials(d.inner)
+	methods := []byte{5, 1, 0}
+	if authenticated {
+		if len(username) > 255 || len(password) > 255 {
+			return nil, errors.New("SOCKS5账号或密码超过协议长度限制")
+		}
+		methods[2] = 2
+	}
+	if _, err := conn.Write(methods); err != nil {
+		return nil, fmt.Errorf("write SOCKS5 method request: %w", err)
+	}
+	methodResponse := []byte{0, 0}
+	if _, err := io.ReadFull(conn, methodResponse); err != nil {
+		return nil, fmt.Errorf("read SOCKS5 method response: %w", err)
+	}
+	if methodResponse[0] != 5 {
+		return nil, fmt.Errorf("SOCKS5返回了错误协议版本 %d", methodResponse[0])
+	}
+	switch methodResponse[1] {
+	case 0:
+	case 2:
+		if !authenticated {
+			return nil, errors.New("SOCKS5代理要求账号密码，但当前配置为空")
+		}
+		credentials := make([]byte, 0, 3+len(username)+len(password))
+		credentials = append(credentials, 1, byte(len(username)))
+		credentials = append(credentials, username...)
+		credentials = append(credentials, byte(len(password)))
+		credentials = append(credentials, password...)
+		if _, err := conn.Write(credentials); err != nil {
+			return nil, fmt.Errorf("write SOCKS5账号密码: %w", err)
+		}
+		authResponse := []byte{0, 0}
+		if _, err := io.ReadFull(conn, authResponse); err != nil {
+			return nil, fmt.Errorf("read SOCKS5账号密码响应: %w", err)
+		}
+		if authResponse[0] != 1 || authResponse[1] != 0 {
+			return nil, errors.New("SOCKS5账号密码认证失败")
+		}
+	case 255:
+		return nil, errors.New("SOCKS5代理拒绝了当前认证方式")
+	default:
+		return nil, fmt.Errorf("SOCKS5代理返回未知认证方式 %d", methodResponse[1])
+	}
+	host, portText, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("parse SOCKS5 target %q: %w", address, err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return nil, fmt.Errorf("invalid SOCKS5 target port %q", portText)
+	}
+	request, err := socks5ConnectRequest(host, port)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Write(request); err != nil {
+		return nil, fmt.Errorf("write SOCKS5 CONNECT request: %w", err)
+	}
+	if err := readSOCKS5ConnectResponse(conn); err != nil {
+		return nil, err
+	}
+	_ = conn.SetDeadline(time.Time{})
+	closeOnError = false
+	return conn, nil
+}
+
+func innerCredentials(proxyURL *url.URL) (string, string, bool) {
+	if proxyURL == nil || proxyURL.User == nil {
+		return "", "", false
+	}
+	password, _ := proxyURL.User.Password()
+	return proxyURL.User.Username(), password, true
+}
+
+func socks5ConnectRequest(host string, port int) ([]byte, error) {
+	request := []byte{5, 1, 0}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			request = append(request, 1)
+			request = append(request, ip4...)
+		} else {
+			request = append(request, 4)
+			request = append(request, ip.To16()...)
+		}
+	} else {
+		if len(host) > 255 {
+			return nil, errors.New("SOCKS5目标域名超过协议长度限制")
+		}
+		request = append(request, 3, byte(len(host)))
+		request = append(request, host...)
+	}
+	request = append(request, byte(port>>8), byte(port))
+	return request, nil
+}
+
+func readSOCKS5ConnectResponse(conn net.Conn) error {
+	header := []byte{0, 0, 0, 0}
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return fmt.Errorf("read SOCKS5 CONNECT response: %w", err)
+	}
+	if header[0] != 5 {
+		return fmt.Errorf("SOCKS5 CONNECT返回了错误协议版本 %d", header[0])
+	}
+	if header[1] != 0 {
+		return fmt.Errorf("SOCKS5 CONNECT被拒绝：%s", socks5ReplyText(header[1]))
+	}
+	var addressLength int
+	switch header[3] {
+	case 1:
+		addressLength = 4
+	case 4:
+		addressLength = 16
+	case 3:
+		length := []byte{0}
+		if _, err := io.ReadFull(conn, length); err != nil {
+			return fmt.Errorf("read SOCKS5绑定域名长度: %w", err)
+		}
+		addressLength = int(length[0])
+	default:
+		return fmt.Errorf("SOCKS5 CONNECT返回未知地址类型 %d", header[3])
+	}
+	boundAddress := make([]byte, addressLength+2)
+	if _, err := io.ReadFull(conn, boundAddress); err != nil {
+		return fmt.Errorf("read SOCKS5绑定地址: %w", err)
+	}
+	return nil
+}
+
+func socks5ReplyText(code byte) string {
+	switch code {
+	case 1:
+		return "通用代理故障"
+	case 2:
+		return "连接被规则拒绝"
+	case 3:
+		return "网络不可达"
+	case 4:
+		return "目标主机不可达"
+	case 5:
+		return "目标连接被拒绝"
+	case 6:
+		return "TTL已过期"
+	case 7:
+		return "不支持的命令"
+	case 8:
+		return "不支持的地址类型"
+	default:
+		return fmt.Sprintf("错误码 %d", code)
 	}
 }
 
@@ -164,12 +330,13 @@ func connectHTTPProxy(ctx context.Context, conn net.Conn, proxyURL *url.URL, tar
 		_ = conn.Close()
 		return nil, fmt.Errorf("read proxy CONNECT response: %w", err)
 	}
-	_, _ = io.Copy(io.Discard, response.Body)
-	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, response.Body)
+		_ = response.Body.Close()
 		_ = conn.Close()
 		return nil, fmt.Errorf("proxy CONNECT returned HTTP %d", response.StatusCode)
 	}
+	// CONNECT 200 后已经进入隧道，响应体不能继续读取。
 	_ = conn.SetDeadline(time.Time{})
 	return conn, nil
 }
