@@ -35,3 +35,16 @@ func TestValidatePairingProxyBindingRejectsExpiredProxy(t *testing.T) {
 		t.Fatal("expected an expired proxy to block pairing")
 	}
 }
+
+func TestExitIPOfDoesNotTreatProxyEndpointAsFinalExit(t *testing.T) {
+	proxy := Proxy{Host: "140.174.104.226"}
+	if got := exitIPOf(proxy); got != "" {
+		t.Fatalf("exit IP = %q, want empty when only the proxy endpoint is known", got)
+	}
+
+	exitIP := "203.0.113.20"
+	proxy.ExitIP = &exitIP
+	if got := exitIPOf(proxy); got != exitIP {
+		t.Fatalf("exit IP = %q, want %q", got, exitIP)
+	}
+}

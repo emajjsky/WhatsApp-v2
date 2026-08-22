@@ -199,7 +199,7 @@ func (r *Repository) UpdateCheck(ctx context.Context, id, exitIP, checkError str
 		value := strings.TrimSpace(exitIP)
 		ipValue = &value
 	}
-	_, err = r.db.ExecContext(ctx, `UPDATE local_proxy_endpoints SET exit_ip = COALESCE($3, exit_ip), last_checked_at = NOW(), last_check_error = $4, updated_at = NOW() WHERE id = $1 AND user_id = $2`, id, userID, ipValue, errorValue)
+	_, err = r.db.ExecContext(ctx, `UPDATE local_proxy_endpoints SET exit_ip = $3, last_checked_at = NOW(), last_check_error = $4, updated_at = NOW() WHERE id = $1 AND user_id = $2`, id, userID, ipValue, errorValue)
 	return err
 }
 

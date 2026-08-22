@@ -1,10 +1,12 @@
 package proxychain
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"testing"
@@ -53,6 +55,40 @@ func startSOCKS5Server(t *testing.T, nextAddress string) string {
 		}
 	}()
 	return listener.Addr().String()
+}
+
+func startHTTPConnectProxy(t *testing.T, nextAddress string) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go handleHTTPConnectProxy(conn, nextAddress)
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func handleHTTPConnectProxy(conn net.Conn, nextAddress string) {
+	defer conn.Close()
+	request, err := http.ReadRequest(bufio.NewReader(conn))
+	if err != nil || request.Method != http.MethodConnect {
+		return
+	}
+	forward, err := net.Dial("tcp", nextAddress)
+	if err != nil {
+		_, _ = io.WriteString(conn, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+		return
+	}
+	defer forward.Close()
+	_, _ = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+	go func() { _, _ = io.Copy(forward, conn) }()
+	_, _ = io.Copy(conn, forward)
 }
 
 func handleTestSOCKS5(conn net.Conn, nextAddress string) {
@@ -158,6 +194,25 @@ func TestDialerUsesInnerProxyThroughOuterSOCKS5(t *testing.T) {
 	outer := startSOCKS5Server(t, inner)
 
 	dialer, err := New("socks5://"+outer, "socks5://"+inner)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := dialer.DialContext(ctx, "tcp", target)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	buf := make([]byte, 5)
+	_, err = io.ReadFull(conn, buf)
+	require.NoError(t, err)
+	require.Equal(t, "hello", string(buf))
+}
+
+func TestDialerUsesInnerSOCKS5ThroughOuterHTTPConnectProxy(t *testing.T) {
+	target := startTCPHelloServer(t)
+	inner := startSOCKS5Server(t, target)
+	outer := startHTTPConnectProxy(t, inner)
+
+	dialer, err := New("http://"+outer, "socks5://"+inner)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

@@ -23,7 +23,7 @@ let mainWindow
 let tray
 let isQuitting = false
 let shutdownStarted = false
-let systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: 0 }
+let systemProxyRouteCache = { proxyURL: '', routeKey: '', exitIP: '', checkedAt: 0 }
 let systemProxyDetectionPromise
 let systemProxyStatus = {
   mode: 'auto',
@@ -602,7 +602,7 @@ async function desktopRuntimeConfigView() {
 
 async function systemProxyRuntimeView(force = false) {
   if (force) {
-    systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: 0 }
+    systemProxyRouteCache = { proxyURL: '', routeKey: '', exitIP: '', checkedAt: 0 }
   }
   const proxyURL = await resolveWhatsAppProxyURL({ force })
   const config = publicDesktopConfig()
@@ -646,12 +646,12 @@ function redactProxyURL(proxyURL) {
 
 async function resolveSystemProxyRouteKey(proxyURL, force = false) {
   if (!proxyURL) {
-    systemProxyRouteCache = { proxyURL: '', routeKey: '', checkedAt: Date.now() }
+    systemProxyRouteCache = { proxyURL: '', routeKey: '', exitIP: '', checkedAt: Date.now() }
     updateSystemProxyStatus({ routeKey: '', exitIP: '' })
     return ''
   }
   if (!force && systemProxyRouteCache.proxyURL === proxyURL && Date.now() - systemProxyRouteCache.checkedAt < 15000) {
-    updateSystemProxyStatus({ routeKey: systemProxyRouteCache.routeKey })
+    updateSystemProxyStatus({ routeKey: systemProxyRouteCache.routeKey, exitIP: systemProxyRouteCache.exitIP })
     return systemProxyRouteCache.routeKey
   }
 
@@ -693,7 +693,7 @@ async function resolveSystemProxyRouteKey(proxyURL, force = false) {
     })
     request.end()
   })
-  systemProxyRouteCache = { proxyURL, routeKey, checkedAt: Date.now() }
+  systemProxyRouteCache = { proxyURL, routeKey, exitIP: systemProxyStatus.exitIP, checkedAt: Date.now() }
   updateSystemProxyStatus({ routeKey })
   return routeKey
 }

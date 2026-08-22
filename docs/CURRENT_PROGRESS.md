@@ -302,3 +302,4 @@ curl http://127.0.0.1:8088/healthz
 - Agent Skill / 话术包管理：`docs/agent-skills.md`
 - 生产就绪审查：`docs/production-readiness.md`
 - 一账号一固定 IP 方案：`docs/account-level-proxy-design.md`
+- 代理链路审查：明确普通 Clash 作为第一跳、账号静态 SOCKS5 作为第二跳的标准路径；补充 HTTP/Mixed Clash 外层到 SOCKS5 内层的回归测试，修复失败检测残留旧出口 IP，以及把代理服务器地址误判为最终出口的问题。

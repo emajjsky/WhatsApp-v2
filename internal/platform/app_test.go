@@ -48,6 +48,27 @@ func TestSameProxyExitIPRejectsDifferentOrUnknownExit(t *testing.T) {
 	}
 }
 
+func TestAccountProxyResolverChainsWhenOuterExitIsUnknown(t *testing.T) {
+	resolver := accountProxyResolver{
+		local: fakeAccountProxyPlanSource{plan: proxies.Plan{
+			ProxyURL:  "socks5://account-proxy:6688",
+			RouteMode: proxies.RouteModeAuto,
+			ExitIP:    "140.174.104.226",
+		}},
+		provider: fakeSystemProxyRouteSource{route: systemProxyRoute{
+			ProxyURL: "http://127.0.0.1:7890",
+		}},
+	}
+
+	plan, err := resolver.ResolveProxyPlan(context.Background(), "account-1")
+	if err != nil {
+		t.Fatalf("resolve proxy plan: %v", err)
+	}
+	if plan.ProxyURL != "socks5://account-proxy:6688" || plan.OuterProxyURL != "http://127.0.0.1:7890" || !plan.UsesSystem {
+		t.Fatalf("expected a two-layer route when the outer exit is unknown, got %+v", plan)
+	}
+}
+
 func TestAccountProxyResolverDoesNotDuplicateClashRouteForSameExit(t *testing.T) {
 	resolver := accountProxyResolver{
 		local: fakeAccountProxyPlanSource{plan: proxies.Plan{

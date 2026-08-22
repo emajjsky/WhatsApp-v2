@@ -217,9 +217,6 @@ func (s *Service) ResolveProxyPlan(ctx context.Context, accountID string) (Plan,
 	if item.ExitIP != nil {
 		exitIP = strings.TrimSpace(*item.ExitIP)
 	}
-	if exitIP == "" && net.ParseIP(strings.TrimSpace(item.Host)) != nil {
-		exitIP = strings.TrimSpace(item.Host)
-	}
 	return Plan{
 		ProxyURL:  buildProxyURL(item.Scheme, item.Host, item.Port, item.Username, password),
 		RouteMode: normalizeRouteMode(item.RouteMode),
@@ -261,7 +258,8 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 		}
 	}
 	effectiveProxyURL := proxyURL
-	if strings.TrimSpace(outerRoute.ProxyURL) != "" && sameProxyExitIP(exitIPOf(item), outerRoute.ExitIP) {
+	usesExistingSystemRoute := strings.TrimSpace(outerRoute.ProxyURL) != "" && sameProxyExitIP(exitIPOf(item), outerRoute.ExitIP)
+	if usesExistingSystemRoute {
 		// Clash 已经使用该账号代理作为最终出口，检测时也必须走同一条现成链路。
 		effectiveProxyURL = outerRoute.ProxyURL
 	}
@@ -292,13 +290,17 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 	exitIP, ipErr := probeExitIP(ctx, client)
 	whatsappErr := probeWhatsAppWeb(ctx, client)
 	if whatsappErr != nil {
-		message := fmt.Sprintf("此代理未通过链路检测。WhatsApp 网络不可达；出口 IP检测：%s；WhatsApp检测：%s", friendlyProbeError(ipErr), friendlyProbeError(whatsappErr))
+		message := fmt.Sprintf("此代理未通过链路检测（%s）。WhatsApp 网络不可达；出口 IP检测：%s；WhatsApp检测：%s", testRouteLabel(outerRoute, usesExistingSystemRoute), friendlyProbeError(ipErr), friendlyProbeError(whatsappErr))
 		_ = s.repository.UpdateCheck(ctx, id, "", message)
 		return View{}, fmt.Errorf("%s", message)
 	}
 	// 某些代理商会拦截 api.ipify.org，但并不影响 WhatsApp Web。此时
-	// 代理仍然可用，保留旧出口 IP并把检测标记为成功，避免误报“代理失败”。
-	if err := s.repository.UpdateCheck(ctx, id, exitIP, ""); err != nil {
+	// 代理仍然可用，保留上一次成功的出口 IP并把检测标记为成功。
+	storedExitIP := exitIP
+	if storedExitIP == "" && item.ExitIP != nil {
+		storedExitIP = strings.TrimSpace(*item.ExitIP)
+	}
+	if err := s.repository.UpdateCheck(ctx, id, storedExitIP, ""); err != nil {
 		return View{}, err
 	}
 	if exitIP != "" {
@@ -312,16 +314,19 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 
 func exitIPOf(item Proxy) string {
 	if item.ExitIP == nil {
-		if net.ParseIP(strings.TrimSpace(item.Host)) != nil {
-			return strings.TrimSpace(item.Host)
-		}
 		return ""
 	}
-	exitIP := strings.TrimSpace(*item.ExitIP)
-	if exitIP == "" && net.ParseIP(strings.TrimSpace(item.Host)) != nil {
-		return strings.TrimSpace(item.Host)
+	return strings.TrimSpace(*item.ExitIP)
+}
+
+func testRouteLabel(outerRoute SystemProxyRoute, usesExistingSystemRoute bool) string {
+	if strings.TrimSpace(outerRoute.ProxyURL) == "" {
+		return "直连账号代理"
 	}
-	return exitIP
+	if usesExistingSystemRoute {
+		return "Clash 已完成该静态代理链路"
+	}
+	return "Clash 普通代理 → 账号静态代理"
 }
 
 func sameProxyExitIP(localExitIP, outerExitIP string) bool {
