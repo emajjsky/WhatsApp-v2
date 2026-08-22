@@ -23,12 +23,18 @@ var ErrProxyNotFound = errors.New("proxy not found")
 type Plan struct {
 	ProxyURL  string
 	RouteMode RouteMode
+	ExitIP    string
+}
+
+type SystemProxyRoute struct {
+	ProxyURL string
+	ExitIP   string
 }
 
 type Service struct {
 	repository  *Repository
 	secrets     *secretBox
-	systemProxy func(context.Context) (string, error)
+	systemProxy func(context.Context) (SystemProxyRoute, error)
 }
 
 func NewService(repository *Repository, encodedKey string) (*Service, error) {
@@ -43,6 +49,17 @@ func NewService(repository *Repository, encodedKey string) (*Service, error) {
 }
 
 func (s *Service) SetSystemProxyProvider(provider func(context.Context) (string, error)) {
+	if provider == nil {
+		s.systemProxy = nil
+		return
+	}
+	s.systemProxy = func(ctx context.Context) (SystemProxyRoute, error) {
+		proxyURL, err := provider(ctx)
+		return SystemProxyRoute{ProxyURL: proxyURL}, err
+	}
+}
+
+func (s *Service) SetSystemProxyRouteProvider(provider func(context.Context) (SystemProxyRoute, error)) {
 	s.systemProxy = provider
 }
 
@@ -117,6 +134,12 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Vie
 	if err := s.repository.Update(ctx, proxy); err != nil {
 		return View{}, mapProxyError(err)
 	}
+	if err := s.repository.InvalidateCheck(ctx, id); err != nil {
+		return View{}, err
+	}
+	proxy.ExitIP = nil
+	proxy.LastCheckedAt = nil
+	proxy.LastCheckError = nil
 	return mapView(proxy), nil
 }
 
@@ -153,6 +176,17 @@ func (s *Service) SetAccountProxy(ctx context.Context, accountID, proxyID string
 	return s.GetAccountProxy(ctx, accountID)
 }
 
+func (s *Service) ValidateAccountProxy(ctx context.Context, accountID string) error {
+	item, err := s.repository.ResolveBinding(ctx, accountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("请先在“IP代理”页面配置并验证账号网络出口")
+	}
+	if err != nil {
+		return err
+	}
+	return validatePairingProxyBinding(item, time.Now())
+}
+
 func (s *Service) ResolveProxyURL(ctx context.Context, accountID string) (string, error) {
 	plan, err := s.ResolveProxyPlan(ctx, accountID)
 	return plan.ProxyURL, err
@@ -172,11 +206,25 @@ func (s *Service) ResolveProxyPlan(ctx context.Context, accountID string) (Plan,
 	if item.ExpiresAt != nil && !item.ExpiresAt.After(time.Now()) {
 		return Plan{}, fmt.Errorf("bound proxy %q has expired", item.Name)
 	}
+	if err := validatePairingProxyBinding(item, time.Now()); err != nil {
+		return Plan{}, err
+	}
 	password, err := s.secrets.open(item.PasswordCiphertext)
 	if err != nil {
 		return Plan{}, err
 	}
-	return Plan{ProxyURL: buildProxyURL(item.Scheme, item.Host, item.Port, item.Username, password), RouteMode: normalizeRouteMode(item.RouteMode)}, nil
+	exitIP := ""
+	if item.ExitIP != nil {
+		exitIP = strings.TrimSpace(*item.ExitIP)
+	}
+	if exitIP == "" && net.ParseIP(strings.TrimSpace(item.Host)) != nil {
+		exitIP = strings.TrimSpace(item.Host)
+	}
+	return Plan{
+		ProxyURL:  buildProxyURL(item.Scheme, item.Host, item.Port, item.Username, password),
+		RouteMode: normalizeRouteMode(item.RouteMode),
+		ExitIP:    exitIP,
+	}, nil
 }
 
 func (s *Service) Test(ctx context.Context, id string) (View, error) {
@@ -194,26 +242,35 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 		return View{}, fmt.Errorf("parse proxy URL: %w", err)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	outerProxyURL := ""
+	outerRoute := SystemProxyRoute{}
 	mode := normalizeRouteMode(item.RouteMode)
 	if mode == RouteModeSystem && s.systemProxy == nil {
 		return View{}, fmt.Errorf("代理“通过系统代理链式”需要先启用可用的 Clash/系统代理")
 	}
 	if mode != RouteModeDirect && s.systemProxy != nil {
-		outerProxyURL, err = s.systemProxy(ctx)
+		outerRoute, err = s.systemProxy(ctx)
 		if err != nil {
 			if mode == RouteModeSystem {
 				return View{}, fmt.Errorf("detect system proxy for test: %w", err)
 			}
 			// 自动模式的定义就是系统代理不可用时直连独立代理。
-			outerProxyURL = ""
+			outerRoute = SystemProxyRoute{}
 		}
-		if mode == RouteModeSystem && strings.TrimSpace(outerProxyURL) == "" {
+		if mode == RouteModeSystem && strings.TrimSpace(outerRoute.ProxyURL) == "" {
 			return View{}, fmt.Errorf("代理“通过系统代理链式”需要先启用可用的 Clash/系统代理")
 		}
 	}
-	if strings.TrimSpace(outerProxyURL) != "" {
-		dialer, dialErr := proxychain.New(outerProxyURL, proxyURL)
+	effectiveProxyURL := proxyURL
+	if strings.TrimSpace(outerRoute.ProxyURL) != "" && sameProxyExitIP(exitIPOf(item), outerRoute.ExitIP) {
+		// Clash 已经使用该账号代理作为最终出口，检测时也必须走同一条现成链路。
+		effectiveProxyURL = outerRoute.ProxyURL
+	}
+	parsed, err = url.Parse(effectiveProxyURL)
+	if err != nil {
+		return View{}, fmt.Errorf("parse effective proxy URL: %w", err)
+	}
+	if strings.TrimSpace(outerRoute.ProxyURL) != "" && effectiveProxyURL == proxyURL {
+		dialer, dialErr := proxychain.New(outerRoute.ProxyURL, proxyURL)
 		if dialErr != nil {
 			return View{}, fmt.Errorf("configure chained test proxy: %w", dialErr)
 		}
@@ -235,7 +292,7 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 	exitIP, ipErr := probeExitIP(ctx, client)
 	whatsappErr := probeWhatsAppWeb(ctx, client)
 	if whatsappErr != nil {
-		message := fmt.Sprintf("WhatsApp Web 不可达；出口 IP 检测：%s；WhatsApp 检测：%s", compactProbeError(ipErr), compactProbeError(whatsappErr))
+		message := fmt.Sprintf("此代理未通过链路检测。WhatsApp 网络不可达；出口 IP检测：%s；WhatsApp检测：%s", friendlyProbeError(ipErr), friendlyProbeError(whatsappErr))
 		_ = s.repository.UpdateCheck(ctx, id, "", message)
 		return View{}, fmt.Errorf("%s", message)
 	}
@@ -251,6 +308,26 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 	item.LastCheckedAt = &now
 	item.LastCheckError = nil
 	return mapView(item), nil
+}
+
+func exitIPOf(item Proxy) string {
+	if item.ExitIP == nil {
+		if net.ParseIP(strings.TrimSpace(item.Host)) != nil {
+			return strings.TrimSpace(item.Host)
+		}
+		return ""
+	}
+	exitIP := strings.TrimSpace(*item.ExitIP)
+	if exitIP == "" && net.ParseIP(strings.TrimSpace(item.Host)) != nil {
+		return strings.TrimSpace(item.Host)
+	}
+	return exitIP
+}
+
+func sameProxyExitIP(localExitIP, outerExitIP string) bool {
+	local := net.ParseIP(strings.TrimSpace(localExitIP))
+	outer := net.ParseIP(strings.TrimSpace(outerExitIP))
+	return local != nil && outer != nil && local.Equal(outer)
 }
 
 func probeExitIP(ctx context.Context, client *http.Client) (string, error) {
@@ -307,6 +384,25 @@ func compactProbeError(err error) string {
 	return message
 }
 
+func friendlyProbeError(err error) string {
+	if err == nil {
+		return "成功"
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "socks connect") || (strings.Contains(message, "socks5") && strings.Contains(message, "eof")):
+		return "SOCKS5连接被代理服务关闭，请检查账号、密码、端口或代理是否已过期"
+	case strings.Contains(message, "connection refused"):
+		return "代理端口拒绝连接，请确认地址和端口正确"
+	case strings.Contains(message, "i/o timeout") || strings.Contains(message, "context deadline exceeded"):
+		return "代理连接超时，请检查网络或代理服务状态"
+	case strings.Contains(message, "no such host") || strings.Contains(message, "dns"):
+		return "代理地址无法解析，请检查代理地址"
+	default:
+		return compactProbeError(err)
+	}
+}
+
 func (s *Service) normalizeInput(input Input, requirePassword bool) (Proxy, error) {
 	password := strings.TrimSpace(input.Password)
 	if requirePassword && password == "" {
@@ -361,6 +457,22 @@ func normalizeRouteMode(value RouteMode) RouteMode {
 	default:
 		return RouteModeAuto
 	}
+}
+
+func validatePairingProxyBinding(proxy Proxy, now time.Time) error {
+	if !proxy.Enabled {
+		return fmt.Errorf("账号绑定的代理已停用，请启用代理或重新选择")
+	}
+	if proxy.ExpiresAt != nil && !proxy.ExpiresAt.After(now) {
+		return fmt.Errorf("账号绑定的代理已过期，请更换代理")
+	}
+	if proxy.LastCheckedAt == nil {
+		return fmt.Errorf("请先在“IP代理”页面点击“检测此代理”，验证通过后才能配对")
+	}
+	if proxy.LastCheckError != nil && strings.TrimSpace(*proxy.LastCheckError) != "" {
+		return fmt.Errorf("账号代理最近检测失败，请重新检测后再配对")
+	}
+	return nil
 }
 
 func buildProxyURL(scheme, host string, port int, username, password string) string {

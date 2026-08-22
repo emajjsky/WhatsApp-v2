@@ -203,6 +203,15 @@ func (r *Repository) UpdateCheck(ctx context.Context, id, exitIP, checkError str
 	return err
 }
 
+func (r *Repository) InvalidateCheck(ctx context.Context, id string) error {
+	userID, err := currentUserID(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = r.db.ExecContext(ctx, `UPDATE local_proxy_endpoints SET exit_ip = NULL, last_checked_at = NULL, last_check_error = NULL, updated_at = NOW() WHERE id = $1 AND user_id = $2`, id, userID)
+	return err
+}
+
 const listQuery = `
 SELECT local_proxy_endpoints.id,
        local_proxy_endpoints.user_id,

@@ -15,7 +15,7 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.39`.
+Current packaging version: `0.1.40`.
 
 ## Build
 
@@ -102,6 +102,13 @@ password twice, and save it. Passwords must contain at least 8 characters.
 - 删除代理时，在同一数据库事务内解除当前用户的账号绑定后再删除代理。
 - 不删除 WhatsApp 账号、聊天记录或本地会话数据。
 - 删除后的账号会回到本机网络；如需立即使用新出口，请重新连接账号。
+
+## 0.1.40 链式代理与配对前置校验
+
+- 修复 Clash 已经链式到账号代理时的重复套链问题，避免 SOCKS5 `EOF`。
+- 当 Clash 当前出口与账号代理出口相同时，客户端直接使用 Clash 已完成的链路。
+- 账号必须绑定并验证代理后才能生成二维码或配对码。
+- 修改代理配置后旧检测结果自动失效；本机网络需要明确选择为仅测试模式。
 
 ## 0.1.39 自动链式代理状态
 

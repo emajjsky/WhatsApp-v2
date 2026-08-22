@@ -17,6 +17,7 @@ type systemProxyProvider struct {
 type systemProxyRoute struct {
 	ProxyURL string
 	RouteKey string
+	ExitIP   string
 }
 
 func newSystemProxyProvider(endpoint string) systemProxyProvider {
@@ -50,9 +51,14 @@ func (p systemProxyProvider) ResolveRoute(ctx context.Context) (systemProxyRoute
 	var payload struct {
 		ProxyURL string `json:"proxy_url"`
 		RouteKey string `json:"route_key"`
+		ExitIP   string `json:"exit_ip"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		return systemProxyRoute{}, fmt.Errorf("decode system proxy: %w", err)
 	}
-	return systemProxyRoute{ProxyURL: strings.TrimSpace(payload.ProxyURL), RouteKey: strings.TrimSpace(payload.RouteKey)}, nil
+	return systemProxyRoute{
+		ProxyURL: strings.TrimSpace(payload.ProxyURL),
+		RouteKey: strings.TrimSpace(payload.RouteKey),
+		ExitIP:   strings.TrimSpace(payload.ExitIP),
+	}, nil
 }

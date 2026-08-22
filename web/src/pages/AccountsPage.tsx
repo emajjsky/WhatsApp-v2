@@ -41,14 +41,22 @@ export function AccountsPage() {
   const [accountProxyIDs, setAccountProxyIDs] = useState<Record<string, string>>({})
   const accountProxyIDsRef = useRef<Record<string, string>>({})
   const [selectedProxyID, setSelectedProxyID] = useState('')
+  const [localTestAccounts, setLocalTestAccounts] = useState<Record<string, boolean>>({})
   const [loadingAccountProxy, setLoadingAccountProxy] = useState(false)
   const [savingAccountProxy, setSavingAccountProxy] = useState(false)
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) ?? accounts[0]
+  const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
   const selectedProxy = localProxies.find((item) => item.id === selectedProxyID)
+  const localTestModeSelected = Boolean(selectedAccount?.id && localTestAccounts[selectedAccount.id] && !selectedProxyID)
+  const selectedProxyReady = Boolean(
+    selectedProxy?.enabled && selectedProxy.last_checked_at && !selectedProxy.last_check_error,
+  )
+  const pairingBlocked = Boolean(
+    isDesktopRuntime && (!selectedProxyID ? !localTestModeSelected : !selectedProxyReady),
+  )
   const selectedBusyAction = busyAction && busyAction.accountId === selectedAccount?.id ? busyAction.method : undefined
   const isSelectedAccountBusy = selectedBusyAction !== undefined
-  const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
 
   const loadAccounts = useCallback(async (preferredAccountId?: string, background = false) => {
     if (!background) {
@@ -239,9 +247,14 @@ export function AccountsPage() {
     try {
       await setAccountProxy(selectedAccount.id, value)
       setSelectedProxyID(value)
+      if (!value) {
+        setLocalTestAccounts((current) => ({ ...current, [selectedAccount.id]: true }))
+      } else {
+        setLocalTestAccounts((current) => ({ ...current, [selectedAccount.id]: false }))
+      }
       accountProxyIDsRef.current = { ...accountProxyIDsRef.current, [selectedAccount.id]: value }
       setAccountProxyIDs(accountProxyIDsRef.current)
-      setNotice(value ? '账号代理已保存，重新连接后生效' : '已改为本机直连，重新连接后生效')
+      setNotice(value ? '账号代理已保存，重新连接后生效' : '已选择本机网络测试模式，重新连接后生效')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存账号代理失败')
     } finally {
@@ -273,7 +286,7 @@ export function AccountsPage() {
       if (method === 'logout') {
         await logoutAccount(accountId)
       } else {
-        await startPairing(accountId, method)
+        await startPairing(accountId, method, accountId === selectedAccount?.id && localTestModeSelected)
       }
 
       await loadAccounts(accountId)
@@ -376,19 +389,19 @@ export function AccountsPage() {
                   <div className="desktop-network-card account-proxy-card">
                     <div className="desktop-network-head">
                       <div>
-                        <strong>当前账号出口</strong>
-                        <span>只修改“{selectedAccount.display_name}”，不会影响其他账号</span>
+                        <strong>当前账号网络</strong>
+                        <span>{selectedProxy ? `只修改“${selectedAccount.display_name}”，不会影响其他账号` : '当前未绑定独立代理，仅允许明确选择本机网络测试模式'}</span>
                       </div>
-                      <strong className="account-exit-ip">{selectedProxy?.exit_ip ?? '未检测'}</strong>
+                      <strong className={`account-exit-ip${selectedProxy?.last_check_error ? ' account-exit-ip-error' : ''}`}>{selectedProxy ? (selectedProxy.last_check_error ? '代理检测失败' : selectedProxy.exit_ip ?? '出口未返回') : '本机网络'}</strong>
                     </div>
                     <label className="field compact-field">
-                      <span>连接方式与代理</span>
+                      <span>为此账号选择网络出口</span>
                       <select
                         value={selectedProxyID}
                         disabled={loadingAccountProxy || savingAccountProxy}
                         onChange={(event) => void handleSaveAccountProxy(event.target.value)}
                       >
-                        <option value="">本机网络（自动检测系统代理）</option>
+                        <option value="">本机网络（仅测试，需手动选择）</option>
                         {localProxies.map((proxy) => (
                           <option key={proxy.id} value={proxy.id} disabled={!proxy.enabled}>
                             {proxy.name} · {proxy.country ?? proxy.host} · {routeModeLabel(proxy.route_mode)}
@@ -397,11 +410,20 @@ export function AccountsPage() {
                       </select>
                     </label>
                     <div className="account-proxy-meta">
-                      <span>实际出口 IP</span>
-                      <strong>{selectedProxy?.exit_ip ?? '请先在 IP 代理页检测'}</strong>
-                      <span>路由</span>
-                      <strong>{selectedProxy ? routeModeLabel(selectedProxy.route_mode) : '本机网络 / 系统代理'}</strong>
+                      <span>账号出口 IP</span>
+                      <strong>{selectedProxy?.exit_ip ?? (localTestModeSelected ? '本机出口（仅测试）' : '请先配置并验证代理')}</strong>
+                      <span>连接路径</span>
+                      <strong>{selectedProxy ? routeModeLabel(selectedProxy.route_mode) : '本机网络（仅测试）'}</strong>
                     </div>
+                    {pairingBlocked ? (
+                      <p className="field-hint account-pairing-hint">
+                        {!selectedProxyID
+                          ? '请先选择并验证账号代理；仅测试本机网络时，请手动选择“本机网络（仅测试）”。'
+                          : '该代理尚未验证通过，请先到“IP代理”页面点击“检测此代理”。'}
+                      </p>
+                    ) : localTestModeSelected ? (
+                      <p className="field-hint account-pairing-hint account-pairing-hint-warning">当前为本机网络测试模式，不保证一号一 IP。</p>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -409,7 +431,7 @@ export function AccountsPage() {
                   <button
                     className="primary-button"
                     type="button"
-                    disabled={isSelectedAccountBusy}
+                    disabled={isSelectedAccountBusy || pairingBlocked}
                     onClick={() => void runAccountAction(selectedAccount.id, 'qr')}
                   >
                     <Icon name="qr" />
@@ -418,7 +440,7 @@ export function AccountsPage() {
                   <button
                     className="secondary-button"
                     type="button"
-                    disabled={isSelectedAccountBusy}
+                    disabled={isSelectedAccountBusy || pairingBlocked}
                     onClick={() => void runAccountAction(selectedAccount.id, 'pairing_code')}
                   >
                     <Icon name="key" />

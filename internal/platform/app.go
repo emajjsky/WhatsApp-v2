@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -136,7 +137,13 @@ func New(cfg config.Config) (*App, error) {
 				_ = database.Close()
 				return nil, proxyErr
 			}
-			localProxyService.SetSystemProxyProvider(newSystemProxyProvider(cfg.Integrations.SystemProxyProviderURL).Resolve)
+			localProxyService.SetSystemProxyRouteProvider(func(ctx context.Context) (proxies.SystemProxyRoute, error) {
+				route, err := newSystemProxyProvider(cfg.Integrations.SystemProxyProviderURL).ResolveRoute(ctx)
+				if err != nil {
+					return proxies.SystemProxyRoute{}, err
+				}
+				return proxies.SystemProxyRoute{ProxyURL: route.ProxyURL, ExitIP: route.ExitIP}, nil
+			})
 			proxyHandler = proxies.NewHandler(localProxyService)
 		}
 
@@ -406,9 +413,17 @@ type accountPhoneLookup struct {
 }
 
 type accountProxyResolver struct {
-	local    *proxies.Service
+	local    accountProxyPlanSource
 	fallback string
-	provider systemProxyProvider
+	provider systemProxyRouteSource
+}
+
+type accountProxyPlanSource interface {
+	ResolveProxyPlan(context.Context, string) (proxies.Plan, error)
+}
+
+type systemProxyRouteSource interface {
+	ResolveRoute(context.Context) (systemProxyRoute, error)
 }
 
 func (r accountProxyResolver) ResolveProxyURL(ctx context.Context, accountID string) (string, error) {
@@ -446,6 +461,11 @@ func (r accountProxyResolver) ResolveProxyPlan(ctx context.Context, accountID st
 			return sessions.ProxyPlan{}, fmt.Errorf("代理“通过系统代理链式”需要先启用可用的 Clash/系统代理")
 		}
 		if outerRoute.ProxyURL != "" {
+			if sameProxyExitIP(localPlan.ExitIP, outerRoute.ExitIP) {
+				// Clash 已经把本机流量送到这个账号代理的出口。
+				// 再套一次同一个 SOCKS5 代理会形成重复链路，常见结果就是 EOF。
+				return sessions.ProxyPlan{ProxyURL: outerRoute.ProxyURL, UsesSystem: true, RouteKey: outerRoute.RouteKey}, nil
+			}
 			return sessions.ProxyPlan{ProxyURL: localPlan.ProxyURL, OuterProxyURL: outerRoute.ProxyURL, UsesSystem: true, RouteKey: outerRoute.RouteKey}, nil
 		}
 		return sessions.ProxyPlan{ProxyURL: localPlan.ProxyURL}, nil
@@ -454,6 +474,12 @@ func (r accountProxyResolver) ResolveProxyPlan(ctx context.Context, accountID st
 		return sessions.ProxyPlan{ProxyURL: outerRoute.ProxyURL, UsesSystem: true, RouteKey: outerRoute.RouteKey}, nil
 	}
 	return sessions.ProxyPlan{ProxyURL: strings.TrimSpace(r.fallback)}, nil
+}
+
+func sameProxyExitIP(localExitIP, outerExitIP string) bool {
+	local := net.ParseIP(strings.TrimSpace(localExitIP))
+	outer := net.ParseIP(strings.TrimSpace(outerExitIP))
+	return local != nil && outer != nil && local.Equal(outer)
 }
 
 func (l accountPhoneLookup) LookupPhone(ctx context.Context, accountID string) (*string, error) {

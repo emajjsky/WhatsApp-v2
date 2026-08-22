@@ -129,12 +129,25 @@ func (s *Service) ListAccounts(ctx context.Context) ([]AccountView, error) {
 }
 
 func (s *Service) StartPairing(ctx context.Context, accountID string, method sessions.PairingMethod) (AccountView, error) {
+	return s.StartPairingWithOptions(ctx, accountID, method, false)
+}
+
+func (s *Service) StartPairingWithOptions(ctx context.Context, accountID string, method sessions.PairingMethod, allowLocalNetwork bool) (AccountView, error) {
 	account, err := s.repository.GetByID(ctx, accountID)
 	if err != nil {
 		return AccountView{}, mapRepositoryError(accountID, err)
 	}
 	if s.sessionLifecycle == nil {
 		return AccountView{}, fmt.Errorf("session lifecycle is not configured")
+	}
+	if s.proxyService != nil {
+		proxyErr := s.proxyService.ValidateAccountProxy(ctx, accountID)
+		if proxyErr != nil {
+			if !(allowLocalNetwork && strings.Contains(proxyErr.Error(), "请先在“IP代理”页面配置并验证账号网络出口")) {
+				return AccountView{}, proxyErr
+			}
+			// 本机网络是用户明确选择的测试模式，不是代理缺失时的静默回退。
+		}
 	}
 
 	sessionSnapshot, err := s.sessionLifecycle.StartPairing(ctx, accountID, sessions.StartPairingRequest{Method: method})
@@ -231,6 +244,9 @@ func (s *Service) SetAccountProxy(ctx context.Context, accountID, proxyID string
 	updated, err := s.proxyService.SetAccountProxy(ctx, accountID, proxyID)
 	if err != nil {
 		return nil, err
+	}
+	if updated != nil && (updated.LastCheckedAt == nil || updated.LastCheckError != nil || !updated.Enabled) {
+		return updated, nil
 	}
 
 	reconnector, ok := s.sessionLifecycle.(sessionReconnector)

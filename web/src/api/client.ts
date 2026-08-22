@@ -893,10 +893,10 @@ export async function createAccount(payload: CreateAccountPayload) {
   })
 }
 
-export async function startPairing(accountId: string, method: PairingMethod) {
+export async function startPairing(accountId: string, method: PairingMethod, allowLocalNetwork = false) {
   return request<{ account: AccountView }>(`/api/accounts/${accountId}/pair`, {
     method: 'POST',
-    jsonBody: { method },
+    jsonBody: { method, allow_local_network: allowLocalNetwork },
   })
 }
 

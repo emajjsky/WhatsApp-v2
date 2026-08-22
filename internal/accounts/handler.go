@@ -149,7 +149,8 @@ func (h *Handler) handleAccountByID(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"account": account})
 	case r.Method == http.MethodPost && action == "pair":
 		var payload struct {
-			Method sessions.PairingMethod `json:"method"`
+			Method            sessions.PairingMethod `json:"method"`
+			AllowLocalNetwork bool                   `json:"allow_local_network"`
 		}
 		if r.ContentLength > 0 {
 			if err := httpx.DecodeJSON(r, &payload); err != nil {
@@ -158,7 +159,7 @@ func (h *Handler) handleAccountByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		account, err := h.service.StartPairing(r.Context(), accountID, payload.Method)
+		account, err := h.service.StartPairingWithOptions(r.Context(), accountID, payload.Method, payload.AllowLocalNetwork)
 		if err != nil {
 			h.writeServiceError(w, err)
 			return

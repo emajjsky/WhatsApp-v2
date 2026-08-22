@@ -259,8 +259,8 @@ export function ProxyPoolPage() {
         <section className="panel desktop-proxy-runtime-panel">
           <div className="desktop-proxy-runtime-heading">
             <div>
-              <p className="eyebrow">实时检测</p>
-              <h3>本机链路状态</h3>
+              <p className="eyebrow">第一层：本机网络</p>
+              <h3>Clash / 系统代理状态</h3>
               <p className="desktop-proxy-runtime-message">{runtimeStatus?.message ?? '正在准备本机代理检测...'}</p>
             </div>
             <div className="desktop-proxy-runtime-actions">
@@ -269,19 +269,19 @@ export function ProxyPoolPage() {
               </span>
               <button className="secondary-button" type="button" disabled={runtimeLoading} onClick={() => void loadRuntimeStatus(true)}>
                 <Icon name="shield" />
-                {runtimeLoading ? '检测中...' : '立即检测'}
+                {runtimeLoading ? '检测中...' : '检测本机代理'}
               </button>
             </div>
           </div>
           <div className="desktop-proxy-runtime-grid">
-            <div><span>当前模式</span><strong>{runtimeModeLabel(runtimeStatus?.mode)}</strong></div>
-            <div><span>系统代理</span><strong>{runtimeStatus?.endpoint_reachable ? '已发现且端口可达' : runtimeStatus?.status === 'direct' ? '未发现 Windows 规则' : '未确认'}</strong></div>
-            <div><span>检测地址</span><strong className="proxy-runtime-value">{runtimeStatus?.proxy_display_url || '无'}</strong></div>
-            <div><span>外层出口 IP</span><strong>{runtimeStatus?.exit_ip || '未返回'}</strong></div>
+            <div><span>本机连接模式</span><strong>{runtimeModeLabel(runtimeStatus?.mode)}</strong></div>
+            <div><span>本机代理入口</span><strong>{runtimeStatus?.endpoint_reachable ? '已发现，端口可达' : runtimeStatus?.status === 'direct' ? '未发现 Windows 规则' : '未确认'}</strong></div>
+            <div><span>本机代理地址</span><strong className="proxy-runtime-value">{runtimeStatus?.proxy_display_url || '无'}</strong></div>
+            <div><span>本机出口 IP</span><strong>{runtimeStatus?.exit_ip || '未返回'}</strong></div>
             <div><span>最近检测</span><strong>{runtimeStatus?.checked_at ? formatDateTime(runtimeStatus.checked_at) : '尚未完成'}</strong></div>
           </div>
           <div className="desktop-proxy-runtime-rules">
-            <span>系统代理规则</span>
+            <span>本机代理规则</span>
             <code>{runtimeStatus?.proxy_rules || '等待检测结果'}</code>
           </div>
         </section>
@@ -301,19 +301,19 @@ export function ProxyPoolPage() {
             <label className="field"><span>出口 IP</span><input value={form.exitIP} onChange={(e) => setForm({ ...form, exitIP: e.target.value })} placeholder="可选，用于展示" /></label>
             <label className="field"><span>国家地区</span><input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="印度尼西亚-日惹" /></label>
             <label className="field"><span>有效期</span><input type="datetime-local" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} /></label>
-            <label className="field"><span>连接方式</span><select value={form.routeMode} onChange={(e) => setForm({ ...form, routeMode: e.target.value as RouteMode })}><option value="auto">自动判断（有 Clash 就链式）</option><option value="direct">直连代理</option><option value="system">强制通过 Clash/系统代理链式</option></select></label>
+            <label className="field"><span>连接方式</span><select value={form.routeMode} onChange={(e) => setForm({ ...form, routeMode: e.target.value as RouteMode })}><option value="auto">自动选择（有 Clash 就链式）</option><option value="direct">直接连接账号代理</option><option value="system">强制链式（必须经过 Clash）</option></select></label>
             <div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name={editingID ? 'check' : 'plus'} />{saving ? '保存中...' : editingID ? '保存修改' : '保存到本机'}</button>{editingID ? <button className="secondary-button" type="button" onClick={cancelEdit}>取消编辑</button> : null}</div>
           </form>
         </article>
 
         <article className="panel proxy-saved-panel">
-          <div className="panel-heading"><div><p className="eyebrow">已保存</p><h3>本机代理列表</h3></div><span className="subtle-text">{loading ? '加载中...' : `${items.length} 个代理`}</span></div>
+          <div className="panel-heading"><div><p className="eyebrow">第二层：账号网络</p><h3>账号独立代理</h3></div><span className="subtle-text">{loading ? '加载中...' : `${items.length} 个代理`}</span></div>
           <div className="proxy-list-scroll">
             {items.length === 0 && !loading ? <p className="subtle-text proxy-empty-state">还没有添加代理。</p> : <div className="proxy-list">{items.map((item) => (
               <div className="proxy-row" key={item.id}>
                 <div><strong>{item.name}</strong><span>{item.scheme.toUpperCase()} · {item.host}:{item.port}</span><span>{routeModeLabel(item.route_mode)} · {item.country ?? '未设置地区'}</span><span className={item.enabled ? 'proxy-status-enabled' : 'proxy-status-disabled'}>{item.enabled ? '已启用' : '已停用'}</span></div>
                 <div><span>{item.exit_ip ? `出口 IP ${item.exit_ip}` : '出口 IP 未检测'}</span><span className={item.last_check_error ? 'proxy-error-text' : item.last_checked_at ? 'proxy-status-enabled' : ''}>{proxyCheckLabel(item)}</span>{item.last_check_error ? <span className="proxy-error-text">{item.last_check_error}</span> : null}</div>
-                <div className="button-row"><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => handleEdit(item)}><Icon name="edit" />编辑</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleTest(item)}><Icon name="shield" />{busyID === item.id ? '检测中...' : '检测'}</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleToggle(item)}>{item.enabled ? '停用' : '启用'}</button><button className="danger-button" type="button" disabled={busyID === item.id} onClick={() => void handleDelete(item)}><Icon name="delete" />删除</button></div>
+                <div className="button-row"><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => handleEdit(item)}><Icon name="edit" />编辑</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleTest(item)}><Icon name="shield" />{busyID === item.id ? '检测中...' : '检测此代理'}</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleToggle(item)}>{item.enabled ? '停用' : '启用'}</button><button className="danger-button" type="button" disabled={busyID === item.id} onClick={() => void handleDelete(item)}><Icon name="delete" />删除</button></div>
               </div>
             ))}</div>}
           </div>
