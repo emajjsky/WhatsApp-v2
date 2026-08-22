@@ -719,6 +719,14 @@ a {
   font-size: 12px;
 }
 
+.desktop-proxy-runtime-scope,
+.proxy-panel-caption {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .proxy-runtime-badge {
   display: inline-flex;
   align-items: center;
@@ -826,23 +834,32 @@ a {
 }
 
 .page-proxies {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  height: 100%;
-  overflow: hidden;
+  min-height: 100%;
+  height: auto;
+  overflow-y: auto;
   padding-right: 4px;
+}
+
+.desktop-proxy-runtime-panel {
+  flex: 0 0 auto;
+  min-height: 190px;
 }
 
 .proxy-workspace {
   display: grid;
   grid-template-columns: minmax(430px, 0.82fr) minmax(0, 1.18fr);
   gap: 12px;
+  flex: 0 0 auto;
   min-height: 0;
 }
 
 .proxy-form-panel,
 .proxy-saved-panel {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
 }
@@ -986,8 +1003,6 @@ a {
 
 /* Keep the form and saved list usable at normal laptop heights. */
 .page-proxies {
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  align-content: start;
   overflow-y: auto;
 }
 
@@ -998,7 +1013,7 @@ a {
 
 .proxy-form-panel,
 .proxy-saved-panel {
-  max-height: min(700px, calc(100vh - 230px));
+  max-height: min(620px, calc(100vh - 330px));
 }
 
 .proxy-form-grid {
@@ -1009,8 +1024,9 @@ a {
 .proxy-help-panel {
   align-self: start;
   height: fit-content;
-  max-height: 150px;
-  overflow: hidden;
+  max-height: none;
+  overflow: visible;
+  flex: 0 0 auto;
 }
 
 .proxy-rules-grid {

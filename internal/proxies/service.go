@@ -290,7 +290,7 @@ func (s *Service) Test(ctx context.Context, id string) (View, error) {
 	exitIP, ipErr := probeExitIP(ctx, client)
 	whatsappErr := probeWhatsAppWeb(ctx, client)
 	if whatsappErr != nil {
-		message := fmt.Sprintf("此代理未通过链路检测（%s）。WhatsApp 网络不可达；出口 IP检测：%s；WhatsApp检测：%s", testRouteLabel(outerRoute, usesExistingSystemRoute), friendlyProbeError(ipErr), friendlyProbeError(whatsappErr))
+		message := fmt.Sprintf("此代理未通过完整链路检测（%s）。%s；出口 IP检测：%s；WhatsApp检测：%s", testRouteLabel(outerRoute, usesExistingSystemRoute), testHopFailure(outerRoute, usesExistingSystemRoute, item, password, whatsappErr), friendlyProbeError(ipErr), friendlyProbeError(whatsappErr))
 		_ = s.repository.UpdateCheck(ctx, id, "", message)
 		return View{}, fmt.Errorf("%s", message)
 	}
@@ -327,6 +327,31 @@ func testRouteLabel(outerRoute SystemProxyRoute, usesExistingSystemRoute bool) s
 		return "Clash 已完成该静态代理链路"
 	}
 	return "Clash 普通代理 → 账号静态代理"
+}
+
+func testHopFailure(outerRoute SystemProxyRoute, usesExistingSystemRoute bool, item Proxy, password string, err error) string {
+	if strings.TrimSpace(outerRoute.ProxyURL) == "" {
+		return fmt.Sprintf("账号静态代理连接失败：%s；凭据状态：%s", friendlyProbeError(err), proxyCredentialState(item, password))
+	}
+	if usesExistingSystemRoute {
+		return fmt.Sprintf("Clash 已完成静态代理链路，但 WhatsApp 目标连接失败：%s", friendlyProbeError(err))
+	}
+	return fmt.Sprintf("Clash 第一层已发现，失败发生在第二层静态代理 %s 握手：%s；凭据状态：%s", strings.ToUpper(item.Scheme), friendlyProbeError(err), proxyCredentialState(item, password))
+}
+
+func proxyCredentialState(item Proxy, password string) string {
+	hasUsername := strings.TrimSpace(item.Username) != ""
+	hasPassword := strings.TrimSpace(password) != ""
+	switch {
+	case hasUsername && hasPassword:
+		return "账号和密码已配置"
+	case hasUsername:
+		return "缺少密码"
+	case hasPassword:
+		return "缺少账号"
+	default:
+		return "未配置账号密码"
+	}
 }
 
 func sameProxyExitIP(localExitIP, outerExitIP string) bool {

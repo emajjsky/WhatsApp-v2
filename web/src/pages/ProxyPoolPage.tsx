@@ -262,6 +262,7 @@ export function ProxyPoolPage() {
               <p className="eyebrow">第一层：本机网络</p>
               <h3>Clash / 系统代理状态</h3>
               <p className="desktop-proxy-runtime-message">{runtimeStatus?.message ?? '正在准备本机代理检测...'}</p>
+              <p className="desktop-proxy-runtime-scope">这里只检测第一层 Clash 入口；不会代替下方代理的完整链路检测。</p>
             </div>
             <div className="desktop-proxy-runtime-actions">
               <span className={`proxy-runtime-badge proxy-runtime-${runtimeStatus?.status ?? 'checking'}`}>
@@ -269,19 +270,19 @@ export function ProxyPoolPage() {
               </span>
               <button className="secondary-button" type="button" disabled={runtimeLoading} onClick={() => void loadRuntimeStatus(true)}>
                 <Icon name="shield" />
-                {runtimeLoading ? '检测中...' : '检测本机代理'}
+                {runtimeLoading ? '检测中...' : '检测第一层 Clash'}
               </button>
             </div>
           </div>
           <div className="desktop-proxy-runtime-grid">
             <div><span>本机连接模式</span><strong>{runtimeModeLabel(runtimeStatus?.mode)}</strong></div>
-            <div><span>本机代理入口</span><strong>{runtimeStatus?.endpoint_reachable ? '已发现，端口可达' : runtimeStatus?.status === 'direct' ? '未发现 Windows 规则' : '未确认'}</strong></div>
-            <div><span>本机代理地址</span><strong className="proxy-runtime-value">{runtimeStatus?.proxy_display_url || '无'}</strong></div>
-            <div><span>本机出口 IP</span><strong>{runtimeStatus?.exit_ip || '未返回'}</strong></div>
+            <div><span>Clash 入口</span><strong>{runtimeStatus?.endpoint_reachable ? '已发现，端口可达' : runtimeStatus?.status === 'direct' ? '未发现 Windows 规则' : '未确认'}</strong></div>
+            <div><span>第一层地址</span><strong className="proxy-runtime-value">{runtimeStatus?.proxy_display_url || '无'}</strong></div>
+            <div><span>第一层出口 IP</span><strong>{runtimeStatus?.exit_ip || '未返回'}</strong></div>
             <div><span>最近检测</span><strong>{runtimeStatus?.checked_at ? formatDateTime(runtimeStatus.checked_at) : '尚未完成'}</strong></div>
           </div>
           <div className="desktop-proxy-runtime-rules">
-            <span>本机代理规则</span>
+            <span>Clash 代理规则</span>
             <code>{runtimeStatus?.proxy_rules || '等待检测结果'}</code>
           </div>
         </section>
@@ -307,13 +308,13 @@ export function ProxyPoolPage() {
         </article>
 
         <article className="panel proxy-saved-panel">
-          <div className="panel-heading"><div><p className="eyebrow">第二层：账号网络</p><h3>账号独立代理</h3></div><span className="subtle-text">{loading ? '加载中...' : `${items.length} 个代理`}</span></div>
+          <div className="panel-heading"><div><p className="eyebrow">第二层：账号网络</p><h3>账号独立代理</h3><p className="proxy-panel-caption">右侧按钮只检测当前选中的静态代理，不检测左侧新建表单。</p></div><span className="subtle-text">{loading ? '加载中...' : `${items.length} 个代理`}</span></div>
           <div className="proxy-list-scroll">
             {items.length === 0 && !loading ? <p className="subtle-text proxy-empty-state">还没有添加代理。</p> : <div className="proxy-list">{items.map((item) => (
               <div className="proxy-row" key={item.id}>
-                <div><strong>{item.name}</strong><span>{item.scheme.toUpperCase()} · {item.host}:{item.port}</span><span>{routeModeLabel(item.route_mode)} · {item.country ?? '未设置地区'}</span><span className={item.enabled ? 'proxy-status-enabled' : 'proxy-status-disabled'}>{item.enabled ? '已启用' : '已停用'}</span></div>
+                <div><strong>{item.name}</strong><span>{item.scheme.toUpperCase()} · {item.host}:{item.port}</span><span>{routeModeLabel(item.route_mode)} · {item.country ?? '未设置地区'}</span><span>{item.has_credentials ? '账号密码已保存' : '未保存账号密码'}</span><span className={item.enabled ? 'proxy-status-enabled' : 'proxy-status-disabled'}>{item.enabled ? '已启用' : '已停用'}</span></div>
                 <div><span>{item.exit_ip ? `出口 IP ${item.exit_ip}` : '出口 IP 未检测'}</span><span className={item.last_check_error ? 'proxy-error-text' : item.last_checked_at ? 'proxy-status-enabled' : ''}>{proxyCheckLabel(item)}</span>{item.last_check_error ? <span className="proxy-error-text">{item.last_check_error}</span> : null}</div>
-                <div className="button-row"><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => handleEdit(item)}><Icon name="edit" />编辑</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleTest(item)}><Icon name="shield" />{busyID === item.id ? '检测中...' : '检测此代理'}</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleToggle(item)}>{item.enabled ? '停用' : '启用'}</button><button className="danger-button" type="button" disabled={busyID === item.id} onClick={() => void handleDelete(item)}><Icon name="delete" />删除</button></div>
+                <div className="button-row"><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => handleEdit(item)}><Icon name="edit" />编辑</button><button className="secondary-button" title="检测当前静态代理到 WhatsApp 的完整连接路径" type="button" disabled={busyID === item.id} onClick={() => void handleTest(item)}><Icon name="shield" />{busyID === item.id ? '检测中...' : '检测完整链路'}</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleToggle(item)}>{item.enabled ? '停用' : '启用'}</button><button className="danger-button" type="button" disabled={busyID === item.id} onClick={() => void handleDelete(item)}><Icon name="delete" />删除</button></div>
               </div>
             ))}</div>}
           </div>
