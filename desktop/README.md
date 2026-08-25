@@ -15,7 +15,12 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.44`.
+Current packaging version: `0.1.45`.
+
+## 0.1.45 账号列表滚动
+
+- 账号列表恢复可见的横向滚动条，可以查看全部账号卡片。
+- 保留触控板和鼠标横向滚动，不改变账号选择逻辑。
 
 ## 0.1.44 本机出口 IP
 

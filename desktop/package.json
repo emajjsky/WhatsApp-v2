@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-agent-desktop",
-  "version": "0.1.44",
+  "version": "0.1.45",
   "private": true,
   "description": "Windows desktop shell for WhatsApp Agent",
   "main": "src/main.cjs",
@@ -11,13 +11,14 @@
     "prepare:agent": "powershell -ExecutionPolicy Bypass -File scripts/prepare-agent-runner.ps1",
     "prepare:postgres": "powershell -ExecutionPolicy Bypass -File scripts/prepare-postgres.ps1",
     "prepare:runtime": "npm run build:web && npm run prepare:api && npm run prepare:agent && npm run prepare:postgres",
-    "dist:win": "npm run prepare:runtime && electron-builder --win nsis --x64"
+    "dist:win": "npm run prepare:runtime && electron-builder --win nsis --x64 --publish never"
   },
   "devDependencies": {
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12"
   },
   "build": {
+    "publish": null,
     "appId": "com.whatsappagent.desktop",
     "productName": "WhatsApp Agent",
     "icon": "build/icon.ico",
