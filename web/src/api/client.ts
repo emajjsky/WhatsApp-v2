@@ -1080,6 +1080,15 @@ export async function listChats(params: {
   if (params.chatType) {
     searchParams.set('chat_type', params.chatType)
   }
+  if (params.labelId) {
+    searchParams.set('label_id', params.labelId)
+  }
+  if (params.archived !== undefined) {
+    searchParams.set('archived', String(params.archived))
+  }
+  if (params.unreadOnly) {
+    searchParams.set('unread_only', 'true')
+  }
   if (params.limit) {
     searchParams.set('limit', String(params.limit))
   }

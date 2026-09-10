@@ -1,11 +1,11 @@
-import { useDeferredValue, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   listAccounts,
-  listContacts,
-  updateContactNote,
+  listChats,
+  updateChatMetadata,
   type AccountView,
-  type ContactView,
+  type ChatSummary,
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
 import { Icon } from '../components/Icon'
@@ -14,7 +14,7 @@ export function ContactsPage() {
   const navigate = useNavigate()
   const [accounts, setAccounts] = useState<AccountView[]>([])
   const [accountId, setAccountId] = useState('')
-  const [contacts, setContacts] = useState<ContactView[]>([])
+  const [contacts, setContacts] = useState<ChatSummary[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
@@ -32,8 +32,9 @@ export function ContactsPage() {
   useEffect(() => {
     void listAccounts()
       .then((response) => {
-        setAccounts(response.accounts)
-        setAccountId(response.accounts[0]?.id ?? '')
+        const nextAccounts = Array.isArray(response.accounts) ? response.accounts : []
+        setAccounts(nextAccounts)
+        setAccountId(nextAccounts[0]?.id ?? '')
       })
       .catch((loadError) => setError(loadError instanceof Error ? loadError.message : '加载账号失败'))
   }, [])
@@ -47,11 +48,11 @@ export function ContactsPage() {
     let cancelled = false
     setLoading(true)
     setError(undefined)
-    void listContacts({ accountId, query: deferredQuery.trim() || undefined, limit: 2000 })
+    void listChats({ accountId, query: deferredQuery.trim() || undefined, chatType: 'direct', limit: 2000 })
       .then((response) => {
         if (cancelled) return
-        setContacts(response.contacts)
-        setSelectedId((current) => response.contacts.some((item) => item.id === current) ? current : response.contacts[0]?.id ?? '')
+        setContacts(response.chats)
+        setSelectedId((current) => response.chats.some((item) => item.id === current) ? current : response.chats[0]?.id ?? '')
       })
       .catch((loadError) => {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : '加载联系人失败')
@@ -72,8 +73,14 @@ export function ContactsPage() {
     setSaving(true)
     setError(undefined)
     try {
-      const response = await updateContactNote(selected.id, note)
-      setContacts((current) => current.map((item) => item.id === response.contact.id ? response.contact : item))
+      const response = await updateChatMetadata(selected.id, {
+        note,
+        pinned: selected.pinned,
+        archived: selected.archived,
+        marked_unread: selected.marked_unread,
+        label_ids: (selected.labels ?? []).map((label) => label.id),
+      })
+      setContacts((current) => current.map((item) => item.id === response.chat.id ? { ...item, ...response.chat } : item))
       setNotice('备注已保存')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存备注失败')
@@ -101,13 +108,13 @@ export function ContactsPage() {
         <div className="contacts-list">
           {contacts.map((contact) => (
             <button key={contact.id} type="button" className={`contact-list-item${selected?.id === contact.id ? ' active' : ''}`} onClick={() => setSelectedId(contact.id)}>
-              <span className="contact-avatar">{contact.display_name.trim()[0]?.toUpperCase() || '联'}</span>
+              <span className="contact-avatar">{getContactDisplayName(contact).trim()[0]?.toUpperCase() || '联'}</span>
               <span className="contact-list-copy">
-                <strong>{contact.display_name}</strong>
-                <small>{contact.phone_number || contact.wa_jid}</small>
-                <span>{contact.note || '暂无备注'}</span>
+                <strong>{getContactDisplayName(contact)}</strong>
+                <small>{contact.phone_number || contact.wa_chat_jid}</small>
+                <span className={contact.note ? '' : 'empty'}>{contact.note || '添加备注'}</span>
               </span>
-              {contact.is_business ? <span className="contact-business">企业</span> : null}
+              <span className="contact-list-time">{formatContactTime(contact.last_message_at)}</span>
             </button>
           ))}
           {!loading && !contacts.length ? <EmptyPanel title="没有联系人" description="联系人会在 WhatsApp 消息同步后显示。" /> : null}
@@ -118,27 +125,25 @@ export function ContactsPage() {
         {selected ? (
           <>
             <header className="contact-profile-head">
-              <span className="contact-avatar large">{selected.display_name.trim()[0]?.toUpperCase() || '联'}</span>
-              <div><h2>{selected.display_name}</h2><p>{selected.phone_number || selected.wa_jid}</p></div>
-              {selected.chat_id ? (
-                <button className="primary-button" type="button" onClick={() => navigate(`/chats?account_id=${selected.account_id}&chat_id=${selected.chat_id}`)}>
+              <span className="contact-avatar large">{getContactDisplayName(selected).trim()[0]?.toUpperCase() || '联'}</span>
+              <div><h2>{getContactDisplayName(selected)}</h2><p>{selected.phone_number || selected.wa_chat_jid}</p></div>
+              {selected.id ? (
+                <button className="primary-button" type="button" onClick={() => navigate(`/chats?account_id=${selected.account_id}&chat_id=${selected.id}`)}>
                   <Icon name="chat" />进入对话
                 </button>
               ) : null}
             </header>
             <dl className="contact-facts">
-              <div><dt>WhatsApp ID</dt><dd>{selected.wa_jid}</dd></div>
-              <div><dt>账号类型</dt><dd>{selected.is_business ? 'WhatsApp Business' : '普通账号'}</dd></div>
+              <div><dt>WhatsApp ID</dt><dd>{selected.wa_chat_jid}</dd></div>
+              <div><dt>会话类型</dt><dd>单聊</dd></div>
               <div><dt>最近沟通</dt><dd>{formatContactTime(selected.last_message_at)}</dd></div>
             </dl>
-            <section className="contact-label-section">
-              <span>会话标签</span>
-              <div className="chat-label-row">
-                {selected.labels.length ? selected.labels.map((label) => <span key={label.id} className="chat-label-chip" style={{ '--label-color': label.color } as CSSProperties}>{label.name}</span>) : <small>暂无标签，可在对话页添加</small>}
-              </div>
+            <section className="contact-latest-message">
+              <span>最近消息</span>
+              <p>{selected.latest_message_preview || getContactPreview(selected)}</p>
             </section>
             <label className="field contact-note-field">
-              <span>联系人备注</span>
+              <span>会话备注</span>
               <textarea rows={8} value={note} onChange={(event) => setNote(event.target.value)} placeholder="记录客户身份、偏好、跟进事项等" />
             </label>
             <div className="contact-detail-actions">
@@ -156,4 +161,15 @@ export function ContactsPage() {
 function formatContactTime(value?: string) {
   if (!value) return '暂无记录'
   return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+
+function getContactDisplayName(chat: ChatSummary) {
+  return chat.title?.trim() || chat.phone_number?.trim() || chat.wa_chat_jid
+}
+
+function getContactPreview(chat: ChatSummary) {
+  if (chat.latest_message_type && chat.latest_message_type !== 'text') {
+    return `收到${chat.latest_message_type}消息`
+  }
+  return '暂无文字消息'
 }

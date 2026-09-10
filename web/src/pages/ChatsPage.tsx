@@ -449,11 +449,12 @@ export function ChatsPage() {
   const loadAccountsList = useCallback(async () => {
     try {
       const response = await listAccounts()
-      setAccounts(response.accounts)
+      const nextAccounts = Array.isArray(response.accounts) ? response.accounts : []
+      setAccounts(nextAccounts)
       setSelectedAccountId((current) =>
-        response.accounts.some((account) => account.id === current)
+        nextAccounts.some((account) => account.id === current)
           ? current
-          : response.accounts[0]?.id ?? '',
+          : nextAccounts[0]?.id ?? '',
       )
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载账号失败')
@@ -1536,8 +1537,12 @@ export function ChatsPage() {
                         <small>{formatDateTime(chat.last_message_at)}</small>
                       </div>
 
+                      <span className={`whatsapp-chat-row-note${chat.note ? '' : ' empty'}`}>
+                        {chat.note || '添加备注'}
+                      </span>
+
                       <div className="chat-row-meta whatsapp-chat-row-meta">
-                        <p>{chat.note || getChatPreviewText(chat)}</p>
+                        <p>{getChatPreviewText(chat)}</p>
                         <span className="chat-row-badges">
                           {chat.labels.slice(0, 2).map((label) => <span key={label.id} className="chat-label-chip compact" style={{ '--label-color': label.color } as CSSProperties}>{label.name}</span>)}
                           <StatusBadge status={chat.chat_type} />

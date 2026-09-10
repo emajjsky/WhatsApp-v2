@@ -914,6 +914,9 @@ LIMIT $%d OFFSET $%d`, where, len(args)+1, len(args)+2), listArgs...)
 		items[index].Labels = []ChatLabel{}
 		if items[index].ChatID != nil {
 			items[index].Labels = labelsByChat[*items[index].ChatID]
+			if items[index].Labels == nil {
+				items[index].Labels = []ChatLabel{}
+			}
 		}
 	}
 	return items, total, nil
@@ -966,6 +969,9 @@ WHERE ct.id = $1`
 			return ContactView{}, err
 		}
 		item.Labels = labels[*item.ChatID]
+		if item.Labels == nil {
+			item.Labels = []ChatLabel{}
+		}
 	}
 	return item, nil
 }
