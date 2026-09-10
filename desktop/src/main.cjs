@@ -252,6 +252,29 @@ function requiredFile(filePath, label) {
   return filePath
 }
 
+function hasNonASCIIPath(value) {
+  return Array.from(String(value || '')).some((character) => character.codePointAt(0) > 0x7f)
+}
+
+function validatePackagedInstallPath() {
+  if (!app.isPackaged) {
+    return true
+  }
+
+  const paths = [process.execPath, resourcesRoot(), runtimeRoot()]
+  const invalidPath = paths.find((value) => hasNonASCIIPath(value))
+  if (!invalidPath) {
+    return true
+  }
+
+  dialog.showErrorBox(
+    '安装路径不受支持',
+    `WhatsApp Agent 当前不能从包含中文或其他非 ASCII 字符的安装目录启动。\n\n请卸载后重新安装到纯英文路径，例如：\nC:\\Program Files\\WhatsApp Agent\n\n当前路径：${invalidPath}`,
+  )
+  app.exit(1)
+  return false
+}
+
 function appendLog(name, chunk) {
   ensureDir(logRoot())
   fs.appendFileSync(path.join(logRoot(), `${name}.log`), chunk)
@@ -288,10 +311,30 @@ function runOnce(name, command, args, options = {}) {
       appendLog(name, chunk)
     })
     child.once('error', reject)
-    child.once('exit', (code) => {
-      resolve({ code, stdout, stderr })
+    child.once('exit', (code, signal) => {
+      resolve({ code, signal, stdout, stderr })
     })
   })
+}
+
+function processFailure(result, fallback) {
+  const output = `${result.stderr || ''}${result.stdout || ''}`.trim()
+  if (output) {
+    return output
+  }
+
+  const status = result.code == null ? `信号 ${result.signal || 'unknown'}` : `退出码 ${result.code}`
+  return `${fallback}（${status}）。目标电脑可能缺少或未正确安装 Microsoft Visual C++ x64 运行库。`
+}
+
+function preparePostgresDataDirectory(pgData) {
+  if (fs.existsSync(path.join(pgData, 'PG_VERSION'))) {
+    return false
+  }
+
+  fs.rmSync(pgData, { recursive: true, force: true })
+  ensureDir(pgData)
+  return true
 }
 
 function runSync(name, command, args, options = {}) {
@@ -398,11 +441,15 @@ async function startPostgresFixed() {
   const psqlExe = requiredFile(path.join(pgBin, 'psql.exe'), 'PostgreSQL psql.exe')
   const pgData = path.join(userDataRoot(), 'postgres-data')
 
-  ensureDir(pgData)
-  if (!fs.existsSync(path.join(pgData, 'PG_VERSION'))) {
-    const init = await runOnce('postgres-initdb', initdbExe, ['-D', pgData, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8'])
+  if (preparePostgresDataDirectory(pgData)) {
+    const init = await runOnce(
+      'postgres-initdb',
+      initdbExe,
+      ['-D', pgData, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--locale=C'],
+      { env: { ...process.env, PGCLIENTENCODING: 'UTF8' } },
+    )
     if (init.code !== 0) {
-      throw new Error(`Initialize local PostgreSQL failed: ${init.stderr || init.stdout}`)
+      throw new Error(`初始化本地 PostgreSQL 失败：${processFailure(init, 'initdb 未能正常启动')}`)
     }
   }
 
@@ -1161,6 +1208,9 @@ async function createWindow() {
 }
 
 async function boot() {
+  if (!validatePackagedInstallPath()) {
+    return
+  }
   ensureDir(logRoot())
   ensureDir(dataRoot())
   configureAppMenu()

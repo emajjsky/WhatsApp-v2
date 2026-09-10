@@ -6,7 +6,9 @@ import {
   deleteAgentSkillFile,
   listAccounts,
   listAgentSkills,
+  listProviderPresets,
   listDesktopDevices,
+  deleteProviderPreset,
   deleteSystemAgentConfig,
   listAssistantUsageLogFilters,
   listAssistantUsageLogs,
@@ -19,12 +21,14 @@ import {
   updateDesktopDeviceStatus,
   upsertAgentSkill,
   upsertAgentSkillFile,
+  upsertProviderPreset,
   upsertSystemAgentConfig,
   type AgentSkillFileKind,
   type AgentSkillFileView,
   type AgentSkillView,
   type AgentProviderConfig,
   type AgentPurpose,
+  type ProviderPresetView,
   type AssistantUsageAction,
   type AssistantUsageLogView,
   type AccountView,
@@ -41,7 +45,7 @@ import {
 } from '../api/client'
 import { Icon } from '../components/Icon'
 
-type AdminTab = 'users' | 'invitations' | 'agents' | 'skills' | 'usageLogs'
+type AdminTab = 'users' | 'invitations' | 'agents' | 'skills' | 'providerPresets' | 'usageLogs'
 type ProviderType = 'openai_compatible' | 'coze' | 'n8n' | 'webhook'
 
 interface AgentConfigForm {
@@ -69,6 +73,17 @@ interface AgentConfigForm {
   riskLabels: string
   promptTemplate: string
   skillIds: string[]
+  providerPresetId: string
+}
+
+interface ProviderPresetForm {
+  id: string
+  name: string
+  providerType: ProviderType
+  baseUrl: string
+  models: string
+  defaultModel: string
+  enabled: boolean
 }
 
 interface SkillForm {
@@ -189,6 +204,12 @@ export function AdminPage() {
             onClick={() => setTab('skills')}
           />
           <AdminTabButton
+            active={tab === 'providerPresets'}
+            title="Provider 预设"
+            hint="地址和模型下拉选项"
+            onClick={() => setTab('providerPresets')}
+          />
+          <AdminTabButton
             active={tab === 'usageLogs'}
             title="采纳数据"
             hint="方案采纳和发送记录"
@@ -202,6 +223,7 @@ export function AdminPage() {
         {tab === 'invitations' ? <InvitationAdminPanel /> : null}
         {tab === 'agents' ? <SystemAgentPanel /> : null}
         {tab === 'skills' ? <SkillAdminPanel /> : null}
+        {tab === 'providerPresets' ? <ProviderPresetPanel /> : null}
         {tab === 'usageLogs' ? <AssistantUsageLogPanel /> : null}
       </main>
     </div>
@@ -1551,9 +1573,133 @@ function AssistantUsageLogPanel() {
   )
 }
 
+function ProviderPresetPanel() {
+  const [presets, setPresets] = useState<ProviderPresetView[]>([])
+  const [selectedId, setSelectedId] = useState('new')
+  const [form, setForm] = useState<ProviderPresetForm>(() => createDefaultProviderPresetForm())
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  const [notice, setNotice] = useState<string>()
+  const selected = useMemo(() => presets.find((item) => item.id === selectedId), [presets, selectedId])
+
+  useEffect(() => {
+    void load()
+  }, [])
+
+  useEffect(() => {
+    setForm(selected ? mapProviderPresetToForm(selected) : createDefaultProviderPresetForm())
+  }, [selected, selectedId])
+
+  async function load() {
+    setLoading(true)
+    setError(undefined)
+    try {
+      const response = await listProviderPresets()
+      setPresets(response.presets)
+      setSelectedId((current) => current === 'new' || response.presets.some((item) => item.id === current)
+        ? current
+        : response.presets[0]?.id ?? 'new')
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载 Provider 预设失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setError(undefined)
+    setNotice(undefined)
+    const models = parsePresetModels(form.models)
+    if (!form.name.trim() || !models.length && form.providerType === 'openai_compatible') {
+      setError(form.name.trim() ? 'OpenAI-compatible 预设至少需要一个模型' : '预设名称不能为空')
+      setSaving(false)
+      return
+    }
+    try {
+      const response = await upsertProviderPreset({
+        id: form.id || undefined,
+        name: form.name.trim(),
+        provider_type: form.providerType,
+        base_url: form.baseUrl.trim(),
+        models,
+        default_model: form.defaultModel.trim(),
+        enabled: form.enabled,
+      })
+      setPresets((current) => [...current.filter((item) => item.id !== response.preset.id), response.preset])
+      setSelectedId(response.preset.id)
+      setNotice('Provider 预设已保存')
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : '保存 Provider 预设失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!selected || saving || !window.confirm(`确认删除预设「${selected.name}」？`)) return
+    setSaving(true)
+    try {
+      await deleteProviderPreset(selected.id)
+      setPresets((current) => current.filter((item) => item.id !== selected.id))
+      setSelectedId('new')
+      setNotice('Provider 预设已删除')
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : '删除 Provider 预设失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="panel admin-agent-panel provider-preset-panel">
+      <div className="panel-heading"><div><p className="eyebrow">Provider / Model</p><h3>{loading ? '加载预设中' : '连接预设'}</h3></div></div>
+      <div className="admin-agent-workbench">
+        <aside className="admin-agent-sidebar">
+          <div className="system-agent-selector-head"><strong>已保存预设</strong><button className="secondary-button" type="button" onClick={() => setSelectedId('new')} disabled={selectedId === 'new'}><Icon name="plus" />新建</button></div>
+          <div className="system-agent-list">
+            {presets.map((preset) => <button key={preset.id} type="button" className={`system-agent-item${preset.id === selectedId ? ' active' : ''}`} onClick={() => setSelectedId(preset.id)}><span><strong>{preset.name}</strong><small>{preset.enabled ? '已启用' : '已停用'}</small></span><small>{preset.provider_type}</small></button>)}
+            {!presets.length ? <div className="system-agent-empty">还没有 Provider 预设</div> : null}
+          </div>
+        </aside>
+        <form className="agent-config-form admin-agent-editor" onSubmit={handleSubmit}>
+          <div className="admin-agent-editor-body">
+            <section className="admin-form-section">
+              <div className="admin-form-section-title"><strong>预设信息</strong><span>智能体编辑时可直接选择，不需要重复填写地址和模型</span></div>
+              <div className="two-column-grid">
+                <label className="field"><span>预设名称</span><input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：OpenAI 主账号" /></label>
+                <label className="field"><span>Provider 类型</span><select value={form.providerType} onChange={(event) => setForm((current) => ({ ...current, providerType: event.target.value as ProviderType }))}>{providerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+              </div>
+              <label className="field"><span>Base URL / API 地址</span><input value={form.baseUrl} onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></label>
+              <label className="field"><span>模型列表</span><textarea rows={5} value={form.models} onChange={(event) => setForm((current) => ({ ...current, models: event.target.value }))} placeholder="每行一个模型，例如：gpt-4o-mini" /></label>
+              <div className="two-column-grid"><label className="field"><span>默认模型</span><select value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))}><option value="">不指定</option>{parsePresetModels(form.models).map((model) => <option key={model} value={model}>{model}</option>)}</select></label><label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>允许智能体使用</span></label></div>
+            </section>
+          </div>
+          <div className="admin-agent-actions">{notice ? <div className="success-banner">{notice}</div> : null}{error ? <div className="error-banner">{error}</div> : null}<div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name="save" />{saving ? '保存中...' : '保存预设'}</button>{selected ? <button className="danger-button" type="button" onClick={() => void handleDelete()} disabled={saving}><Icon name="delete" />删除预设</button> : null}</div></div>
+        </form>
+      </div>
+    </section>
+  )
+}
+
+function createDefaultProviderPresetForm(): ProviderPresetForm {
+  return { id: '', name: '', providerType: 'openai_compatible', baseUrl: '', models: '', defaultModel: '', enabled: true }
+}
+
+function mapProviderPresetToForm(preset: ProviderPresetView): ProviderPresetForm {
+  return { id: preset.id, name: preset.name, providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, models: preset.models.join('\n'), defaultModel: preset.default_model, enabled: preset.enabled }
+}
+
+function parsePresetModels(value: string) {
+  return Array.from(new Set(value.split(/[\n,，]+/).map((item) => item.trim()).filter(Boolean)))
+}
+
 function SystemAgentPanel() {
   const [configs, setConfigs] = useState<SystemAgentConfigView[]>([])
   const [skills, setSkills] = useState<AgentSkillView[]>([])
+  const [providerPresets, setProviderPresets] = useState<ProviderPresetView[]>([])
   const [purpose, setPurpose] = useState<AgentPurpose>('reply')
   const [selectedConfigId, setSelectedConfigId] = useState('new')
   const [form, setForm] = useState<AgentConfigForm>(() => createDefaultConfigForm('reply'))
@@ -1575,9 +1721,14 @@ function SystemAgentPanel() {
     setLoading(true)
     setError(undefined)
     try {
-      const [response, skillResponse] = await Promise.all([listSystemAgentConfigs(), listAgentSkills()])
+      const [response, skillResponse, presetResponse] = await Promise.all([
+        listSystemAgentConfigs(),
+        listAgentSkills(),
+        listProviderPresets(),
+      ])
       setConfigs(response.configs)
       setSkills(skillResponse.skills)
+      setProviderPresets(presetResponse.presets)
       setSelectedConfigId((current) => {
         if (current === 'new') {
           return current
@@ -1822,6 +1973,34 @@ function SystemAgentPanel() {
                     </button>
                   ))}
               </div>
+
+              <label className="field admin-provider-preset-select">
+                <span>Provider 预设</span>
+                <select
+                  value={form.providerPresetId}
+                  onChange={(event) => {
+                    const presetID = event.target.value
+                    const preset = providerPresets.find((item) => item.id === presetID)
+                    if (!preset) {
+                      updateForm({ providerPresetId: '' })
+                      return
+                    }
+                    const providerType = normalizeProviderType(preset.provider_type)
+                    updateForm({
+                      providerPresetId: preset.id,
+                      providerType,
+                      baseUrl: preset.base_url,
+                      endpointUrl: preset.base_url,
+                      model: preset.default_model || preset.models[0] || '',
+                    })
+                  }}
+                >
+                  <option value="">手动填写</option>
+                  {providerPresets.filter((preset) => preset.enabled).map((preset) => (
+                    <option key={preset.id} value={preset.id}>{preset.name}</option>
+                  ))}
+                </select>
+              </label>
 
             {form.providerType === 'openai_compatible' ? (
               <div className="agent-provider-fields">
@@ -2102,6 +2281,7 @@ function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
           ? defaultStatusCardPrompt
           : defaultReplyPrompt,
     skillIds: [],
+    providerPresetId: '',
   }
 }
 
@@ -2277,6 +2457,7 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
     riskLabels: readConfigStringList(providerConfig, 'risk_labels', defaultRiskLabels).join('\n'),
     promptTemplate: config.prompt_template || fallback.promptTemplate,
     skillIds: config.skill_ids ?? [],
+    providerPresetId: readConfigString(providerConfig, 'preset_id'),
   }
 }
 
@@ -2291,6 +2472,7 @@ function buildProviderConfig(form: AgentConfigForm): AgentProviderConfig {
       max_tokens: optionalNumber(form.maxTokens),
       timeout_seconds: optionalNumber(form.timeoutSeconds),
       enable_thinking: form.enableThinking,
+      preset_id: form.providerPresetId,
     })
   }
 
@@ -2302,6 +2484,7 @@ function buildProviderConfig(form: AgentConfigForm): AgentProviderConfig {
     method: form.method.trim().toUpperCase() || 'POST',
     response_path: form.responsePath.trim() || 'draft',
     timeout_seconds: optionalNumber(form.timeoutSeconds),
+    preset_id: form.providerPresetId,
   })
 }
 

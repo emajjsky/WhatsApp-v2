@@ -65,11 +65,15 @@ type SendMediaInput struct {
 }
 
 type textSender interface {
-	SendText(ctx context.Context, accountID, chatJID, text string) (SendResult, error)
+	SendText(ctx context.Context, accountID, chatJID, text string, replyTo ...string) (SendResult, error)
 }
 
 type mediaSender interface {
 	SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error)
+}
+
+type readMarker interface {
+	MarkRead(ctx context.Context, accountID, chatJID string, messageIDs []string, senderJID string, timestamp time.Time) error
 }
 
 type Manager struct {
@@ -340,7 +344,7 @@ func (c *PlaceholderConnector) Logout(_ context.Context, accountID string) error
 	return nil
 }
 
-func (c *PlaceholderConnector) SendText(_ context.Context, accountID, chatJID, text string) (SendResult, error) {
+func (c *PlaceholderConnector) SendText(_ context.Context, accountID, chatJID, text string, _ ...string) (SendResult, error) {
 	trimmedChat := strings.TrimSpace(chatJID)
 	if trimmedChat == "" {
 		return SendResult{}, fmt.Errorf("chat_jid is required")
@@ -496,13 +500,13 @@ func (c *PlaceholderConnector) SendMedia(_ context.Context, accountID, chatJID s
 	}, nil
 }
 
-func (m *Manager) SendText(ctx context.Context, accountID, chatJID, text string) (SendResult, error) {
+func (m *Manager) SendText(ctx context.Context, accountID, chatJID, text string, replyTo ...string) (SendResult, error) {
 	sender, ok := m.connector.(textSender)
 	if !ok {
 		return SendResult{}, fmt.Errorf("session connector does not support sending messages")
 	}
 
-	return sender.SendText(ctx, accountID, chatJID, text)
+	return sender.SendText(ctx, accountID, chatJID, text, replyTo...)
 }
 
 func (m *Manager) SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error) {
@@ -512,6 +516,14 @@ func (m *Manager) SendMedia(ctx context.Context, accountID, chatJID string, inpu
 	}
 
 	return sender.SendMedia(ctx, accountID, chatJID, input)
+}
+
+func (m *Manager) MarkRead(ctx context.Context, accountID, chatJID string, messageIDs []string, senderJID string, timestamp time.Time) error {
+	marker, ok := m.connector.(readMarker)
+	if !ok {
+		return fmt.Errorf("session connector does not support read receipts")
+	}
+	return marker.MarkRead(ctx, accountID, chatJID, messageIDs, senderJID, timestamp)
 }
 
 func (c *PlaceholderConnector) SetEventHandler(handler func(Event)) {

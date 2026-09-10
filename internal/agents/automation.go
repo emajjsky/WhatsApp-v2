@@ -19,7 +19,7 @@ import (
 
 type SessionRuntime interface {
 	Subscribe(buffer int) (<-chan sessions.Event, func())
-	SendText(ctx context.Context, accountID, chatJID, text string) (sessions.SendResult, error)
+	SendText(ctx context.Context, accountID, chatJID, text string, replyTo ...string) (sessions.SendResult, error)
 }
 
 type Automation struct {

@@ -12,6 +12,7 @@ const baseNavItems: Array<{
 }> = [
   { to: '/accounts', label: '登录', icon: 'account', permission: 'accounts' },
   { to: '/chats', label: '对话', icon: 'chat', permission: 'chats' },
+  { to: '/contacts', label: '联系人', icon: 'contacts', permission: 'chats' },
   { to: '/scripts', label: '话术', icon: 'script', permission: 'scripts' },
   { to: '/exports', label: '导出', icon: 'export', permission: 'exports' },
   { to: '/proxies', label: 'IP代理', icon: 'shield', permission: 'accounts' },

@@ -20,21 +20,29 @@ const (
 )
 
 type messageSender interface {
-	SendText(ctx context.Context, accountID, chatJID, text string) (sessions.SendResult, error)
+	SendText(ctx context.Context, accountID, chatJID, text string, replyTo ...string) (sessions.SendResult, error)
 	SendMedia(ctx context.Context, accountID, chatJID string, input sessions.SendMediaInput) (sessions.SendResult, error)
+}
+
+type chatReadMarker interface {
+	MarkRead(ctx context.Context, accountID, chatJID string, messageIDs []string, senderJID string, timestamp time.Time) error
 }
 
 type Service struct {
 	repository *Repository
 	sender     messageSender
+	readMarker chatReadMarker
 }
 
 type ListChatsInput struct {
-	AccountID string
-	Query     string
-	ChatType  ingest.ChatType
-	Limit     int
-	Offset    int
+	AccountID  string
+	Query      string
+	ChatType   ingest.ChatType
+	LabelID    string
+	Archived   *bool
+	UnreadOnly bool
+	Limit      int
+	Offset     int
 }
 
 type ListChatsResult struct {
@@ -58,9 +66,45 @@ type MessageHistoryResult struct {
 	NextBefore *time.Time    `json:"next_before,omitempty"`
 }
 
+type ListContactsInput struct {
+	AccountID string
+	Query     string
+	Limit     int
+	Offset    int
+}
+
+type ListContactsResult struct {
+	Contacts []ContactView `json:"contacts"`
+	Total    int           `json:"total"`
+	Limit    int           `json:"limit"`
+	Offset   int           `json:"offset"`
+}
+
+type UpdateContactInput struct {
+	ContactID string
+	Note      string `json:"note"`
+}
+
+type CreateLabelInput struct {
+	AccountID string `json:"account_id"`
+	Name      string `json:"name"`
+	Color     string `json:"color"`
+}
+
+type UpdateChatMetadataInput struct {
+	ChatID       string     `json:"chat_id"`
+	Note         string     `json:"note"`
+	Pinned       bool       `json:"pinned"`
+	Archived     bool       `json:"archived"`
+	MarkedUnread bool       `json:"marked_unread"`
+	MutedUntil   *time.Time `json:"muted_until"`
+	LabelIDs     []string   `json:"label_ids"`
+}
+
 type SendMessageInput struct {
-	ChatID      string
-	MessageText string `json:"message_text"`
+	ChatID           string
+	MessageText      string `json:"message_text"`
+	ReplyToMessageID string `json:"reply_to_wa_message_id,omitempty"`
 }
 
 type SendMessageResult struct {
@@ -97,7 +141,11 @@ func NewService(repository *Repository, sender messageSender) (*Service, error) 
 		return nil, fmt.Errorf("chat service requires a repository")
 	}
 
-	return &Service{repository: repository, sender: sender}, nil
+	service := &Service{repository: repository, sender: sender}
+	if marker, ok := sender.(chatReadMarker); ok {
+		service.readMarker = marker
+	}
+	return service, nil
 }
 
 const (
@@ -127,11 +175,14 @@ func (s *Service) ListChats(ctx context.Context, input ListChatsInput) (ListChat
 	}
 
 	items, total, err := s.repository.ListChats(ctx, ChatListFilters{
-		AccountID: strings.TrimSpace(input.AccountID),
-		Query:     strings.TrimSpace(input.Query),
-		ChatType:  chatType,
-		Limit:     limit,
-		Offset:    offset,
+		AccountID:  strings.TrimSpace(input.AccountID),
+		Query:      strings.TrimSpace(input.Query),
+		ChatType:   chatType,
+		LabelID:    strings.TrimSpace(input.LabelID),
+		Archived:   input.Archived,
+		UnreadOnly: input.UnreadOnly,
+		Limit:      limit,
+		Offset:     offset,
 	})
 	if err != nil {
 		return ListChatsResult{}, err
@@ -143,6 +194,131 @@ func (s *Service) ListChats(ctx context.Context, input ListChatsInput) (ListChat
 		Limit:  limit,
 		Offset: offset,
 	}, nil
+}
+
+func (s *Service) ListContacts(ctx context.Context, input ListContactsInput) (ListContactsResult, error) {
+	accountID := strings.TrimSpace(input.AccountID)
+	if accountID == "" {
+		return ListContactsResult{}, fmt.Errorf("account_id is required")
+	}
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	offset := input.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	items, total, err := s.repository.ListContacts(ctx, accountID, strings.TrimSpace(input.Query), limit, offset)
+	if err != nil {
+		return ListContactsResult{}, err
+	}
+	return ListContactsResult{Contacts: items, Total: total, Limit: limit, Offset: offset}, nil
+}
+
+func (s *Service) UpdateContact(ctx context.Context, input UpdateContactInput) (ContactView, error) {
+	contactID := strings.TrimSpace(input.ContactID)
+	if contactID == "" {
+		return ContactView{}, fmt.Errorf("contact_id is required")
+	}
+	if len([]rune(input.Note)) > 2000 {
+		return ContactView{}, fmt.Errorf("note is too long")
+	}
+	item, err := s.repository.UpdateContactNote(ctx, contactID, strings.TrimSpace(input.Note))
+	if err != nil {
+		return ContactView{}, mapRepositoryError(contactID, err)
+	}
+	return item, nil
+}
+
+func (s *Service) ListLabels(ctx context.Context, accountID string) ([]ChatLabel, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return nil, fmt.Errorf("account_id is required")
+	}
+	return s.repository.ListLabels(ctx, accountID)
+}
+
+func (s *Service) CreateLabel(ctx context.Context, input CreateLabelInput) (ChatLabel, error) {
+	input.AccountID = strings.TrimSpace(input.AccountID)
+	input.Name = strings.TrimSpace(input.Name)
+	input.Color = strings.TrimSpace(input.Color)
+	if input.AccountID == "" || input.Name == "" {
+		return ChatLabel{}, fmt.Errorf("account_id and name are required")
+	}
+	if len([]rune(input.Name)) > 32 {
+		return ChatLabel{}, fmt.Errorf("label name is too long")
+	}
+	if input.Color == "" {
+		input.Color = "#25d366"
+	}
+	if !isHexColor(input.Color) {
+		return ChatLabel{}, fmt.Errorf("color must be a hex color")
+	}
+	return s.repository.CreateLabel(ctx, input.AccountID, input.Name, input.Color)
+}
+
+func (s *Service) DeleteLabel(ctx context.Context, labelID string) error {
+	if err := s.repository.DeleteLabel(ctx, strings.TrimSpace(labelID)); err != nil {
+		return mapRepositoryError(labelID, err)
+	}
+	return nil
+}
+
+func (s *Service) UpdateChatMetadata(ctx context.Context, input UpdateChatMetadataInput) (ChatHeader, error) {
+	input.ChatID = strings.TrimSpace(input.ChatID)
+	input.Note = strings.TrimSpace(input.Note)
+	if input.ChatID == "" {
+		return ChatHeader{}, fmt.Errorf("chat_id is required")
+	}
+	if len([]rune(input.Note)) > 2000 {
+		return ChatHeader{}, fmt.Errorf("note is too long")
+	}
+	item, err := s.repository.UpdateChatMetadata(ctx, input.ChatID, input)
+	if err != nil {
+		return ChatHeader{}, mapRepositoryError(input.ChatID, err)
+	}
+	return item, nil
+}
+
+func (s *Service) MarkChatRead(ctx context.Context, chatID string) (ChatHeader, error) {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return ChatHeader{}, fmt.Errorf("chat_id is required")
+	}
+	header, err := s.repository.GetChatHeader(ctx, chatID)
+	if err != nil {
+		return ChatHeader{}, mapRepositoryError(chatID, err)
+	}
+	if s.readMarker == nil {
+		return ChatHeader{}, fmt.Errorf("session connector does not support read receipts")
+	}
+	messages, _, err := s.repository.ListMessages(ctx, MessageListFilters{ChatID: chatID, Limit: 100})
+	if err != nil {
+		return ChatHeader{}, err
+	}
+	if len(messages) > 0 && !messages[0].FromMe {
+		latest := messages[0]
+		if err := s.readMarker.MarkRead(ctx, header.AccountID, header.WAChatJID, []string{latest.WAMessageID}, latest.SenderJID, latest.SentAt); err != nil {
+			return ChatHeader{}, err
+		}
+	}
+	return s.repository.ClearChatUnread(ctx, chatID)
+}
+
+func isHexColor(value string) bool {
+	if len(value) != 7 || value[0] != '#' {
+		return false
+	}
+	for _, char := range value[1:] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) GetMessages(ctx context.Context, input GetMessagesInput) (MessageHistoryResult, error) {
@@ -210,7 +386,11 @@ func (s *Service) SendMessage(ctx context.Context, input SendMessageInput) (Send
 	sendCtx, cancel := context.WithTimeout(ctx, sendMessageTimeout)
 	defer cancel()
 
-	sendResult, err := s.sender.SendText(sendCtx, header.AccountID, header.WAChatJID, messageText)
+	var replyTo []string
+	if trimmedReplyTo := strings.TrimSpace(input.ReplyToMessageID); trimmedReplyTo != "" {
+		replyTo = []string{trimmedReplyTo}
+	}
+	sendResult, err := s.sender.SendText(sendCtx, header.AccountID, header.WAChatJID, messageText, replyTo...)
 	if err != nil {
 		return SendMessageResult{}, err
 	}

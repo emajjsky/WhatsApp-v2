@@ -129,6 +129,13 @@ export interface ChatSummary {
   title?: string
   participant_count?: number
   archived: boolean
+  pinned: boolean
+  marked_unread: boolean
+  muted_until?: string
+  note: string
+  phone_number?: string
+  profile_photo_url?: string
+  labels: ChatLabel[]
   last_message_at?: string
   latest_message_preview?: string
   latest_message_type?: MessageType
@@ -151,7 +158,44 @@ export interface ChatHeader {
   title?: string
   participant_count?: number
   archived: boolean
+  pinned: boolean
+  marked_unread: boolean
+  muted_until?: string
+  note: string
+  phone_number?: string
+  profile_photo_url?: string
+  labels: ChatLabel[]
   last_message_at?: string
+}
+
+export interface ChatLabel {
+  id: string
+  account_id: string
+  name: string
+  color: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ContactView {
+  id: string
+  account_id: string
+  chat_id?: string
+  wa_jid: string
+  display_name: string
+  phone_number?: string
+  profile_photo_url?: string
+  is_business: boolean
+  note: string
+  last_message_at?: string
+  labels: ChatLabel[]
+}
+
+export interface ContactListResponse {
+  contacts: ContactView[]
+  total: number
+  limit: number
+  offset: number
 }
 
 export type MediaType = 'image' | 'video' | 'audio' | 'document' | 'sticker' | 'thumbnail' | 'other'
@@ -196,6 +240,7 @@ export interface MessageHistoryResponse {
 
 export interface SendChatMessagePayload {
   message_text: string
+  reply_to_wa_message_id?: string
 }
 
 export interface SendChatMessageResponse {
@@ -532,6 +577,28 @@ export interface UpsertSystemAgentConfigPayload {
   provider_config: AgentProviderConfig
   prompt_template: string
   skill_ids?: string[]
+}
+
+export interface ProviderPresetView {
+  id: string
+  name: string
+  provider_type: string
+  base_url: string
+  models: string[]
+  default_model: string
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface UpsertProviderPresetPayload {
+  id?: string
+  name: string
+  provider_type: string
+  base_url: string
+  models: string[]
+  default_model: string
+  enabled: boolean
 }
 
 export type AgentSkillFileKind = 'skill' | 'reference' | 'asset'
@@ -997,6 +1064,9 @@ export async function listChats(params: {
   accountId?: string
   query?: string
   chatType?: ChatType | ''
+  labelId?: string
+  archived?: boolean
+  unreadOnly?: boolean
   limit?: number
   offset?: number
 }) {
@@ -1331,6 +1401,51 @@ export async function listAssistantUsageLogs(params?: {
   )
 }
 
+export async function updateChatMetadata(
+  chatId: string,
+  payload: {
+    note: string
+    pinned: boolean
+    archived: boolean
+    marked_unread: boolean
+    muted_until?: string | null
+    label_ids: string[]
+  },
+) {
+  return request<{ chat: ChatHeader }>(`/api/chats/${chatId}/metadata`, { method: 'PATCH', jsonBody: payload })
+}
+
+export async function markChatRead(chatId: string) {
+  return request<{ chat: ChatHeader }>(`/api/chats/${chatId}/read`, { method: 'POST' })
+}
+
+export async function listContacts(params: { accountId: string; query?: string; limit?: number; offset?: number }) {
+  const searchParams = new URLSearchParams({ account_id: params.accountId })
+  if (params.query) searchParams.set('query', params.query)
+  if (params.limit) searchParams.set('limit', String(params.limit))
+  if (params.offset) searchParams.set('offset', String(params.offset))
+  return request<ContactListResponse>(`/api/contacts?${searchParams.toString()}`)
+}
+
+export async function updateContactNote(contactId: string, note: string) {
+  return request<{ contact: ContactView }>(`/api/contacts/${contactId}`, { method: 'PATCH', jsonBody: { note } })
+}
+
+export async function listChatLabels(accountId: string) {
+  return request<{ labels: ChatLabel[] }>(`/api/chat-labels?account_id=${encodeURIComponent(accountId)}`)
+}
+
+export async function createChatLabel(accountId: string, name: string, color = '#25d366') {
+  return request<{ label: ChatLabel }>('/api/chat-labels', {
+    method: 'POST',
+    jsonBody: { account_id: accountId, name, color },
+  })
+}
+
+export async function deleteChatLabel(labelId: string) {
+  return request<void>(`/api/chat-labels/${labelId}`, { method: 'DELETE' })
+}
+
 export async function listAssistantUsageLogFilters() {
   return request<AssistantUsageLogFiltersResponse>('/api/admin/assistant-usage-log-filters')
 }
@@ -1360,6 +1475,21 @@ export async function upsertSystemAgentConfig(payload: UpsertSystemAgentConfigPa
 
 export async function deleteSystemAgentConfig(configId: string) {
   return request<void>(`/api/admin/agent-configs/${configId}`, { method: 'DELETE' })
+}
+
+export async function listProviderPresets() {
+  return request<{ presets: ProviderPresetView[] }>('/api/admin/provider-presets')
+}
+
+export async function upsertProviderPreset(payload: UpsertProviderPresetPayload) {
+  return request<{ preset: ProviderPresetView }>('/api/admin/provider-presets', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
+
+export async function deleteProviderPreset(presetId: string) {
+  return request<void>(`/api/admin/provider-presets/${presetId}`, { method: 'DELETE' })
 }
 
 export async function listAgentSkills() {

@@ -25,7 +25,7 @@ func (s *stubSessionRuntime) Subscribe(buffer int) (<-chan sessions.Event, func(
 	return ch, func() {}
 }
 
-func (s *stubSessionRuntime) SendText(ctx context.Context, accountID, chatJID, text string) (sessions.SendResult, error) {
+func (s *stubSessionRuntime) SendText(ctx context.Context, accountID, chatJID, text string, _ ...string) (sessions.SendResult, error) {
 	s.sendCalls++
 	return sessions.SendResult{}, nil
 }

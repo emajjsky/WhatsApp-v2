@@ -672,6 +672,73 @@ func (r *Repository) DeleteSystemConfig(ctx context.Context, id string) error {
 	return ensureAffected(result, id)
 }
 
+func (r *Repository) ListProviderPresets(ctx context.Context) ([]ProviderPreset, error) {
+	const query = `
+SELECT id, name, provider_type, base_url, models, default_model, enabled, created_at, updated_at
+FROM agent_provider_presets
+ORDER BY enabled DESC, name ASC, created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list provider presets: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]ProviderPreset, 0)
+	for rows.Next() {
+		item, err := scanProviderPreset(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate provider presets: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) GetProviderPresetByID(ctx context.Context, id string) (ProviderPreset, error) {
+	const query = `
+SELECT id, name, provider_type, base_url, models, default_model, enabled, created_at, updated_at
+FROM agent_provider_presets
+WHERE id = $1`
+	return scanProviderPreset(r.db.QueryRowContext(ctx, query, strings.TrimSpace(id)))
+}
+
+func (r *Repository) UpsertProviderPreset(ctx context.Context, preset ProviderPreset) error {
+	models, err := json.Marshal(normalizeStringList(preset.Models))
+	if err != nil {
+		return fmt.Errorf("encode provider preset models: %w", err)
+	}
+
+	const query = `
+INSERT INTO agent_provider_presets (
+    id, name, provider_type, base_url, models, default_model, enabled
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    provider_type = EXCLUDED.provider_type,
+    base_url = EXCLUDED.base_url,
+    models = EXCLUDED.models,
+    default_model = EXCLUDED.default_model,
+    enabled = EXCLUDED.enabled,
+    updated_at = NOW()`
+
+	if _, err := r.db.ExecContext(ctx, query, preset.ID, preset.Name, preset.ProviderType, preset.BaseURL, models, preset.DefaultModel, preset.Enabled); err != nil {
+		return fmt.Errorf("upsert provider preset %q: %w", preset.ID, err)
+	}
+	return nil
+}
+
+func (r *Repository) DeleteProviderPreset(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM agent_provider_presets WHERE id = $1`, strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("delete provider preset %q: %w", id, err)
+	}
+	return ensureAffected(result, id)
+}
+
 func (r *Repository) ListSkills(ctx context.Context) ([]AgentSkill, error) {
 	const query = `
 SELECT
@@ -2011,6 +2078,35 @@ func scanSystemConfig(row rowScanner) (SystemAgentConfig, error) {
 		item.ProviderConfig = map[string]any{}
 	}
 
+	return item, nil
+}
+
+func scanProviderPreset(row rowScanner) (ProviderPreset, error) {
+	var (
+		item   ProviderPreset
+		models []byte
+	)
+	if err := row.Scan(
+		&item.ID,
+		&item.Name,
+		&item.ProviderType,
+		&item.BaseURL,
+		&models,
+		&item.DefaultModel,
+		&item.Enabled,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return ProviderPreset{}, fmt.Errorf("scan provider preset: %w", err)
+	}
+	if len(models) == 0 {
+		item.Models = []string{}
+	} else if err := json.Unmarshal(models, &item.Models); err != nil {
+		return ProviderPreset{}, fmt.Errorf("decode provider preset %q models: %w", item.ID, err)
+	}
+	if item.Models == nil {
+		item.Models = []string{}
+	}
 	return item, nil
 }
 

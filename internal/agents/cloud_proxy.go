@@ -257,6 +257,22 @@ func (p *CloudProxy) HandleAdminSystemConfigs(w http.ResponseWriter, r *http.Req
 	_, _ = io.Copy(w, resp.Body)
 }
 
+func (p *CloudProxy) HandleAdminProviderPresets(w http.ResponseWriter, r *http.Request) {
+	req, err := p.newCloudRequest(r.Context(), r, r.Method, r.URL.Path, r.Body)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.URL.RawQuery = r.URL.RawQuery
+	if contentType := strings.TrimSpace(r.Header.Get("Content-Type")); contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	} else if r.Method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	}
+	req.Header.Set("Accept", "application/json")
+	p.forwardCloudResponse(w, req, "call cloud provider presets")
+}
+
 func (p *CloudProxy) HandleAdminSkills(w http.ResponseWriter, r *http.Request) {
 	req, err := p.newCloudRequest(r.Context(), r, r.Method, r.URL.Path, r.Body)
 	if err != nil {

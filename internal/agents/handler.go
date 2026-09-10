@@ -53,6 +53,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agents/rules/", h.handleRuleByID)
 	mux.HandleFunc("/api/admin/agent-configs", h.handleSystemConfigs)
 	mux.HandleFunc("/api/admin/agent-configs/", h.handleSystemConfigByID)
+	mux.HandleFunc("/api/admin/provider-presets", h.handleProviderPresets)
+	mux.HandleFunc("/api/admin/provider-presets/", h.handleProviderPresetByID)
 	mux.HandleFunc("/api/admin/agent-skills", h.handleSkills)
 	mux.HandleFunc("/api/admin/agent-skills/", h.handleSkillByID)
 	mux.HandleFunc("/api/agent-configs", h.handleAvailableSystemConfigs)
@@ -321,6 +323,55 @@ func (h *Handler) handleSystemConfigByID(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleProviderPresets(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminProviderPresets(w, r)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		items, err := h.service.ListProviderPresets(r.Context())
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"presets": items})
+	case http.MethodPost:
+		var input UpsertProviderPresetInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		item, err := h.service.UpsertProviderPreset(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"preset": item})
+	default:
+		httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (h *Handler) handleProviderPresetByID(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminProviderPresets(w, r)
+		return
+	}
+
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/provider-presets/"), "/")
+	if id == "" || r.Method != http.MethodDelete {
+		http.NotFound(w, r)
+		return
+	}
+	if err := h.service.DeleteProviderPreset(r.Context(), id); err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

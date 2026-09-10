@@ -1,6 +1,6 @@
 # 当前进度
 
-更新日期：2026-08-22
+更新日期：2026-09-10
 
 ## 一句话说明
 
@@ -24,7 +24,7 @@
 - 桌面端可以使用云端后台配置的回复 Agent、翻译 Agent、状态卡 Agent。
 - Electron 云端服务已支持独立部署，不影响 `main`。
 - Windows 安装包已生成到 `desktop/release/`。
-- Windows 客户端当前版本已更新到 `0.1.45`（账号列表滚动修复版）。
+- Windows 客户端当前版本已更新到 `0.1.46`（干净 Windows 启动依赖修复版）。
 - 云端后台用户管理已重排，管理员可在用户卡片内输入并确认新密码。
 - 已过滤 WhatsApp 内部协议消息，历史 `protocol:*` 脏记录不再显示为客户会话。
 - 消息入库已改成有界顺序队列，避免历史同步产生无界并发，并确保入库后再触发前端和 Agent。
@@ -35,6 +35,29 @@
 - 云端后台已新增 `Skill 管理`，支持创建话术包、维护 `SKILL.md`、添加 `references/assets` 文件，并绑定到回复智能体。
 - 桌面端生成回复建议时，会使用云端回复智能体绑定的 Skill 内容，不需要在客户端本地配置话术包。
 - macOS 安装包暂未生成，后续需要在 macOS 环境补充打包、签名和公证流程。
+
+## 本轮客户建议 1-5 落地
+
+- 新增联系人页：按姓名、手机号、WhatsApp ID 和备注搜索，查看关联会话并维护联系人备注。
+- 新增会话工作区：支持会话备注、置顶、归档、标记未读、标签筛选和标签绑定。
+- 对话页补充复制消息、引用回复和进入会话时的真实已读回执；引用会通过 WhatsApp 扩展文本的 `stanza_id` 发送。
+- 管理后台新增 `Provider / Model 预设`：管理员可以维护 Provider 类型、Base URL、模型列表和默认模型；智能体编辑器可以直接选择启用的预设。
+- Provider 预设不保存 API Key，智能体 API Key 仍只保存在服务端，返回前端时仅提供“已配置”状态。
+- 联系人、会话标签和 Provider 预设分别由迁移 `0025_contact_and_chat_workspace.sql`、`0026_provider_presets.sql` 创建。
+- 打包版启动前会拒绝包含中文或其他非 ASCII 字符的安装目录，并提示重新安装到纯英文路径；用户数据目录不受影响。
+
+本轮验证：
+
+- `go test ./...` 通过。
+- `web/npm run build` 通过。
+- `node --check desktop/src/main.cjs` 和 `node --check desktop/src/preload.cjs` 通过。
+
+## 0.1.46 干净 Windows 启动修复
+
+- 安装包内置微软官方 Visual C++ 2015-2022 x64 运行库，并在 PostgreSQL 初始化前静默安装。
+- 安装器检查运行库和 `initdb` 的退出码，失败时停止安装并显示明确错误，不再留下表面成功的残缺安装。
+- 首次初始化若发现没有 `PG_VERSION` 的不完整数据目录，会安全重建后重试。
+- PostgreSQL 没有输出错误文本时，启动弹窗会显示进程退出码和运行库排查提示。
 
 ## 0.1.45 账号列表滚动
 
@@ -111,7 +134,7 @@
 
 当前测试代理实测可以建立 TCP 连接，但 SOCKS5 服务端拒绝了认证，返回 `User was rejected by the SOCKS5 server`。这通常是测试凭据已失效、账号密码复制错误或测试时长已到，不是客户端代码的连接超时。购买正式月套餐前需要让供应商重新开一条测试凭据再验证。
 
-最新已推送提交：
+历史已推送提交：
 
 ```text
 19dabdb feat: refine desktop ai assistant layout
@@ -236,7 +259,7 @@ deploy/migrations/0017_chat_status_cards_cloud_agents.sql
 - 桌面端使用云端回复 Agent 绑定的 Skill / 话术包。
 - 桌面端使用云端配置的翻译 Agent。
 - 桌面端使用云端配置的状态卡 Agent。
-- Windows 安装包当前为 `0.1.45`；本轮修复账号列表滚动并重新生成安装包。
+- Windows 安装包当前为 `0.1.46`；本轮修复干净 Windows 缺少 Visual C++ 运行库导致 PostgreSQL 无法初始化的问题。
 
 ## 0.1.28 启动稳定性修复
 

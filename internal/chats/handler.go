@@ -32,6 +32,10 @@ func NewHandler(service *Service) (*Handler, error) {
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/chats", h.handleChats)
 	mux.HandleFunc("/api/chats/", h.handleChatByID)
+	mux.HandleFunc("/api/contacts", h.handleContacts)
+	mux.HandleFunc("/api/contacts/", h.handleContactByID)
+	mux.HandleFunc("/api/chat-labels", h.handleLabels)
+	mux.HandleFunc("/api/chat-labels/", h.handleLabelByID)
 	mux.HandleFunc("/api/media/", h.handleMediaByID)
 }
 
@@ -53,12 +57,21 @@ func (h *Handler) handleChats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	archived, err := parseOptionalBoolQuery(r, "archived")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	result, err := h.service.ListChats(r.Context(), ListChatsInput{
-		AccountID: r.URL.Query().Get("account_id"),
-		Query:     r.URL.Query().Get("query"),
-		ChatType:  ingest.ChatType(r.URL.Query().Get("chat_type")),
-		Limit:     limit,
-		Offset:    offset,
+		AccountID:  r.URL.Query().Get("account_id"),
+		Query:      r.URL.Query().Get("query"),
+		ChatType:   ingest.ChatType(r.URL.Query().Get("chat_type")),
+		LabelID:    r.URL.Query().Get("label_id"),
+		Archived:   archived,
+		UnreadOnly: r.URL.Query().Get("unread_only") == "true",
+		Limit:      limit,
+		Offset:     offset,
 	})
 	if err != nil {
 		h.writeServiceError(w, err)
@@ -124,9 +137,125 @@ func (h *Handler) handleChatByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		httpx.WriteJSON(w, http.StatusOK, result)
+	case r.Method == http.MethodPatch && action == "metadata":
+		var input UpdateChatMetadataInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID = chatID
+		chat, err := h.service.UpdateChatMetadata(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"chat": chat})
+	case r.Method == http.MethodPost && action == "read":
+		chat, err := h.service.MarkChatRead(r.Context(), chatID)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"chat": chat})
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *Handler) handleContacts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	limit, err := parseIntQuery(r, "limit", 100)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	offset, err := parseIntQuery(r, "offset", 0)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.service.ListContacts(r.Context(), ListContactsInput{
+		AccountID: r.URL.Query().Get("account_id"), Query: r.URL.Query().Get("query"), Limit: limit, Offset: offset,
+	})
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) handleContactByID(w http.ResponseWriter, r *http.Request) {
+	contactID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/contacts/"), "/")
+	if r.Method != http.MethodPatch || contactID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	var input UpdateContactInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	input.ContactID = contactID
+	contact, err := h.service.UpdateContact(r.Context(), input)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"contact": contact})
+}
+
+func (h *Handler) handleLabels(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		labels, err := h.service.ListLabels(r.Context(), r.URL.Query().Get("account_id"))
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"labels": labels})
+	case http.MethodPost:
+		var input CreateLabelInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		label, err := h.service.CreateLabel(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"label": label})
+	default:
+		httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (h *Handler) handleLabelByID(w http.ResponseWriter, r *http.Request) {
+	labelID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/chat-labels/"), "/")
+	if r.Method != http.MethodDelete || labelID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if err := h.service.DeleteLabel(r.Context(), labelID); err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func parseOptionalBoolQuery(r *http.Request, key string) (*bool, error) {
+	value := strings.TrimSpace(r.URL.Query().Get(key))
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be true or false", key)
+	}
+	return &parsed, nil
 }
 
 func (h *Handler) handleSendMediaMessage(w http.ResponseWriter, r *http.Request, chatID string) {

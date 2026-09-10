@@ -9,6 +9,7 @@ import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ScriptsPage } from './pages/ScriptsPage'
 import { ProxyPoolPage } from './pages/ProxyPoolPage'
+import { ContactsPage } from './pages/ContactsPage'
 
 export default function App() {
   const auth = useAuth()
@@ -26,6 +27,7 @@ export default function App() {
             <>
               <Route path="/accounts" element={<AccountsPage />} />
               <Route path="/chats" element={<ChatsPage />} />
+              <Route path="/contacts" element={<ContactsPage />} />
               <Route path="/exports" element={<ExportsPage />} />
               <Route path="/scripts" element={<ScriptsPage />} />
               <Route path="/proxies" element={<ProxyPoolPage />} />

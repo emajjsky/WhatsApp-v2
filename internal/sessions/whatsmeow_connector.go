@@ -453,7 +453,7 @@ func (c *WhatsmeowConnector) Logout(ctx context.Context, accountID string) error
 	return nil
 }
 
-func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, text string) (SendResult, error) {
+func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, text string, replyTo ...string) (SendResult, error) {
 	trimmedChat := strings.TrimSpace(chatJID)
 	if trimmedChat == "" {
 		return SendResult{}, fmt.Errorf("chat_jid is required")
@@ -477,9 +477,17 @@ func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, t
 	}
 	targetJID = targetJID.ToNonAD()
 
-	resp, err := session.client.SendMessage(ctx, targetJID, &waProto.Message{
-		Conversation: proto.String(trimmedText),
-	})
+	outboundMessage := &waProto.Message{Conversation: proto.String(trimmedText)}
+	if len(replyTo) > 0 && strings.TrimSpace(replyTo[0]) != "" {
+		outboundMessage.Conversation = nil
+		outboundMessage.ExtendedTextMessage = &waProto.ExtendedTextMessage{
+			Text: proto.String(trimmedText),
+			ContextInfo: &waProto.ContextInfo{
+				StanzaID: proto.String(strings.TrimSpace(replyTo[0])),
+			},
+		}
+	}
+	resp, err := session.client.SendMessage(ctx, targetJID, outboundMessage)
 	if err != nil {
 		return SendResult{}, fmt.Errorf("send whatsapp message: %w", err)
 	}
@@ -531,6 +539,46 @@ func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, t
 	})
 
 	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
+}
+
+func (c *WhatsmeowConnector) MarkRead(ctx context.Context, accountID, chatJID string, messageIDs []string, senderJID string, timestamp time.Time) error {
+	if len(messageIDs) == 0 {
+		return fmt.Errorf("message_ids are required")
+	}
+	session, err := c.ensureSession(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	if !session.client.IsConnected() || !session.client.IsLoggedIn() {
+		return fmt.Errorf("whatsapp session is not connected")
+	}
+	chat, err := waTypes.ParseJID(strings.TrimSpace(chatJID))
+	if err != nil {
+		return fmt.Errorf("parse chat jid %q: %w", chatJID, err)
+	}
+	var sender waTypes.JID
+	if strings.TrimSpace(senderJID) != "" {
+		sender, err = waTypes.ParseJID(strings.TrimSpace(senderJID))
+		if err != nil {
+			return fmt.Errorf("parse sender jid %q: %w", senderJID, err)
+		}
+	}
+	ids := make([]waTypes.MessageID, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if trimmed := strings.TrimSpace(messageID); trimmed != "" {
+			ids = append(ids, waTypes.MessageID(trimmed))
+		}
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("message_ids are required")
+	}
+	if timestamp.IsZero() {
+		timestamp = c.now()
+	}
+	if err := session.client.MarkRead(ctx, ids, timestamp, chat, sender); err != nil {
+		return fmt.Errorf("mark whatsapp messages read: %w", err)
+	}
+	return nil
 }
 
 func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error) {

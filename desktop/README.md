@@ -7,6 +7,7 @@ This folder builds the Windows desktop installer. The installer bundles:
 - Go API server
 - Python embeddable runtime for `agent_runner`
 - PostgreSQL Windows binaries for local storage
+- Microsoft Visual C++ 2015-2022 x64 runtime required by PostgreSQL
 
 Users do not need Docker, PostgreSQL, Go, Node.js, or Python installed.
 
@@ -15,7 +16,15 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.45`.
+Current packaging version: `0.1.46`.
+
+安装目录必须使用纯英文路径，例如默认的 `C:\Program Files\WhatsApp Agent`。旧版本曾受 Windows 本地 PostgreSQL 服务注册和中文路径兼容性影响；当前打包版启动前会校验安装路径，发现中文或其他非 ASCII 字符会显示明确提示并退出。此时请卸载后重新安装到英文路径；用户数据仍保存在 `%APPDATA%/whatsapp-agent-desktop/`，不会因为更换安装目录而丢失。
+
+## 0.1.46 Clean Windows startup fix
+
+- Bundle the official Microsoft Visual C++ 2015-2022 x64 Redistributable and install it silently before PostgreSQL initialization.
+- Stop the installer with a clear exit code when the prerequisite or `initdb` fails instead of leaving a broken partial installation.
+- Rebuild an incomplete first-run PostgreSQL data directory and show a useful process exit code when no PostgreSQL output is available.
 
 ## 0.1.45 账号列表滚动
 
@@ -49,6 +58,7 @@ files manually before running `npm run dist:win` again:
 ```text
 .cache/desktop/python-3.12.10-embed-amd64.zip
 .cache/desktop/postgresql-16.13-1-windows-x64.exe
+.cache/desktop/VC_redist.x64.exe
 ```
 
 ## Runtime Data
@@ -56,7 +66,7 @@ files manually before running `npm run dist:win` again:
 The app stores local data under the Electron user data directory:
 
 ```text
-%APPDATA%/WhatsApp Agent/
+%APPDATA%/whatsapp-agent-desktop/
 ```
 
 Important subdirectories:

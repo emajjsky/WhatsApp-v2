@@ -4075,6 +4075,66 @@ a {
   min-width: 0;
 }
 
+.whatsapp-message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 24px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.whatsapp-message-card:hover .whatsapp-message-actions,
+.whatsapp-message-card:focus-within .whatsapp-message-actions {
+  opacity: 1;
+}
+
+.whatsapp-message-actions button,
+.whatsapp-reply-preview button {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(17, 27, 33, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-soft);
+}
+
+.whatsapp-message-actions button:hover,
+.whatsapp-reply-preview button:hover {
+  color: var(--accent-strong);
+  border-color: rgba(28, 115, 98, 0.3);
+}
+
+.whatsapp-reply-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 7px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--accent);
+  border-radius: 5px;
+  background: rgba(28, 115, 98, 0.07);
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.whatsapp-reply-preview span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whatsapp-reply-preview .app-icon {
+  vertical-align: -3px;
+  margin-right: 4px;
+}
+
 .admin-tab-list {
   display: inline-flex;
   align-items: center;
@@ -4867,6 +4927,14 @@ a {
 .admin-provider-option.active {
   border-color: rgba(18, 140, 126, 0.36);
   background: #ecf7f2;
+}
+
+.admin-provider-preset-select {
+  max-width: 420px;
+}
+
+.provider-preset-panel .admin-agent-workbench {
+  min-height: 520px;
 }
 
 .admin-agent-actions {

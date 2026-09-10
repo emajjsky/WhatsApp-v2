@@ -141,6 +141,28 @@ type SystemAgentConfig struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
+type ProviderPreset struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	ProviderType string    `json:"provider_type"`
+	BaseURL      string    `json:"base_url"`
+	Models       []string  `json:"models"`
+	DefaultModel string    `json:"default_model"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type UpsertProviderPresetInput struct {
+	ID           string   `json:"id,omitempty"`
+	Name         string   `json:"name"`
+	ProviderType string   `json:"provider_type"`
+	BaseURL      string   `json:"base_url"`
+	Models       []string `json:"models"`
+	DefaultModel string   `json:"default_model"`
+	Enabled      bool     `json:"enabled"`
+}
+
 type UpsertSystemConfigInput struct {
 	ID             string         `json:"id,omitempty"`
 	Name           string         `json:"name"`

@@ -707,6 +707,72 @@ func (s *Service) DeleteSystemConfig(ctx context.Context, id string) error {
 	return s.repository.DeleteSystemConfig(ctx, trimmedID)
 }
 
+func (s *Service) ListProviderPresets(ctx context.Context) ([]ProviderPreset, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return nil, err
+	}
+	return s.repository.ListProviderPresets(ctx)
+}
+
+func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProviderPresetInput) (ProviderPreset, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return ProviderPreset{}, err
+	}
+
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return ProviderPreset{}, fmt.Errorf("provider preset name is required")
+	}
+	if len([]rune(name)) > 80 {
+		return ProviderPreset{}, fmt.Errorf("provider preset name is too long")
+	}
+	providerType := normalizeProviderType(input.ProviderType)
+	if providerType == "" || providerType == "mock" || providerType == "static" {
+		return ProviderPreset{}, fmt.Errorf("unsupported provider preset type %q", input.ProviderType)
+	}
+	models := normalizeStringList(input.Models)
+	defaultModel := strings.TrimSpace(input.DefaultModel)
+	if defaultModel != "" && !containsString(models, defaultModel) {
+		models = append(models, defaultModel)
+	}
+	if providerType == "openai_compatible" && len(models) == 0 {
+		return ProviderPreset{}, fmt.Errorf("OpenAI-compatible preset requires at least one model")
+	}
+	baseURL := strings.TrimSpace(input.BaseURL)
+	if len([]rune(baseURL)) > 500 {
+		return ProviderPreset{}, fmt.Errorf("base_url is too long")
+	}
+
+	id := strings.TrimSpace(input.ID)
+	if id == "" {
+		id = ids.NewUUID()
+	}
+	preset := ProviderPreset{
+		ID:           id,
+		Name:         name,
+		ProviderType: providerType,
+		BaseURL:      baseURL,
+		Models:       models,
+		DefaultModel: defaultModel,
+		Enabled:      input.Enabled,
+	}
+	if err := s.repository.UpsertProviderPreset(ctx, preset); err != nil {
+		return ProviderPreset{}, err
+	}
+	return s.repository.GetProviderPresetByID(ctx, id)
+}
+
+func (s *Service) DeleteProviderPreset(ctx context.Context, id string) error {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return err
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("provider preset id is required")
+	}
+	return s.repository.DeleteProviderPreset(ctx, id)
+}
+
 func (s *Service) ListRuns(ctx context.Context, filters RunListFilters) (RunListResult, error) {
 	limit := filters.Limit
 	if limit <= 0 {

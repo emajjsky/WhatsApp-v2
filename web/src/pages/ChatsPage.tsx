@@ -5,27 +5,33 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react'
 import {
   analyzeStatusCard,
+  createChatLabel,
   createAssistantUsageLog,
   getChatMessages,
   getMediaAssetUrl,
   getStatusCard,
   listAccounts,
   listAvailableSystemAgentConfigs,
+  listChatLabels,
   listChats,
+  markChatRead,
   sendAgentRun,
   sendChatMedia,
   sendChatMessage,
   streamGenerateAgentRun,
   subscribeLiveUpdates,
   translateText,
+  updateChatMetadata,
   type AssistantUsageAction,
   type CreateAssistantUsageLogPayload,
   type AccountView,
   type AgentRunView,
   type ChatHeader,
+  type ChatLabel,
   type ChatSummary,
   type ChatType,
   type LiveUpdate,
@@ -149,6 +155,14 @@ export function ChatsPage() {
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState('')
   const [selectedChatType, setSelectedChatType] = useState<ChatType | ''>('')
+  const [chatView, setChatView] = useState<'active' | 'archived' | 'unread'>('active')
+  const [chatLabels, setChatLabels] = useState<ChatLabel[]>([])
+  const [selectedLabelId, setSelectedLabelId] = useState('')
+  const [chatMetadataBusy, setChatMetadataBusy] = useState(false)
+  const [chatNote, setChatNote] = useState('')
+  const [labelEditorOpen, setLabelEditorOpen] = useState(false)
+  const [newLabelName, setNewLabelName] = useState('')
+  const [chatInfoOpen, setChatInfoOpen] = useState(false)
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [selectedChatId, setSelectedChatId] = useState<string>()
@@ -156,6 +170,7 @@ export function ChatsPage() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [sendingByChatId, setSendingByChatId] = useState<Record<string, boolean>>({})
   const [draftMessageByChatId, setDraftMessageByChatId] = useState<Record<string, string>>({})
+  const [replyToMessageByChatId, setReplyToMessageByChatId] = useState<Record<string, MessageView | undefined>>({})
   const [error, setError] = useState<string>()
   const [composeNoticeByChatId, setComposeNoticeByChatId] = useState<Record<string, string>>({})
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
@@ -209,6 +224,7 @@ export function ChatsPage() {
   const assistantSending = selectedChatId ? Boolean(assistantSendingByChatId[selectedChatId]) : false
   const sending = selectedChatId ? Boolean(sendingByChatId[selectedChatId]) : false
   const draftMessage = selectedChatId ? draftMessageByChatId[selectedChatId] ?? '' : ''
+  const replyToMessage = selectedChatId ? replyToMessageByChatId[selectedChatId] : undefined
   const composeNotice = selectedChatId ? composeNoticeByChatId[selectedChatId] : undefined
   const statusCardBusy = selectedChatId ? Boolean(statusCardBusyByChatId[selectedChatId]) : false
 
@@ -484,6 +500,9 @@ export function ChatsPage() {
           accountId: selectedAccountId,
           query: deferredSearch.trim() || undefined,
           chatType: selectedChatType,
+          labelId: selectedLabelId || undefined,
+          archived: chatView === 'archived' ? true : chatView === 'active' ? false : undefined,
+          unreadOnly: chatView === 'unread',
           limit: 2000,
         })
 
@@ -498,7 +517,7 @@ export function ChatsPage() {
         // Chat list refresh is silent after removing the header counter.
       }
     },
-    [deferredSearch, selectedAccountId, selectedChatType],
+    [chatView, deferredSearch, selectedAccountId, selectedChatType, selectedLabelId],
   )
 
   const loadHistory = useCallback(async (chatId: string, background = false) => {
@@ -593,6 +612,16 @@ export function ChatsPage() {
   }, [loadAccountsList])
 
   useEffect(() => {
+    if (!selectedAccountId) {
+      setChatLabels([])
+      return
+    }
+    void listChatLabels(selectedAccountId)
+      .then((response) => setChatLabels(response.labels))
+      .catch(() => setChatLabels([]))
+  }, [selectedAccountId])
+
+  useEffect(() => {
     void loadAvailableAgentConfigs()
   }, [loadAvailableAgentConfigs])
 
@@ -612,6 +641,12 @@ export function ChatsPage() {
 
     void loadHistory(selectedChatId)
     void loadSavedStatusCard(selectedChatId)
+    void markChatRead(selectedChatId).then((response) => {
+      setChats((current) => current.map((chat) => chat.id === response.chat.id ? response.chat : chat))
+      setHistory((current) => current && current.chat.id === response.chat.id ? { ...current, chat: response.chat } : current)
+    }).catch(() => {
+      // Read receipts are best effort; loading the conversation must not fail.
+    })
   }, [loadHistory, loadSavedStatusCard, selectedChatId])
 
   useEffect(() => {
@@ -623,6 +658,11 @@ export function ChatsPage() {
     )
     setAttachmentMenuOpen(false)
   }, [emptyAssistantWorkspace, restoreAssistantWorkspace, selectedChatId])
+
+  useEffect(() => {
+    const currentChat = chats.find((chat) => chat.id === selectedChatId)
+    setChatNote(currentChat?.note ?? '')
+  }, [chats, selectedChatId])
 
   useEffect(() => {
     if (!attachmentMenuOpen) {
@@ -784,9 +824,17 @@ export function ChatsPage() {
     setError(undefined)
 
     try {
-      const response = await sendChatMessage(requestChatId, { message_text: content })
+      const response = await sendChatMessage(requestChatId, {
+        message_text: content,
+        reply_to_wa_message_id: replyToMessage?.wa_message_id,
+      })
       appendOptimisticMessage(response, requestHistory.chat, requestSelectedChat)
       setDraftMessageForChat(requestChatId, '')
+      setReplyToMessageByChatId((current) => {
+        const next = { ...current }
+        delete next[requestChatId]
+        return next
+      })
       setComposeNoticeForChat(requestChatId, undefined)
       pendingScrollModeRef.current = 'bottom'
       keepTimelinePinnedRef.current = true
@@ -805,6 +853,25 @@ export function ChatsPage() {
         return next
       })
     }
+  }
+
+  async function copyMessage(message: MessageView) {
+    const text = message.text_content?.trim()
+    if (!text) {
+      setComposeNoticeForChat(selectedChatId ?? '', '该消息没有可复制的文字')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+      setComposeNoticeForChat(selectedChatId ?? '', '消息已复制')
+    } catch {
+      setComposeNoticeForChat(selectedChatId ?? '', '复制失败，请手动选择文字')
+    }
+  }
+
+  function setReplyToMessage(message: MessageView) {
+    if (!selectedChatId) return
+    setReplyToMessageByChatId((current) => ({ ...current, [selectedChatId]: message }))
   }
 
   function handleAttachmentAction(action: AttachmentAction) {
@@ -1348,6 +1415,47 @@ export function ChatsPage() {
       : undefined
   const hasAdoptedAssistantReply = adoptedReplyIndex !== undefined
 
+  async function saveChatMetadata(patch: Partial<{
+    note: string
+    pinned: boolean
+    archived: boolean
+    marked_unread: boolean
+    label_ids: string[]
+  }>) {
+    if (!selectedChat || chatMetadataBusy) return
+    setChatMetadataBusy(true)
+    setError(undefined)
+    try {
+      const response = await updateChatMetadata(selectedChat.id, {
+        note: patch.note ?? selectedChat.note,
+        pinned: patch.pinned ?? selectedChat.pinned,
+        archived: patch.archived ?? selectedChat.archived,
+        marked_unread: patch.marked_unread ?? selectedChat.marked_unread,
+        label_ids: patch.label_ids ?? selectedChat.labels.map((label) => label.id),
+      })
+      setChats((current) => current.map((chat) => chat.id === selectedChat.id ? { ...chat, ...response.chat } : chat))
+      setHistory((current) => current?.chat.id === selectedChat.id ? { ...current, chat: response.chat } : current)
+      setChatNote(response.chat.note)
+      void loadChatsList(true)
+    } catch (metadataError) {
+      setError(metadataError instanceof Error ? metadataError.message : '保存会话设置失败')
+    } finally {
+      setChatMetadataBusy(false)
+    }
+  }
+
+  async function handleCreateLabel() {
+    if (!selectedAccountId || !newLabelName.trim()) return
+    setError(undefined)
+    try {
+      const response = await createChatLabel(selectedAccountId, newLabelName.trim())
+      setChatLabels((current) => [...current, response.label].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')))
+      setNewLabelName('')
+    } catch (labelError) {
+      setError(labelError instanceof Error ? labelError.message : '创建标签失败')
+    }
+  }
+
   return (
     <div className="page page-chats whatsapp-chat-page">
       <section className="chat-frame whatsapp-chat-frame">
@@ -1392,6 +1500,20 @@ export function ChatsPage() {
                 ))}
               </select>
             </label>
+
+            <div className="chat-view-tabs" role="tablist" aria-label="会话视图">
+              {([['active', '全部'], ['unread', '未读'], ['archived', '归档']] as const).map(([value, label]) => (
+                <button key={value} type="button" className={chatView === value ? 'active' : ''} onClick={() => setChatView(value)}>{label}</button>
+              ))}
+            </div>
+
+            <label className="field compact-field">
+              <span>标签</span>
+              <select value={selectedLabelId} onChange={(event) => setSelectedLabelId(event.target.value)}>
+                <option value="">全部标签</option>
+                {chatLabels.map((label) => <option key={label.id} value={label.id}>{label.name}</option>)}
+              </select>
+            </label>
           </div>
 
           {chats.length > 0 ? (
@@ -1415,8 +1537,11 @@ export function ChatsPage() {
                       </div>
 
                       <div className="chat-row-meta whatsapp-chat-row-meta">
-                        <p>{getChatPreviewText(chat)}</p>
-                        <StatusBadge status={chat.chat_type} />
+                        <p>{chat.note || getChatPreviewText(chat)}</p>
+                        <span className="chat-row-badges">
+                          {chat.labels.slice(0, 2).map((label) => <span key={label.id} className="chat-label-chip compact" style={{ '--label-color': label.color } as CSSProperties}>{label.name}</span>)}
+                          <StatusBadge status={chat.chat_type} />
+                        </span>
                       </div>
                     </div>
                   </button>
@@ -1434,6 +1559,38 @@ export function ChatsPage() {
         <section className="panel chat-main-panel whatsapp-chat-main">
           {selectedChat && activeHistory ? (
             <>
+              <header className="chat-contact-toolbar">
+                <button className="chat-contact-identity" type="button" onClick={() => setChatInfoOpen((current) => !current)}>
+                  <span className="whatsapp-chat-avatar">{getChatAvatarLabel(getChatDisplayName(selectedChat))}</span>
+                  <span><strong>{getChatDisplayName(selectedChat)}</strong><small>{selectedChat.note || selectedChat.phone_number || selectedChat.wa_chat_jid}</small></span>
+                </button>
+                <div className="chat-contact-toolbar-actions">
+                  <button type="button" className={selectedChat.pinned ? 'active' : ''} onClick={() => void saveChatMetadata({ pinned: !selectedChat.pinned })} title="置顶会话"><Icon name="pin" /></button>
+                  <button type="button" className={selectedChat.marked_unread ? 'active' : ''} onClick={() => void saveChatMetadata({ marked_unread: !selectedChat.marked_unread })} title="标记未读"><Icon name="bellOff" /></button>
+                  <button type="button" className={selectedChat.archived ? 'active' : ''} onClick={() => void saveChatMetadata({ archived: !selectedChat.archived })} title={selectedChat.archived ? '取消归档' : '归档会话'}><Icon name="archive" /></button>
+                </div>
+              </header>
+
+              {chatInfoOpen ? (
+                <aside className="chat-info-drawer">
+                  <div className="chat-info-drawer-head"><strong>会话资料</strong><button type="button" onClick={() => setChatInfoOpen(false)}>×</button></div>
+                  <div className="chat-info-profile"><span className="whatsapp-chat-avatar large">{getChatAvatarLabel(getChatDisplayName(selectedChat))}</span><div><h3>{getChatDisplayName(selectedChat)}</h3><p>{selectedChat.phone_number || selectedChat.wa_chat_jid}</p></div></div>
+                  <section className="chat-customer-section">
+                    <div className="chat-customer-section-head"><strong>标签</strong><button type="button" onClick={() => setLabelEditorOpen((current) => !current)}><Icon name="plus" />管理</button></div>
+                    <div className="chat-label-row">
+                      {selectedChat.labels.map((label) => <button key={label.id} type="button" className="chat-label-chip" style={{ '--label-color': label.color } as CSSProperties} onClick={() => void saveChatMetadata({ label_ids: selectedChat.labels.filter((item) => item.id !== label.id).map((item) => item.id) })}>{label.name} ×</button>)}
+                      {!selectedChat.labels.length ? <small>暂无标签</small> : null}
+                    </div>
+                    {labelEditorOpen ? <div className="chat-label-editor">
+                      <div className="chat-label-options">{chatLabels.map((label) => <button key={label.id} type="button" className={selectedChat.labels.some((item) => item.id === label.id) ? 'selected' : ''} onClick={() => void saveChatMetadata({ label_ids: selectedChat.labels.some((item) => item.id === label.id) ? selectedChat.labels.filter((item) => item.id !== label.id).map((item) => item.id) : [...selectedChat.labels.map((item) => item.id), label.id] })}>{label.name}</button>)}</div>
+                      <div className="chat-label-create"><input value={newLabelName} onChange={(event) => setNewLabelName(event.target.value)} placeholder="新标签名称" /><button type="button" onClick={() => void handleCreateLabel()}>新增</button></div>
+                    </div> : null}
+                  </section>
+                  <label className="field chat-customer-note"><span>会话备注</span><textarea rows={6} value={chatNote} onChange={(event) => setChatNote(event.target.value)} placeholder="客户身份、偏好和跟进事项" /></label>
+                  <button className="primary-button" type="button" onClick={() => void saveChatMetadata({ note: chatNote })} disabled={chatMetadataBusy}>{chatMetadataBusy ? '保存中...' : '保存资料'}</button>
+                </aside>
+              ) : null}
+
               <section className="chat-status-strip whatsapp-chat-status-strip">
                 {agentConfigsLoading ? (
                   <div className="warning-banner">加载中...</div>
@@ -1565,6 +1722,17 @@ export function ChatsPage() {
                           : undefined,
                       )}
 
+                      <div className="whatsapp-message-actions">
+                        {textContent ? (
+                          <button type="button" onClick={() => void copyMessage(message)} title="复制消息">
+                            <Icon name="copy" />
+                          </button>
+                        ) : null}
+                        <button type="button" onClick={() => setReplyToMessage(message)} title="引用回复">
+                          <Icon name="reply" />
+                        </button>
+                      </div>
+
                       <div className="whatsapp-message-foot">
                         <span>{formatDateTime(message.sent_at)}</span>
                         {message.from_me ? <span className="whatsapp-message-check">✓✓</span> : null}
@@ -1654,6 +1822,12 @@ export function ChatsPage() {
                   </div>
 
                   <div className="chat-compose-box whatsapp-chat-compose-box">
+                    {replyToMessage ? (
+                      <div className="whatsapp-reply-preview">
+                        <span><Icon name="reply" />引用：{replyToMessage.text_content || fallbackMessageCopy(replyToMessage.message_type)}</span>
+                        <button type="button" onClick={() => setReplyToMessageByChatId((current) => ({ ...current, [selectedChatId ?? '']: undefined }))} title="取消引用">×</button>
+                      </div>
+                    ) : null}
                     <textarea
                       value={draftMessage}
                       onChange={(event) => setCurrentDraftMessage(event.target.value)}

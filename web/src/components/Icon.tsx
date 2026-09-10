@@ -6,6 +6,9 @@ export type IconName =
   | 'audio'
   | 'camera'
   | 'chat'
+  | 'contacts'
+  | 'archive'
+  | 'bellOff'
   | 'check'
   | 'chevronDown'
   | 'delete'
@@ -18,7 +21,10 @@ export type IconName =
   | 'key'
   | 'logout'
   | 'plus'
+  | 'pin'
   | 'qr'
+  | 'copy'
+  | 'reply'
   | 'save'
   | 'script'
   | 'search'
@@ -66,6 +72,34 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v5A3.5 3.5 0 0 1 15.5 15H11l-4.2 3.2V15H8.5A3.5 3.5 0 0 1 5 11.5v-5z" />
       <path d="M9 8h6" />
       <path d="M9 11h4" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="8" y="8" width="11" height="12" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2" />
+    </>
+  ),
+  contacts: (
+    <>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <circle cx="17" cy="9" r="2.3" />
+      <path d="M15 14.5a4.5 4.5 0 0 1 5.5 4.4" />
+    </>
+  ),
+  archive: (
+    <>
+      <path d="M4 7h16v13H4z" />
+      <path d="M3 4h18v4H3z" />
+      <path d="M9 12h6" />
+    </>
+  ),
+  bellOff: (
+    <>
+      <path d="M8 5a5 5 0 0 1 9 3v4l2 3H9" />
+      <path d="M10 19h4" />
+      <path d="M4 4l16 16" />
     </>
   ),
   check: (
@@ -153,6 +187,12 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M5 12h14" />
     </>
   ),
+  pin: (
+    <>
+      <path d="M9 4h6l-1 5 3 3v2H7v-2l3-3-1-5z" />
+      <path d="M12 14v7" />
+    </>
+  ),
   qr: (
     <>
       <path d="M4 4h6v6H4z" />
@@ -160,6 +200,12 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M4 14h6v6H4z" />
       <path d="M14 14h2v2h-2z" />
       <path d="M18 14h2v6h-4v-2h2z" />
+    </>
+  ),
+  reply: (
+    <>
+      <path d="M9 8L4 12l5 4" />
+      <path d="M5 12h7a7 7 0 0 1 7 7" />
     </>
   ),
   save: (
