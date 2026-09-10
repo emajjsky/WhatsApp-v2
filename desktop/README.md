@@ -16,7 +16,15 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.46`.
+Current packaging version: `0.1.47`.
+
+## 0.1.47 Customer workspace
+
+- Adds contacts, contact notes, chat notes, labels, pin/archive/unread controls,
+  message copy, quoted replies and read receipts.
+- Adds administrator-managed Provider / Model presets for agent configuration.
+- Rejects packaged installs from paths containing non-ASCII characters with a
+  clear message before local services start.
 
 安装目录必须使用纯英文路径，例如默认的 `C:\Program Files\WhatsApp Agent`。旧版本曾受 Windows 本地 PostgreSQL 服务注册和中文路径兼容性影响；当前打包版启动前会校验安装路径，发现中文或其他非 ASCII 字符会显示明确提示并退出。此时请卸载后重新安装到英文路径；用户数据仍保存在 `%APPDATA%/whatsapp-agent-desktop/`，不会因为更换安装目录而丢失。
 
