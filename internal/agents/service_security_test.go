@@ -59,3 +59,17 @@ func TestProviderSecretIsNotPreservedAcrossProviderChange(t *testing.T) {
 		t.Fatal("secret must not cross provider type changes")
 	}
 }
+
+func TestProviderSecretIsNotPreservedWhenPresetIsSelected(t *testing.T) {
+	merged := preserveProviderSecrets(
+		map[string]any{"type": "openai_compatible", "preset_id": "preset-1", "model": "model-1"},
+		map[string]any{"type": "openai_compatible", "api_key": "old-key"},
+	)
+
+	if _, ok := merged["api_key"]; ok {
+		t.Fatal("api_key must not be copied when a provider preset is selected")
+	}
+	if merged["preset_id"] != "preset-1" {
+		t.Fatalf("preset_id = %#v, want preset-1", merged["preset_id"])
+	}
+}

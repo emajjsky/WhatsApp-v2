@@ -142,15 +142,17 @@ type SystemAgentConfig struct {
 }
 
 type ProviderPreset struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	ProviderType string    `json:"provider_type"`
-	BaseURL      string    `json:"base_url"`
-	Models       []string  `json:"models"`
-	DefaultModel string    `json:"default_model"`
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	ProviderType     string    `json:"provider_type"`
+	BaseURL          string    `json:"base_url"`
+	Models           []string  `json:"models"`
+	DefaultModel     string    `json:"default_model"`
+	Enabled          bool      `json:"enabled"`
+	APIKey           string    `json:"-"`
+	APIKeyConfigured bool      `json:"api_key_configured"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type UpsertProviderPresetInput struct {
@@ -158,9 +160,21 @@ type UpsertProviderPresetInput struct {
 	Name         string   `json:"name"`
 	ProviderType string   `json:"provider_type"`
 	BaseURL      string   `json:"base_url"`
+	APIKey       string   `json:"api_key,omitempty"`
 	Models       []string `json:"models"`
 	DefaultModel string   `json:"default_model"`
 	Enabled      bool     `json:"enabled"`
+}
+
+type DiscoverProviderModelsInput struct {
+	ID           string `json:"id,omitempty"`
+	ProviderType string `json:"provider_type,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"`
+	APIKey       string `json:"api_key,omitempty"`
+}
+
+type DiscoverProviderModelsResult struct {
+	Models []string `json:"models"`
 }
 
 type UpsertSystemConfigInput struct {

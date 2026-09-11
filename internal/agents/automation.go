@@ -1555,6 +1555,11 @@ func (a *Automation) buildRunnerProvider(ctx context.Context, accountID string, 
 	if providerType := strings.TrimSpace(anyString(rule.ProviderConfig["type"])); providerType != "" {
 		config := cloneProviderConfig(rule.ProviderConfig)
 		config["type"] = strings.ToLower(providerType)
+		var err error
+		config, err = a.resolveProviderPreset(ctx, config)
+		if err != nil {
+			return nil, err
+		}
 		config["prompt_template"] = strings.TrimSpace(resolveRunnerPrompt(rule, config))
 		return config, nil
 	}
@@ -1564,6 +1569,10 @@ func (a *Automation) buildRunnerProvider(ctx context.Context, accountID string, 
 			config := cloneProviderConfig(systemConfig.ProviderConfig)
 			if providerType := strings.TrimSpace(anyString(config["type"])); providerType != "" {
 				config["type"] = strings.ToLower(providerType)
+				config, err = a.resolveProviderPreset(ctx, config)
+				if err != nil {
+					return nil, err
+				}
 				config["prompt_template"] = strings.TrimSpace(resolveRunnerPrompt(rule, mapWithPromptFallback(config, systemConfig.PromptTemplate)))
 				return config, nil
 			}
@@ -1571,6 +1580,43 @@ func (a *Automation) buildRunnerProvider(ctx context.Context, accountID string, 
 	}
 
 	return nil, fmt.Errorf("admin agent provider config is required")
+}
+
+func (a *Automation) resolveProviderPreset(ctx context.Context, config map[string]any) (map[string]any, error) {
+	presetID := strings.TrimSpace(anyString(config["preset_id"]))
+	if presetID == "" {
+		return config, nil
+	}
+
+	preset, err := a.repository.GetProviderPresetByID(ctx, presetID)
+	if err != nil {
+		return nil, fmt.Errorf("load provider preset %q: %w", presetID, err)
+	}
+	if !preset.Enabled {
+		return nil, fmt.Errorf("provider preset %q is disabled", preset.Name)
+	}
+
+	resolved := cloneProviderConfig(config)
+	resolved["type"] = preset.ProviderType
+	if strings.TrimSpace(preset.BaseURL) != "" {
+		resolved["base_url"] = preset.BaseURL
+		if preset.ProviderType != "openai_compatible" && strings.TrimSpace(anyString(resolved["endpoint_url"])) == "" {
+			resolved["endpoint_url"] = preset.BaseURL
+		}
+	}
+	if strings.TrimSpace(preset.APIKey) != "" {
+		resolved["api_key"] = preset.APIKey
+	}
+	if strings.TrimSpace(anyString(resolved["model"])) == "" {
+		model := strings.TrimSpace(preset.DefaultModel)
+		if model == "" && len(preset.Models) > 0 {
+			model = strings.TrimSpace(preset.Models[0])
+		}
+		if model != "" {
+			resolved["model"] = model
+		}
+	}
+	return resolved, nil
 }
 
 func systemConfigRule(accountID string, config SystemAgentConfig) AgentRule {

@@ -3,8 +3,12 @@ package agents
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -410,6 +414,9 @@ func preserveProviderSecrets(incoming map[string]any, existing map[string]any) m
 		}
 		result[key] = value
 	}
+	if strings.TrimSpace(anyString(result["preset_id"])) != "" {
+		return result
+	}
 
 	if normalizeProviderType(anyString(result["type"])) != normalizeProviderType(anyString(existing["type"])) {
 		return result
@@ -746,12 +753,19 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 	id := strings.TrimSpace(input.ID)
 	if id == "" {
 		id = ids.NewUUID()
+	} else if existing, err := s.repository.GetProviderPresetByID(ctx, id); err == nil {
+		if strings.TrimSpace(input.APIKey) == "" {
+			input.APIKey = existing.APIKey
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return ProviderPreset{}, err
 	}
 	preset := ProviderPreset{
 		ID:           id,
 		Name:         name,
 		ProviderType: providerType,
 		BaseURL:      baseURL,
+		APIKey:       strings.TrimSpace(input.APIKey),
 		Models:       models,
 		DefaultModel: defaultModel,
 		Enabled:      input.Enabled,
@@ -762,6 +776,137 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 	return s.repository.GetProviderPresetByID(ctx, id)
 }
 
+func (s *Service) DiscoverProviderModels(ctx context.Context, input DiscoverProviderModelsInput) (DiscoverProviderModelsResult, error) {
+	if _, err := auth.RequireAdmin(ctx); err != nil {
+		return DiscoverProviderModelsResult{}, err
+	}
+
+	presetID := strings.TrimSpace(input.ID)
+	providerType := normalizeProviderType(input.ProviderType)
+	baseURL := strings.TrimSpace(input.BaseURL)
+	apiKey := strings.TrimSpace(input.APIKey)
+	if presetID != "" {
+		preset, err := s.repository.GetProviderPresetByID(ctx, presetID)
+		if err != nil {
+			return DiscoverProviderModelsResult{}, fmt.Errorf("provider preset not found: %w", err)
+		}
+		if providerType == "" {
+			providerType = normalizeProviderType(preset.ProviderType)
+		}
+		if baseURL == "" {
+			baseURL = strings.TrimSpace(preset.BaseURL)
+		}
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(preset.APIKey)
+		}
+	}
+
+	if providerType == "" {
+		providerType = "openai_compatible"
+	}
+	if providerType != "openai_compatible" {
+		return DiscoverProviderModelsResult{}, fmt.Errorf("当前 Provider 类型不支持模型检测，请使用 OpenAI-compatible")
+	}
+	if baseURL == "" {
+		return DiscoverProviderModelsResult{}, fmt.Errorf("Base URL 不能为空")
+	}
+	if apiKey == "" {
+		return DiscoverProviderModelsResult{}, fmt.Errorf("API Key 不能为空")
+	}
+
+	modelsURL, err := openAIModelsURL(baseURL)
+	if err != nil {
+		return DiscoverProviderModelsResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return DiscoverProviderModelsResult{}, fmt.Errorf("创建模型检测请求失败: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("User-Agent", "whatsapp-agent-platform/provider-model-discovery")
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return DiscoverProviderModelsResult{}, fmt.Errorf("模型检测连接失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return DiscoverProviderModelsResult{}, fmt.Errorf("模型检测失败: Provider 返回 HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return DiscoverProviderModelsResult{}, fmt.Errorf("读取模型列表失败: %w", err)
+	}
+	models, err := parseProviderModels(body)
+	if err != nil {
+		return DiscoverProviderModelsResult{}, err
+	}
+	if len(models) == 0 {
+		return DiscoverProviderModelsResult{}, fmt.Errorf("Provider 返回的模型列表为空")
+	}
+
+	return DiscoverProviderModelsResult{Models: models}, nil
+}
+
+func openAIModelsURL(baseURL string) (string, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(trimmed, "/chat/completions") {
+		trimmed = strings.TrimSuffix(trimmed, "/chat/completions")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Host) == "" {
+		return "", fmt.Errorf("Base URL 必须是有效的 HTTP 或 HTTPS 地址")
+	}
+	if strings.HasSuffix(trimmed, "/models") {
+		return trimmed, nil
+	}
+	if !strings.HasSuffix(trimmed, "/v1") {
+		trimmed += "/v1"
+	}
+	return trimmed + "/models", nil
+}
+
+func parseProviderModels(body []byte) ([]string, error) {
+	var envelope struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"data"`
+		Models []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("解析模型列表失败: Provider 返回的不是有效 JSON")
+	}
+
+	items := envelope.Data
+	if len(items) == 0 {
+		items = envelope.Models
+	}
+	models := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		model := strings.TrimSpace(item.ID)
+		if model == "" {
+			model = strings.TrimSpace(item.Name)
+		}
+		if model == "" {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+		models = append(models, model)
+	}
+	return models, nil
+}
+
 func (s *Service) DeleteProviderPreset(ctx context.Context, id string) error {
 	if _, err := auth.RequireAdmin(ctx); err != nil {
 		return err
@@ -769,6 +914,13 @@ func (s *Service) DeleteProviderPreset(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("provider preset id is required")
+	}
+	inUse, err := s.repository.ProviderPresetInUse(ctx, id)
+	if err != nil {
+		return err
+	}
+	if inUse {
+		return fmt.Errorf("该 Provider 正在被智能体使用，请先为相关智能体切换 Provider")
 	}
 	return s.repository.DeleteProviderPreset(ctx, id)
 }

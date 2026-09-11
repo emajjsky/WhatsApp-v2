@@ -674,7 +674,7 @@ func (r *Repository) DeleteSystemConfig(ctx context.Context, id string) error {
 
 func (r *Repository) ListProviderPresets(ctx context.Context) ([]ProviderPreset, error) {
 	const query = `
-SELECT id, name, provider_type, base_url, models, default_model, enabled, created_at, updated_at
+SELECT id, name, provider_type, base_url, api_key, models, default_model, enabled, created_at, updated_at
 FROM agent_provider_presets
 ORDER BY enabled DESC, name ASC, created_at DESC`
 
@@ -700,7 +700,7 @@ ORDER BY enabled DESC, name ASC, created_at DESC`
 
 func (r *Repository) GetProviderPresetByID(ctx context.Context, id string) (ProviderPreset, error) {
 	const query = `
-SELECT id, name, provider_type, base_url, models, default_model, enabled, created_at, updated_at
+SELECT id, name, provider_type, base_url, api_key, models, default_model, enabled, created_at, updated_at
 FROM agent_provider_presets
 WHERE id = $1`
 	return scanProviderPreset(r.db.QueryRowContext(ctx, query, strings.TrimSpace(id)))
@@ -714,18 +714,19 @@ func (r *Repository) UpsertProviderPreset(ctx context.Context, preset ProviderPr
 
 	const query = `
 INSERT INTO agent_provider_presets (
-    id, name, provider_type, base_url, models, default_model, enabled
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, name, provider_type, base_url, api_key, models, default_model, enabled
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     provider_type = EXCLUDED.provider_type,
     base_url = EXCLUDED.base_url,
+    api_key = EXCLUDED.api_key,
     models = EXCLUDED.models,
     default_model = EXCLUDED.default_model,
     enabled = EXCLUDED.enabled,
     updated_at = NOW()`
 
-	if _, err := r.db.ExecContext(ctx, query, preset.ID, preset.Name, preset.ProviderType, preset.BaseURL, models, preset.DefaultModel, preset.Enabled); err != nil {
+	if _, err := r.db.ExecContext(ctx, query, preset.ID, preset.Name, preset.ProviderType, preset.BaseURL, preset.APIKey, models, preset.DefaultModel, preset.Enabled); err != nil {
 		return fmt.Errorf("upsert provider preset %q: %w", preset.ID, err)
 	}
 	return nil
@@ -737,6 +738,20 @@ func (r *Repository) DeleteProviderPreset(ctx context.Context, id string) error 
 		return fmt.Errorf("delete provider preset %q: %w", id, err)
 	}
 	return ensureAffected(result, id)
+}
+
+func (r *Repository) ProviderPresetInUse(ctx context.Context, id string) (bool, error) {
+	const query = `
+SELECT EXISTS (
+    SELECT 1 FROM system_agents WHERE provider_config ->> 'preset_id' = $1
+    UNION ALL
+    SELECT 1 FROM agent_rules WHERE provider_config ->> 'preset_id' = $1
+)`
+	var inUse bool
+	if err := r.db.QueryRowContext(ctx, query, strings.TrimSpace(id)).Scan(&inUse); err != nil {
+		return false, fmt.Errorf("check provider preset %q usage: %w", id, err)
+	}
+	return inUse, nil
 }
 
 func (r *Repository) ListSkills(ctx context.Context) ([]AgentSkill, error) {
@@ -2091,6 +2106,7 @@ func scanProviderPreset(row rowScanner) (ProviderPreset, error) {
 		&item.Name,
 		&item.ProviderType,
 		&item.BaseURL,
+		&item.APIKey,
 		&models,
 		&item.DefaultModel,
 		&item.Enabled,
@@ -2107,6 +2123,7 @@ func scanProviderPreset(row rowScanner) (ProviderPreset, error) {
 	if item.Models == nil {
 		item.Models = []string{}
 	}
+	item.APIKeyConfigured = strings.TrimSpace(item.APIKey) != ""
 	return item, nil
 }
 

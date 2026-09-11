@@ -41,9 +41,9 @@
 - 新增联系人页：按姓名、手机号、WhatsApp ID 和备注搜索，查看关联会话并维护联系人备注。
 - 新增会话工作区：支持会话备注、置顶、归档、标记未读、标签筛选和标签绑定。
 - 对话页补充复制消息、引用回复和进入会话时的真实已读回执；引用会通过 WhatsApp 扩展文本的 `stanza_id` 发送。
-- 管理后台新增 `Provider / Model 预设`：管理员可以维护 Provider 类型、Base URL、模型列表和默认模型；智能体编辑器可以直接选择启用的预设。
-- Provider 预设不保存 API Key，智能体 API Key 仍只保存在服务端，返回前端时仅提供“已配置”状态。
-- 联系人、会话标签和 Provider 预设分别由迁移 `0025_contact_and_chat_workspace.sql`、`0026_provider_presets.sql` 创建。
+- 管理后台新增 `Provider 配置`：管理员统一维护 Provider 类型、Base URL 和 API Key，自动检测可用模型并选择默认模型。
+- 智能体编辑器只选择 Provider 和对应模型；API Key 不再重复保存在智能体配置中，返回前端时只提供“已配置”状态。
+- 联系人、会话标签和 Provider 分别由迁移 `0025_contact_and_chat_workspace.sql`、`0026_provider_presets.sql` 和 `0028_provider_preset_api_key.sql` 创建或扩展。
 - 打包版启动前会拒绝包含中文或其他非 ASCII 字符的安装目录，并提示重新安装到纯英文路径；用户数据目录不受影响。
 
 本轮验证：
@@ -265,7 +265,7 @@ deploy/migrations/0017_chat_status_cards_cloud_agents.sql
 - 桌面端使用云端回复 Agent 绑定的 Skill / 话术包。
 - 桌面端使用云端配置的翻译 Agent。
 - 桌面端使用云端配置的状态卡 Agent。
-- Windows 安装包当前为 `0.1.47`；包含客户工作区功能、Provider / Model 预设和中文路径启动校验。
+- Windows 已发布安装包当前为 `0.1.49`。本版本已包含 Provider 统一配置、模型自动检测、默认模型选择与智能体配置简化；云端 API 和客户端内置页面需保持同版本部署。
 
 ## 0.1.28 启动稳定性修复
 

@@ -55,6 +55,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/agent-configs/", h.handleSystemConfigByID)
 	mux.HandleFunc("/api/admin/provider-presets", h.handleProviderPresets)
 	mux.HandleFunc("/api/admin/provider-presets/", h.handleProviderPresetByID)
+	mux.HandleFunc("/api/admin/provider-presets/discover-models", h.handleDiscoverProviderModels)
 	mux.HandleFunc("/api/admin/agent-skills", h.handleSkills)
 	mux.HandleFunc("/api/admin/agent-skills/", h.handleSkillByID)
 	mux.HandleFunc("/api/agent-configs", h.handleAvailableSystemConfigs)
@@ -373,6 +374,29 @@ func (h *Handler) handleProviderPresetByID(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleDiscoverProviderModels(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAdminProviderPresets(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+
+	var input DiscoverProviderModelsInput
+	if err := httpx.DecodeJSON(r, &input); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.service.DiscoverProviderModels(r.Context(), input)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) handleSkills(w http.ResponseWriter, r *http.Request) {

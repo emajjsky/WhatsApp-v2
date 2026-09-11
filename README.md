@@ -237,8 +237,9 @@ cd "path\to\repo"
 ### 智能回复 Agent
 
 - 创建并编辑 Agent
-- 支持大模型 API、Coze、n8n、Webhook 四种接入方式
-- 每个 Agent 独立保存 API、模型或 Webhook 配置
+- Provider 配置统一保存 Base URL 和 API Key，并可自动检测可用模型
+- 智能体只选择 Provider 和该 Provider 下的模型，默认带入 Provider 的默认模型
+- API Key 只保存在云端，不下发给桌面客户端
 - 自动回复开关不放在此页，当前先按手动生成建议执行
 
 ### 导出中心

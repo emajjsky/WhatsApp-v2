@@ -578,6 +578,7 @@ export interface ProviderPresetView {
   models: string[]
   default_model: string
   enabled: boolean
+  api_key_configured: boolean
   created_at: string
   updated_at: string
 }
@@ -587,6 +588,7 @@ export interface UpsertProviderPresetPayload {
   name: string
   provider_type: string
   base_url: string
+  api_key?: string
   models: string[]
   default_model: string
   enabled: boolean
@@ -1464,6 +1466,18 @@ export async function upsertProviderPreset(payload: UpsertProviderPresetPayload)
 
 export async function deleteProviderPreset(presetId: string) {
   return request<void>(`/api/admin/provider-presets/${presetId}`, { method: 'DELETE' })
+}
+
+export async function discoverProviderModels(payload: {
+  id?: string
+  provider_type?: string
+  base_url?: string
+  api_key?: string
+}) {
+  return request<{ models: string[] }>('/api/admin/provider-presets/discover-models', {
+    method: 'POST',
+    jsonBody: payload,
+  })
 }
 
 export async function listAgentSkills() {

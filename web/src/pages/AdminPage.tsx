@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   createInvitation,
   createUser,
+  discoverProviderModels,
   deleteAgentSkill,
   deleteAgentSkillFile,
   listAccounts,
@@ -53,20 +54,7 @@ interface AgentConfigForm {
   name: string
   purpose: AgentPurpose
   enabled: boolean
-  providerType: ProviderType
   model: string
-  baseUrl: string
-  apiKey: string
-  apiKeyConfigured: boolean
-  endpointUrl: string
-  authorization: string
-  authorizationConfigured: boolean
-  method: string
-  responsePath: string
-  temperature: string
-  maxTokens: string
-  timeoutSeconds: string
-  enableThinking: boolean
   historyLimit: string
   stageLabels: string
   customerTypeLabels: string
@@ -81,6 +69,8 @@ interface ProviderPresetForm {
   name: string
   providerType: ProviderType
   baseUrl: string
+  apiKey: string
+  apiKeyConfigured: boolean
   models: string
   defaultModel: string
   enabled: boolean
@@ -204,8 +194,8 @@ export function AdminPage() {
           />
           <AdminTabButton
             active={tab === 'providerPresets'}
-            title="Provider 预设"
-            hint="地址和模型下拉选项"
+            title="Provider 配置"
+            hint="密钥和可用模型"
             onClick={() => setTab('providerPresets')}
           />
           <AdminTabButton
@@ -1578,6 +1568,7 @@ function ProviderPresetPanel() {
   const [form, setForm] = useState<ProviderPresetForm>(() => createDefaultProviderPresetForm())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [discovering, setDiscovering] = useState(false)
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const selected = useMemo(() => presets.find((item) => item.id === selectedId), [presets, selectedId])
@@ -1600,7 +1591,7 @@ function ProviderPresetPanel() {
         ? current
         : response.presets[0]?.id ?? 'new')
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '加载 Provider 预设失败')
+      setError(loadError instanceof Error ? loadError.message : '加载 Provider 配置失败')
     } finally {
       setLoading(false)
     }
@@ -1623,30 +1614,70 @@ function ProviderPresetPanel() {
         name: form.name.trim(),
         provider_type: form.providerType,
         base_url: form.baseUrl.trim(),
+        api_key: form.apiKey.trim() || undefined,
         models,
         default_model: form.defaultModel.trim(),
         enabled: form.enabled,
       })
       setPresets((current) => [...current.filter((item) => item.id !== response.preset.id), response.preset])
       setSelectedId(response.preset.id)
-      setNotice('Provider 预设已保存')
+      setNotice('Provider 配置已保存')
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : '保存 Provider 预设失败')
+      setError(saveError instanceof Error ? saveError.message : '保存 Provider 配置失败')
     } finally {
       setSaving(false)
     }
   }
 
+  async function handleDiscoverModels() {
+    if (discovering || saving) return
+    setError(undefined)
+    setNotice(undefined)
+    if (form.providerType !== 'openai_compatible') {
+      setError('当前 Provider 类型不支持自动检测模型')
+      return
+    }
+    if (!form.baseUrl.trim()) {
+      setError('请先填写 Base URL')
+      return
+    }
+    if (!form.apiKey.trim() && !form.apiKeyConfigured) {
+      setError('请先填写 API Key')
+      return
+    }
+
+    setDiscovering(true)
+    try {
+      const response = await discoverProviderModels({
+        id: form.id || undefined,
+        provider_type: form.providerType,
+        base_url: form.baseUrl.trim(),
+        api_key: form.apiKey.trim() || undefined,
+      })
+      const models = response.models
+      setForm((current) => ({
+        ...current,
+        models: models.join('\n'),
+        defaultModel: models.includes(current.defaultModel) ? current.defaultModel : models[0] ?? '',
+      }))
+      setNotice(`已检测到 ${models.length} 个模型，请选择默认模型后保存 Provider`)
+    } catch (discoverError) {
+      setError(discoverError instanceof Error ? discoverError.message : '检测模型失败')
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
   async function handleDelete() {
-    if (!selected || saving || !window.confirm(`确认删除预设「${selected.name}」？`)) return
+    if (!selected || saving || !window.confirm(`确认删除 Provider「${selected.name}」？`)) return
     setSaving(true)
     try {
       await deleteProviderPreset(selected.id)
       setPresets((current) => current.filter((item) => item.id !== selected.id))
       setSelectedId('new')
-      setNotice('Provider 预设已删除')
+      setNotice('Provider 配置已删除')
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : '删除 Provider 预设失败')
+      setError(deleteError instanceof Error ? deleteError.message : '删除 Provider 配置失败')
     } finally {
       setSaving(false)
     }
@@ -1654,29 +1685,38 @@ function ProviderPresetPanel() {
 
   return (
     <section className="panel admin-agent-panel provider-preset-panel">
-      <div className="panel-heading"><div><p className="eyebrow">Provider / Model</p><h3>{loading ? '加载预设中' : '连接预设'}</h3></div></div>
+      <div className="panel-heading"><div><p className="eyebrow">Provider / Model</p><h3>{loading ? '加载配置中' : 'Provider 配置'}</h3></div></div>
       <div className="admin-agent-workbench">
         <aside className="admin-agent-sidebar">
           <div className="system-agent-selector-head"><strong>已保存预设</strong><button className="secondary-button" type="button" onClick={() => setSelectedId('new')} disabled={selectedId === 'new'}><Icon name="plus" />新建</button></div>
           <div className="system-agent-list">
             {presets.map((preset) => <button key={preset.id} type="button" className={`system-agent-item${preset.id === selectedId ? ' active' : ''}`} onClick={() => setSelectedId(preset.id)}><span><strong>{preset.name}</strong><small>{preset.enabled ? '已启用' : '已停用'}</small></span><small>{preset.provider_type}</small></button>)}
-            {!presets.length ? <div className="system-agent-empty">还没有 Provider 预设</div> : null}
+            {!presets.length ? <div className="system-agent-empty">还没有 Provider 配置</div> : null}
           </div>
         </aside>
         <form className="agent-config-form admin-agent-editor" onSubmit={handleSubmit}>
           <div className="admin-agent-editor-body">
             <section className="admin-form-section">
-              <div className="admin-form-section-title"><strong>预设信息</strong><span>智能体编辑时可直接选择，不需要重复填写地址和模型</span></div>
+              <div className="admin-form-section-title"><strong>连接信息</strong><span>智能体直接使用这里保存的密钥和模型</span></div>
               <div className="two-column-grid">
                 <label className="field"><span>预设名称</span><input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：OpenAI 主账号" /></label>
                 <label className="field"><span>Provider 类型</span><select value={form.providerType} onChange={(event) => setForm((current) => ({ ...current, providerType: event.target.value as ProviderType }))}>{providerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               </div>
               <label className="field"><span>Base URL / API 地址</span><input value={form.baseUrl} onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></label>
-              <label className="field"><span>模型列表</span><textarea rows={5} value={form.models} onChange={(event) => setForm((current) => ({ ...current, models: event.target.value }))} placeholder="每行一个模型，例如：gpt-4o-mini" /></label>
-              <div className="two-column-grid"><label className="field"><span>默认模型</span><select value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))}><option value="">不指定</option>{parsePresetModels(form.models).map((model) => <option key={model} value={model}>{model}</option>)}</select></label><label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>允许智能体使用</span></label></div>
+              <label className="field"><span>API Key</span><input type="password" value={form.apiKey} onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))} placeholder={form.apiKeyConfigured ? '已配置，留空保持不变' : '请输入 API Key'} /></label>
+              <div className="provider-model-toolbar">
+                <div>
+                  <span className="admin-control-label">可用模型</span>
+                  <small>{parsePresetModels(form.models).length ? `已保存 ${parsePresetModels(form.models).length} 个模型` : '尚未检测模型'}</small>
+                </div>
+                <button className="secondary-button" type="button" onClick={() => void handleDiscoverModels()} disabled={discovering || saving}>
+                  <Icon name="search" />{discovering ? '检测中...' : '检测可用模型'}
+                </button>
+              </div>
+              <div className="two-column-grid"><label className="field"><span>默认模型</span><select value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.models).map((model) => <option key={model} value={model}>{model}</option>)}</select></label><label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>允许智能体使用</span></label></div>
             </section>
           </div>
-          <div className="admin-agent-actions">{notice ? <div className="success-banner">{notice}</div> : null}{error ? <div className="error-banner">{error}</div> : null}<div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name="save" />{saving ? '保存中...' : '保存预设'}</button>{selected ? <button className="danger-button" type="button" onClick={() => void handleDelete()} disabled={saving}><Icon name="delete" />删除预设</button> : null}</div></div>
+          <div className="admin-agent-actions">{notice ? <div className="success-banner">{notice}</div> : null}{error ? <div className="error-banner">{error}</div> : null}<div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name="save" />{saving ? '保存中...' : '保存 Provider'}</button>{selected ? <button className="danger-button" type="button" onClick={() => void handleDelete()} disabled={saving}><Icon name="delete" />删除 Provider</button> : null}</div></div>
         </form>
       </div>
     </section>
@@ -1684,11 +1724,11 @@ function ProviderPresetPanel() {
 }
 
 function createDefaultProviderPresetForm(): ProviderPresetForm {
-  return { id: '', name: '', providerType: 'openai_compatible', baseUrl: '', models: '', defaultModel: '', enabled: true }
+  return { id: '', name: '', providerType: 'openai_compatible', baseUrl: '', apiKey: '', apiKeyConfigured: false, models: '', defaultModel: '', enabled: true }
 }
 
 function mapProviderPresetToForm(preset: ProviderPresetView): ProviderPresetForm {
-  return { id: preset.id, name: preset.name, providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, models: preset.models.join('\n'), defaultModel: preset.default_model, enabled: preset.enabled }
+  return { id: preset.id, name: preset.name, providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, apiKey: '', apiKeyConfigured: preset.api_key_configured, models: preset.models.join('\n'), defaultModel: preset.default_model, enabled: preset.enabled }
 }
 
 function parsePresetModels(value: string) {
@@ -1714,6 +1754,10 @@ function SystemAgentPanel() {
   const selectedConfig = useMemo(
     () => purposeConfigs.find((config) => config.id === selectedConfigId),
     [purposeConfigs, selectedConfigId],
+  )
+  const selectedProviderPreset = useMemo(
+    () => providerPresets.find((preset) => preset.id === form.providerPresetId),
+    [form.providerPresetId, providerPresets],
   )
 
   async function loadConfigs() {
@@ -1780,13 +1824,21 @@ function SystemAgentPanel() {
         setError('智能体名称不能为空')
         return
       }
+      if (!selectedProviderPreset) {
+        setError('请选择一个已配置的 Provider')
+        return
+      }
+      if (selectedProviderPreset.provider_type === 'openai_compatible' && !form.model.trim()) {
+        setError('请选择模型')
+        return
+      }
 
       const response = await upsertSystemAgentConfig({
         id: form.id || undefined,
         name,
         purpose,
         enabled: form.enabled,
-        provider_config: buildProviderConfig({ ...form, purpose }),
+        provider_config: buildProviderConfig({ ...form, purpose }, selectedProviderPreset),
         prompt_template: form.promptTemplate.trim(),
         skill_ids: purpose === 'reply' ? form.skillIds : [],
       })
@@ -1893,26 +1945,30 @@ function SystemAgentPanel() {
             </div>
             <div className="system-agent-list">
               {purposeConfigs.length ? (
-                purposeConfigs.map((config) => (
-                  <button
-                    key={config.id}
-                    type="button"
-                    className={`system-agent-item${config.id === selectedConfigId ? ' active' : ''}`}
-                    onClick={() => setSelectedConfigId(config.id)}
-                  >
-                    <span>
-                      <strong>{config.name}</strong>
-                      <small>
-                        {config.enabled
-                          ? purpose === 'translation' || purpose === 'status_card'
-                            ? '当前生效'
-                            : '已启用'
-                          : '未启用'}
-                      </small>
-                    </span>
-                    <small>{readConfigString(config.provider_config ?? {}, 'type') || '未配置 Provider'}</small>
-                  </button>
-                ))
+                purposeConfigs.map((config) => {
+                  const presetID = readConfigString(config.provider_config ?? {}, 'preset_id')
+                  const providerName = providerPresets.find((preset) => preset.id === presetID)?.name
+                  return (
+                    <button
+                      key={config.id}
+                      type="button"
+                      className={`system-agent-item${config.id === selectedConfigId ? ' active' : ''}`}
+                      onClick={() => setSelectedConfigId(config.id)}
+                    >
+                      <span>
+                        <strong>{config.name}</strong>
+                        <small>
+                          {config.enabled
+                            ? purpose === 'translation' || purpose === 'status_card'
+                              ? '当前生效'
+                              : '已启用'
+                            : '未启用'}
+                        </small>
+                      </span>
+                      <small>{providerName || '待选择 Provider'}</small>
+                    </button>
+                  )
+                })
               ) : (
                 <div className="system-agent-empty">当前用途还没有智能体</div>
               )}
@@ -1954,170 +2010,48 @@ function SystemAgentPanel() {
 
             <section className="admin-form-section">
               <div className="admin-form-section-title">
-                <strong>API 接入</strong>
-                <span>回复和状态卡可接大模型、Coze、n8n；翻译使用 OpenAI-compatible</span>
+                <strong>模型配置</strong>
+                <span>连接地址和密钥统一在 Provider 预设中维护</span>
               </div>
-              <div className="admin-provider-grid">
-                {providerOptions
-                  .filter((option) => purpose !== 'translation' || option.value === 'openai_compatible')
-                  .map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`admin-provider-option${form.providerType === option.value ? ' active' : ''}`}
-                      onClick={() => updateForm({ providerType: option.value })}
-                    >
-                      <strong>{option.label}</strong>
-                      <span>{option.value === 'openai_compatible' ? 'Prompt + Model' : 'Agent API'}</span>
-                    </button>
-                  ))}
-              </div>
-
-              <label className="field admin-provider-preset-select">
-                <span>Provider 预设</span>
+              <div className="two-column-grid agent-provider-selection-grid">
+                <label className="field">
+                  <span>Provider</span>
                 <select
                   value={form.providerPresetId}
                   onChange={(event) => {
-                    const presetID = event.target.value
-                    const preset = providerPresets.find((item) => item.id === presetID)
-                    if (!preset) {
-                      updateForm({ providerPresetId: '' })
-                      return
-                    }
-                    const providerType = normalizeProviderType(preset.provider_type)
+                    const preset = providerPresets.find((item) => item.id === event.target.value)
                     updateForm({
-                      providerPresetId: preset.id,
-                      providerType,
-                      baseUrl: preset.base_url,
-                      endpointUrl: preset.base_url,
-                      model: preset.default_model || preset.models[0] || '',
+                      providerPresetId: preset?.id ?? '',
+                      model: preset?.default_model || preset?.models[0] || '',
                     })
                   }}
                 >
-                  <option value="">手动填写</option>
-                  {providerPresets.filter((preset) => preset.enabled).map((preset) => (
+                  <option value="">请选择 Provider</option>
+                  {providerPresets
+                    .filter((preset) => preset.enabled || preset.id === form.providerPresetId)
+                    .filter((preset) => purpose !== 'translation' || preset.provider_type === 'openai_compatible')
+                    .map((preset) => (
                     <option key={preset.id} value={preset.id}>{preset.name}</option>
                   ))}
                 </select>
-              </label>
-
-            {form.providerType === 'openai_compatible' ? (
-              <div className="agent-provider-fields">
-                <div className="two-column-grid">
-                  <label className="field">
-                    <span>Model</span>
-                    <input value={form.model} onChange={(event) => updateForm({ model: event.target.value })} />
-                  </label>
-                  <label className="field">
-                    <span>Base URL</span>
-                    <input value={form.baseUrl} onChange={(event) => updateForm({ baseUrl: event.target.value })} />
-                  </label>
-                </div>
-                <label className="field">
-                  <span>API Key</span>
-                  <input
-                    type="password"
-                    value={form.apiKey}
-                    onChange={(event) => updateForm({ apiKey: event.target.value })}
-                    placeholder={form.apiKeyConfigured ? '已配置，留空保持不变' : '请输入 API Key'}
-                  />
                 </label>
-                <div className="agent-advanced-grid">
-                  <label className="field compact-field">
-                    <span>Temperature</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={2}
-                      step={0.1}
-                      value={form.temperature}
-                      onChange={(event) => updateForm({ temperature: event.target.value })}
-                    />
-                  </label>
-                  <label className="field compact-field">
-                    <span>Max Tokens</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={form.maxTokens}
-                      onChange={(event) => updateForm({ maxTokens: event.target.value })}
-                    />
-                  </label>
-                  <label className="field compact-field">
-                    <span>Timeout</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={form.timeoutSeconds}
-                      onChange={(event) => updateForm({ timeoutSeconds: event.target.value })}
-                    />
-                  </label>
-                </div>
-                <label className="checkbox-row agent-thinking-row">
-                  <input
-                    type="checkbox"
-                    checked={form.enableThinking}
-                    onChange={(event) => updateForm({ enableThinking: event.target.checked })}
-                  />
-                  <span>启用思考模式</span>
+                <label className="field">
+                  <span>模型</span>
+                  <select
+                    value={form.model}
+                    onChange={(event) => updateForm({ model: event.target.value })}
+                    disabled={!selectedProviderPreset || selectedProviderPreset.models.length === 0}
+                  >
+                    <option value="">{selectedProviderPreset ? '请选择模型' : '请先选择 Provider'}</option>
+                    {selectedProviderPreset?.models.map((model) => (
+                      <option key={model} value={model}>{model}</option>
+                    ))}
+                  </select>
                 </label>
               </div>
-            ) : (
-              <div className="agent-provider-fields">
-                <label className="field">
-                  <span>API 地址</span>
-                  <input
-                    value={form.endpointUrl}
-                    onChange={(event) => updateForm({ endpointUrl: event.target.value })}
-                  />
-                </label>
-                <div className="two-column-grid">
-                  <label className="field">
-                    <span>Authorization</span>
-                    <input
-                      value={form.authorization}
-                      onChange={(event) => updateForm({ authorization: event.target.value })}
-                      placeholder={form.authorizationConfigured ? '已配置，留空保持不变' : '可选'}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>API Key</span>
-                    <input
-                      type="password"
-                      value={form.apiKey}
-                      onChange={(event) => updateForm({ apiKey: event.target.value })}
-                      placeholder={form.apiKeyConfigured ? '已配置，留空保持不变' : '可选'}
-                    />
-                  </label>
-                </div>
-                <div className="agent-advanced-grid">
-                  <label className="field compact-field">
-                    <span>Method</span>
-                    <select value={form.method} onChange={(event) => updateForm({ method: event.target.value })}>
-                      <option value="POST">POST</option>
-                      <option value="PUT">PUT</option>
-                      <option value="PATCH">PATCH</option>
-                    </select>
-                  </label>
-                  <label className="field compact-field">
-                    <span>Response Path</span>
-                    <input
-                      value={form.responsePath}
-                      onChange={(event) => updateForm({ responsePath: event.target.value })}
-                    />
-                  </label>
-                  <label className="field compact-field">
-                    <span>Timeout</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={form.timeoutSeconds}
-                      onChange={(event) => updateForm({ timeoutSeconds: event.target.value })}
-                    />
-                  </label>
-                </div>
-              </div>
-            )}
+              {providerPresets.filter((preset) => preset.enabled).length === 0 ? (
+                <div className="inline-empty-note">请先到 Provider 预设中配置密钥并检测可用模型。</div>
+              ) : null}
             </section>
 
             {purpose === 'status_card' ? (
@@ -2255,20 +2189,7 @@ function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
     name: getPurposeDefaultName(purpose),
     purpose,
     enabled: false,
-    providerType: 'openai_compatible',
     model: '',
-    baseUrl: '',
-    apiKey: '',
-    apiKeyConfigured: false,
-    endpointUrl: '',
-    authorization: '',
-    authorizationConfigured: false,
-    method: 'POST',
-    responsePath: 'draft',
-    temperature: '0.2',
-    maxTokens: purpose === 'translation' ? '800' : purpose === 'status_card' ? '1400' : '1200',
-    timeoutSeconds: '60',
-    enableThinking: false,
     historyLimit: '500',
     stageLabels: defaultStatusStageLabels.join('\n'),
     customerTypeLabels: defaultCustomerTypeLabels.join('\n'),
@@ -2424,7 +2345,6 @@ function getPurposeDefaultName(purpose: AgentPurpose) {
 
 function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
   const providerConfig = config.provider_config ?? {}
-  const providerType = normalizeProviderType(readConfigString(providerConfig, 'type'))
   const fallback = createDefaultConfigForm(config.purpose)
 
   return {
@@ -2432,20 +2352,7 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
     id: config.id,
     name: config.name,
     enabled: config.enabled,
-    providerType,
     model: readConfigString(providerConfig, 'model'),
-    baseUrl: readConfigString(providerConfig, 'base_url'),
-    apiKey: '',
-    apiKeyConfigured: readConfigBool(providerConfig, 'api_key_configured', false),
-    endpointUrl: readConfigString(providerConfig, 'endpoint_url') || readConfigString(providerConfig, 'base_url'),
-    authorization: '',
-    authorizationConfigured: readConfigBool(providerConfig, 'authorization_configured', false),
-    method: readConfigString(providerConfig, 'method') || 'POST',
-    responsePath: readConfigString(providerConfig, 'response_path') || 'draft',
-    temperature: readConfigString(providerConfig, 'temperature') || fallback.temperature,
-    maxTokens: readConfigString(providerConfig, 'max_tokens') || fallback.maxTokens,
-    timeoutSeconds: readConfigString(providerConfig, 'timeout_seconds') || fallback.timeoutSeconds,
-    enableThinking: readConfigBool(providerConfig, 'enable_thinking', false),
     historyLimit: readConfigString(providerConfig, 'history_limit') || fallback.historyLimit,
     stageLabels: readConfigStringList(providerConfig, 'stage_labels', defaultStatusStageLabels).join('\n'),
     customerTypeLabels: readConfigStringList(
@@ -2460,31 +2367,12 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
   }
 }
 
-function buildProviderConfig(form: AgentConfigForm): AgentProviderConfig {
-  if (form.providerType === 'openai_compatible') {
-    return withStatusCardConfig(form, {
-      type: 'openai_compatible',
-      model: form.model.trim(),
-      base_url: form.baseUrl.trim(),
-      api_key: form.apiKey.trim(),
-      temperature: optionalNumber(form.temperature),
-      max_tokens: optionalNumber(form.maxTokens),
-      timeout_seconds: optionalNumber(form.timeoutSeconds),
-      enable_thinking: form.enableThinking,
-      preset_id: form.providerPresetId,
-    })
-  }
-
-  return withStatusCardConfig(form, {
-    type: form.providerType,
-    endpoint_url: form.endpointUrl.trim(),
-    api_key: form.apiKey.trim(),
-    authorization: form.authorization.trim(),
-    method: form.method.trim().toUpperCase() || 'POST',
-    response_path: form.responsePath.trim() || 'draft',
-    timeout_seconds: optionalNumber(form.timeoutSeconds),
-    preset_id: form.providerPresetId,
-  })
+function buildProviderConfig(form: AgentConfigForm, preset: ProviderPresetView): AgentProviderConfig {
+  return withStatusCardConfig(form, compactConfig({
+    type: normalizeProviderType(preset.provider_type),
+    model: form.model.trim(),
+    preset_id: preset.id,
+  }))
 }
 
 function withStatusCardConfig(form: AgentConfigForm, config: AgentProviderConfig) {
@@ -2550,18 +2438,6 @@ function parseLabelTextarea(value: string) {
       seen.add(item)
       return true
     })
-}
-
-function readConfigBool(config: AgentProviderConfig, key: string, fallback: boolean) {
-  const value = config[key]
-  if (typeof value === 'boolean') {
-    return value
-  }
-  if (value === undefined || value === null) {
-    return fallback
-  }
-
-  return ['true', '1', 'yes', 'on', 'enabled'].includes(String(value).trim().toLowerCase())
 }
 
 function normalizeProviderType(value: string): ProviderType {

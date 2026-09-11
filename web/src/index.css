@@ -4972,6 +4972,44 @@ a {
   max-width: 420px;
 }
 
+.provider-model-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #f8fbfa;
+}
+
+.provider-model-toolbar > div {
+  display: grid;
+  gap: 3px;
+}
+
+.provider-model-toolbar small {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.inline-empty-note {
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.agent-provider-selection-grid {
+  align-items: end;
+}
+
+.agent-provider-selection-grid select:disabled {
+  color: var(--text-soft);
+  background: #f3f6f5;
+}
+
 .provider-preset-panel .admin-agent-workbench {
   min-height: 520px;
 }
