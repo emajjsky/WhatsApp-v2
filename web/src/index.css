@@ -8049,6 +8049,8 @@ a {
   .whatsapp-chat-page .whatsapp-primary-filters {
     width: 100%;
     gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 
   .whatsapp-chat-page .whatsapp-primary-filters button {

@@ -381,7 +381,7 @@ func mapRuleToViewForContext(ctx context.Context, rule AgentRule) RuleView {
 
 func publicProviderConfig(config map[string]any) map[string]any {
 	result := make(map[string]any)
-	for _, key := range []string{"type", "model", "enable_thinking"} {
+	for _, key := range []string{"type", "model", "preset_id", "enable_thinking"} {
 		if value, ok := config[key]; ok {
 			result[key] = value
 		}

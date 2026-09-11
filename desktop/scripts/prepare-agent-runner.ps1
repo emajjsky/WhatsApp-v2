@@ -39,4 +39,4 @@ if (Test-Path $agentDir) {
   Remove-Item -LiteralPath $agentDir -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
-Copy-Item -Path (Join-Path $RepoRoot "agent_runner/*") -Destination $agentDir -Recurse -Force -Exclude "__pycache__"
+Copy-Item -Path (Join-Path $RepoRoot "agent_runner/*") -Destination $agentDir -Recurse -Force -Exclude @("__pycache__", "test_*.py")

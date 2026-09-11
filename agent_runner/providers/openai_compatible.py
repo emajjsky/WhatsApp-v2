@@ -203,9 +203,13 @@ def _load_config(config: Mapping[str, Any] | None) -> OpenAICompatibleConfig:
 
     timeout_seconds = _optional_float(cfg.get("timeout_seconds"))
     if timeout_seconds is None:
-        timeout_seconds = 25.0
+        timeout_seconds = 90.0
 
+    # Agent responses must contain usable content. The UI no longer exposes a
+    # thinking switch, so omitted legacy settings default to disabled.
     enable_thinking = _optional_bool(cfg.get("enable_thinking"))
+    if enable_thinking is None:
+        enable_thinking = False
     extra_body = cfg.get("extra_body")
     if not isinstance(extra_body, dict):
         extra_body = {}
@@ -317,6 +321,10 @@ class _ThinkingBlockStreamFilter:
         return remainder
 
 
+class _ReasoningOnlyResponse(ProviderError):
+    """The provider completed reasoning but did not return usable content."""
+
+
 def _parse_chat_completion_response(payload: dict[str, Any]) -> tuple[str, dict[str, int]]:
     choices = payload.get("choices", [])
     if not isinstance(choices, list) or not choices:
@@ -327,7 +335,7 @@ def _parse_chat_completion_response(payload: dict[str, Any]) -> tuple[str, dict[
 
     if not text or not text.strip():
         if message.get("reasoning_content"):
-            raise ProviderError(
+            raise _ReasoningOnlyResponse(
                 "openai_compatible response only contained reasoning content; try setting enable_thinking=false"
             )
         raise ProviderError("openai_compatible response contained empty content")

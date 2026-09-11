@@ -1585,7 +1585,7 @@ func (a *Automation) buildRunnerProvider(ctx context.Context, accountID string, 
 func (a *Automation) resolveProviderPreset(ctx context.Context, config map[string]any) (map[string]any, error) {
 	presetID := strings.TrimSpace(anyString(config["preset_id"]))
 	if presetID == "" {
-		return config, nil
+		return nil, fmt.Errorf("provider preset is required; configure the agent in admin backend")
 	}
 
 	preset, err := a.repository.GetProviderPresetByID(ctx, presetID)
@@ -1594,6 +1594,9 @@ func (a *Automation) resolveProviderPreset(ctx context.Context, config map[strin
 	}
 	if !preset.Enabled {
 		return nil, fmt.Errorf("provider preset %q is disabled", preset.Name)
+	}
+	if preset.ProviderType == "openai_compatible" && strings.TrimSpace(preset.APIKey) == "" {
+		return nil, fmt.Errorf("provider preset %q has no API key; configure it in admin backend", preset.Name)
 	}
 
 	resolved := cloneProviderConfig(config)
@@ -1615,6 +1618,24 @@ func (a *Automation) resolveProviderPreset(ctx context.Context, config map[strin
 		if model != "" {
 			resolved["model"] = model
 		}
+	}
+	if preset.ProviderType == "openai_compatible" {
+		model := strings.TrimSpace(anyString(resolved["model"]))
+		if model == "" {
+			return nil, fmt.Errorf("provider preset %q has no default model", preset.Name)
+		}
+		if len(preset.Models) > 0 && !containsString(preset.Models, model) {
+			fallback := strings.TrimSpace(preset.DefaultModel)
+			if fallback == "" || !containsString(preset.Models, fallback) {
+				fallback = strings.TrimSpace(preset.Models[0])
+			}
+			if fallback == "" {
+				return nil, fmt.Errorf("provider preset %q has no usable model", preset.Name)
+			}
+			resolved["model"] = fallback
+		}
+		// Never inherit the removed thinking switch from an old agent record.
+		resolved["enable_thinking"] = false
 	}
 	return resolved, nil
 }

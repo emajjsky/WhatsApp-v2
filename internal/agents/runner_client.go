@@ -124,7 +124,7 @@ func NewRunnerClient(baseURL string) *RunnerClient {
 	return &RunnerClient{
 		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		httpClient: &http.Client{
-			Timeout: 25 * time.Second,
+			Timeout: 120 * time.Second,
 		},
 	}
 }

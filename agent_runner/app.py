@@ -118,10 +118,20 @@ class AgentRunnerHandler(BaseHTTPRequestHandler):
         try:
             for event in stream:
                 self.write_ndjson(event)
+        except (BrokenPipeError, ConnectionResetError):
+            # The caller navigated away or cancelled the request. There is
+            # no socket left on which an error envelope can be written.
+            return
         except ProviderError as exc:
-            self.write_ndjson({"type": "error", "error": str(exc)})
+            try:
+                self.write_ndjson({"type": "error", "error": str(exc)})
+            except (BrokenPipeError, ConnectionResetError):
+                return
         except Exception as exc:
-            self.write_ndjson({"type": "error", "error": f"internal runner error: {exc}"})
+            try:
+                self.write_ndjson({"type": "error", "error": f"internal runner error: {exc}"})
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
     def handle_translation_request(self) -> None:
         try:

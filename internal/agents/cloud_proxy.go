@@ -39,7 +39,7 @@ func NewCloudProxy(baseURL string, authService *auth.Service, repository *Reposi
 		repository:     repository,
 		chatRepository: chatRepository,
 		httpClient: &http.Client{
-			Timeout: 45 * time.Second,
+			Timeout: 120 * time.Second,
 		},
 	}
 }

@@ -153,6 +153,17 @@ const defaultAssistantReplyRatio = 40
 const minAssistantReplyWidth = 150
 const minAssistantDraftWidth = 240
 
+function isConfiguredSystemAgent(config: SystemAgentConfigView) {
+  const providerConfig = config.provider_config ?? {}
+  return Boolean(
+    config.enabled
+      && typeof providerConfig.preset_id === 'string'
+      && providerConfig.preset_id.trim()
+      && typeof providerConfig.model === 'string'
+      && providerConfig.model.trim(),
+  )
+}
+
 function getAssistantRunNotice(run: AgentRunView) {
   if (run.status === 'ready_for_review') {
     return '草稿已生成，可以写回输入框或直接发送。'
@@ -1136,10 +1147,10 @@ export function ChatsPage() {
     if (!text || !accountID || !requestChatId || !translationKey) {
       return
     }
-    if (translationAgents.length === 0) {
+    if (!translationAgentConfigured) {
       setMessageTranslations((current) => ({
         ...current,
-        [translationKey]: { error: '管理员后台还没有启用翻译智能体' },
+        [translationKey]: { error: '管理员后台还没有配置可用的翻译 Provider 或模型' },
       }))
       return
     }
@@ -1199,8 +1210,8 @@ export function ChatsPage() {
     if (!selectedChatId || !history || history.chat.id !== selectedChatId || !assistantDraft.trim() || draftTranslationBusy) {
       return
     }
-    if (translationAgents.length === 0) {
-      setAssistantNoticeState('管理员后台还没有启用翻译智能体')
+    if (!translationAgentConfigured) {
+      setAssistantNoticeState('管理员后台还没有配置可用的翻译 Provider 或模型')
       return
     }
 
@@ -1587,6 +1598,7 @@ export function ChatsPage() {
   const canAnalyzeStatusCard = Boolean(selectedChatId && activeHistory && activeStatusCardAgent && !statusCardBusy)
   const favoriteList = chatLabels.find((label) => label.name.trim() === favoriteListName)
   const customLists = chatLabels.filter((label) => label.id !== favoriteList?.id)
+  const translationAgentConfigured = translationAgents.some(isConfiguredSystemAgent)
   const activePrimaryFilter: ChatPrimaryFilter = chatView === 'unread'
     ? 'unread'
     : selectedChatType === 'group'
@@ -2001,10 +2013,23 @@ export function ChatsPage() {
               >
                 <Icon name="plus" />
               </button>
+              {customLists.map((label) => (
+                <button
+                  key={label.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selectedLabelId === label.id}
+                  className={selectedLabelId === label.id ? 'active' : ''}
+                  onClick={() => selectCustomList(label.id)}
+                  title={label.name}
+                >
+                  {label.name}
+                </button>
+              ))}
             </div>
 
             {listMenuOpen ? (
-              <div className="chat-list-menu" role="menu">
+              <div className="chat-list-menu" role="menu" aria-label="列表管理">
                 <button type="button" role="menuitem" onClick={() => void openListCreator()}>
                   <span className="chat-list-menu-icon"><Icon name="plus" /></span>
                   <span><strong>创建新列表</strong><small>整理常用客户和群组</small></span>
@@ -2244,7 +2269,7 @@ export function ChatsPage() {
 
                       {renderMessageTranslation(
                         messageTranslations[getMessageTranslationKey(message)],
-                        canOfferMessageTranslation(message) && translationAgents.length > 0
+                        canOfferMessageTranslation(message) && translationAgentConfigured
                           ? () => void translateMessageToChinese(message)
                           : undefined,
                       )}
@@ -2594,7 +2619,7 @@ export function ChatsPage() {
                       className="primary-button assistant-action-button"
                       type="button"
                       onClick={() => void translateDraftToTarget()}
-                      disabled={!assistantDraft.trim() || translationAgents.length === 0 || draftTranslationBusy}
+                      disabled={!assistantDraft.trim() || !translationAgentConfigured || draftTranslationBusy}
                     >
                       {draftTranslationBusy ? '翻译中...' : '翻译草稿'}
                     </button>
@@ -2673,10 +2698,10 @@ export function ChatsPage() {
               <Icon name="heart" /><span>{favoriteList && chat.labels.some((label) => label.id === favoriteList.id) ? `从“${favoriteListName}”移除` : `添加到“${favoriteListName}”`}</span>
             </button>
             <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={chatContextMenu.submenu === 'lists'} onClick={() => setChatContextMenu((current) => current ? { ...current, submenu: current.submenu === 'lists' ? undefined : 'lists' } : current)}>
-              <Icon name="list" /><span>添加到列表</span><Icon name="chevronRight" />
+              <Icon name="list" /><span>更改列表</span><Icon name="chevronRight" />
             </button>
             {chatContextMenu.submenu === 'lists' ? (
-              <div className="chat-context-submenu" role="menu" aria-label="选择列表">
+              <div className="chat-context-submenu" role="menu" aria-label="更改列表">
                 {customLists.map((label) => (
                   <button key={label.id} type="button" role="menuitemcheckbox" aria-checked={chat.labels.some((item) => item.id === label.id)} onClick={() => void toggleChatList(chat, label)}>
                     <Icon name={chat.labels.some((item) => item.id === label.id) ? 'check' : 'list'} />
