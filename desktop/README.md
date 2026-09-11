@@ -80,7 +80,7 @@ The app stores local data under the Electron user data directory:
 Important subdirectories:
 
 - `postgres-data/`: local PostgreSQL data directory
-- `data/`: exported files, scripts, media cache
+- `data/`: exported files, media cache, and local runtime data
 - `logs/`: local process logs
 
 Uninstalling the desktop app removes the Windows service but preserves this

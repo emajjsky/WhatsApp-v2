@@ -6,7 +6,11 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   analyzeStatusCard,
   createChatLabel,
@@ -45,14 +49,6 @@ import {
 import { EmptyPanel } from '../components/EmptyPanel'
 import { Icon, type IconName } from '../components/Icon'
 import { StatusBadge } from '../components/StatusBadge'
-
-const chatTypeOptions: Array<{ value: ChatType | ''; label: string }> = [
-  { value: '', label: '全部' },
-  { value: 'direct', label: '单聊' },
-  { value: 'group', label: '群聊' },
-  { value: 'broadcast', label: '广播' },
-  { value: 'status', label: '状态' },
-]
 
 type ChatDisplaySource = {
   wa_chat_jid: string
@@ -95,6 +91,15 @@ type StoredMessageTranslation = {
   translation: TranslationView
 }
 
+type ChatContextMenuState = {
+  chatId: string
+  x: number
+  y: number
+  submenu?: 'mute' | 'lists'
+}
+
+type ChatPrimaryFilter = 'all' | 'unread' | 'groups' | 'favorites'
+
 type AttachmentAction =
   | 'document'
   | 'media'
@@ -136,6 +141,17 @@ const messageTranslationCacheStorageKey = 'whatsapp.messageTranslations.v1'
 const messageTranslationCacheLimit = 800
 const assistantWorkspaceStorageKey = 'whatsapp.assistantWorkspace.v2'
 const assistantWorkspaceCacheLimit = 160
+const favoriteListName = '特别关注'
+const chatSidebarWidthStorageKey = 'whatsapp.chatSidebarWidth.v1'
+const assistantPanelCollapsedStorageKey = 'whatsapp.assistantPanelCollapsed.v1'
+const assistantReplyRatioStorageKey = 'whatsapp.assistantReplyRatio.v1'
+const defaultChatSidebarWidth = 280
+const minChatSidebarWidth = 240
+const minChatMainWidth = 320
+const minAssistantPanelWidth = 450
+const defaultAssistantReplyRatio = 40
+const minAssistantReplyWidth = 150
+const minAssistantDraftWidth = 240
 
 function getAssistantRunNotice(run: AgentRunView) {
   if (run.status === 'ready_for_review') {
@@ -151,6 +167,10 @@ function getAssistantRunNotice(run: AgentRunView) {
 }
 
 export function ChatsPage() {
+  const [searchParams] = useSearchParams()
+  const requestedAccountId = searchParams.get('account_id')?.trim() ?? ''
+  const requestedChatId = searchParams.get('chat_id')?.trim() ?? ''
+  const requestedChatIdRef = useRef(requestedChatId)
   const [accounts, setAccounts] = useState<AccountView[]>([])
   const [chats, setChats] = useState<ChatSummary[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState('')
@@ -158,11 +178,25 @@ export function ChatsPage() {
   const [chatView, setChatView] = useState<'active' | 'archived' | 'unread'>('active')
   const [chatLabels, setChatLabels] = useState<ChatLabel[]>([])
   const [selectedLabelId, setSelectedLabelId] = useState('')
+  const [chatFilterCounts, setChatFilterCounts] = useState({ unread: 0, groups: 0, favorites: 0 })
   const [chatMetadataBusy, setChatMetadataBusy] = useState(false)
   const [chatNote, setChatNote] = useState('')
   const [labelEditorOpen, setLabelEditorOpen] = useState(false)
   const [newLabelName, setNewLabelName] = useState('')
   const [chatInfoOpen, setChatInfoOpen] = useState(false)
+  const [chatContextMenu, setChatContextMenu] = useState<ChatContextMenuState>()
+  const [noteEditorChatId, setNoteEditorChatId] = useState<string>()
+  const [noteEditorDraft, setNoteEditorDraft] = useState('')
+  const [listMenuOpen, setListMenuOpen] = useState(false)
+  const [listCreatorOpen, setListCreatorOpen] = useState(false)
+  const [listNameDraft, setListNameDraft] = useState('')
+  const [listChatIds, setListChatIds] = useState<string[]>([])
+  const [listCandidates, setListCandidates] = useState<ChatSummary[]>([])
+  const [listCandidatesLoading, setListCandidatesLoading] = useState(false)
+  const [listBusy, setListBusy] = useState(false)
+  const [chatSidebarWidth, setChatSidebarWidth] = useState(readStoredChatSidebarWidth)
+  const [assistantPanelCollapsed, setAssistantPanelCollapsed] = useState(readStoredAssistantPanelCollapsed)
+  const [assistantReplyRatio, setAssistantReplyRatio] = useState(readStoredAssistantReplyRatio)
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [selectedChatId, setSelectedChatId] = useState<string>()
@@ -201,12 +235,17 @@ export function ChatsPage() {
   const [assistantSendingByChatId, setAssistantSendingByChatId] = useState<Record<string, boolean>>({})
   const [assistantNotice, setAssistantNotice] = useState<string>()
   const timelineRef = useRef<HTMLDivElement>(null)
+  const chatFrameRef = useRef<HTMLElement>(null)
+  const assistantPanelBodyRef = useRef<HTMLDivElement>(null)
   const assistantDraftRef = useRef<HTMLTextAreaElement>(null)
   const assistantWorkspaceCacheRef = useRef<Record<string, StoredAssistantWorkspace>>(
     readStoredAssistantWorkspaceCache(),
   )
   const activeAssistantChatIdRef = useRef<string | undefined>(undefined)
   const composeAttachmentRef = useRef<HTMLDivElement>(null)
+  const chatContextMenuRef = useRef<HTMLDivElement>(null)
+  const listMenuRef = useRef<HTMLDivElement>(null)
+  const chatSearchRef = useRef<HTMLInputElement>(null)
   const documentInputRef = useRef<HTMLInputElement>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -216,6 +255,7 @@ export function ChatsPage() {
   const pendingScrollModeRef = useRef<'bottom' | 'preserve' | 'none'>('bottom')
   const historyRequestSeqRef = useRef(0)
   const statusCardRequestSeqRef = useRef(0)
+  const listCandidatesRequestSeqRef = useRef(0)
   const previousTimelineMetricsRef = useRef<
     { scrollHeight: number; scrollTop: number } | undefined
   >(undefined)
@@ -454,12 +494,14 @@ export function ChatsPage() {
       setSelectedAccountId((current) =>
         nextAccounts.some((account) => account.id === current)
           ? current
-          : nextAccounts[0]?.id ?? '',
+          : nextAccounts.some((account) => account.id === requestedAccountId)
+            ? requestedAccountId
+            : nextAccounts[0]?.id ?? '',
       )
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载账号失败')
     }
-  }, [])
+  }, [requestedAccountId])
 
   const loadAvailableAgentConfigs = useCallback(async () => {
     setAgentConfigsLoading(true)
@@ -497,6 +539,12 @@ export function ChatsPage() {
           return
         }
 
+        if (selectedLabelId === '__favorites__') {
+          setChats([])
+          setSelectedChatId(undefined)
+          return
+        }
+
         const response = await listChats({
           accountId: selectedAccountId,
           query: deferredSearch.trim() || undefined,
@@ -508,7 +556,14 @@ export function ChatsPage() {
         })
 
         setChats(response.chats)
-        setSelectedChatId((current) => choosePreferredChatId(response.chats, current))
+        setSelectedChatId((current) => {
+          const initialChatId = requestedChatIdRef.current
+          if (initialChatId && response.chats.some((chat) => chat.id === initialChatId)) {
+            requestedChatIdRef.current = ''
+            return initialChatId
+          }
+          return choosePreferredChatId(response.chats, current)
+        })
       } catch (loadError) {
         if (!background) {
           setChats([])
@@ -520,6 +575,31 @@ export function ChatsPage() {
     },
     [chatView, deferredSearch, selectedAccountId, selectedChatType, selectedLabelId],
   )
+
+  const loadChatFilterCounts = useCallback(async () => {
+    if (!selectedAccountId) {
+      setChatFilterCounts({ unread: 0, groups: 0, favorites: 0 })
+      return
+    }
+
+    try {
+      const favoriteLabel = chatLabels.find((label) => label.name.trim() === favoriteListName)
+      const [unreadResponse, groupResponse, favoriteResponse] = await Promise.all([
+        listChats({ accountId: selectedAccountId, archived: false, unreadOnly: true, limit: 1 }),
+        listChats({ accountId: selectedAccountId, archived: false, chatType: 'group', limit: 1 }),
+        favoriteLabel
+          ? listChats({ accountId: selectedAccountId, archived: false, labelId: favoriteLabel.id, limit: 1 })
+          : Promise.resolve({ total: 0 }),
+      ])
+      setChatFilterCounts({
+        unread: unreadResponse.total,
+        groups: groupResponse.total,
+        favorites: favoriteResponse.total,
+      })
+    } catch {
+      // Counts are supplementary; the conversation list remains usable if they fail.
+    }
+  }, [chatLabels, selectedAccountId])
 
   const loadHistory = useCallback(async (chatId: string, background = false) => {
     const requestSeq = historyRequestSeqRef.current + 1
@@ -631,6 +711,47 @@ export function ChatsPage() {
   }, [loadChatsList])
 
   useEffect(() => {
+    void loadChatFilterCounts()
+  }, [loadChatFilterCounts])
+
+  useEffect(() => {
+    window.localStorage.setItem(chatSidebarWidthStorageKey, String(Math.round(chatSidebarWidth)))
+  }, [chatSidebarWidth])
+
+  useEffect(() => {
+    window.localStorage.setItem(assistantPanelCollapsedStorageKey, String(assistantPanelCollapsed))
+    const clampSidebarWidth = () => {
+      if (window.innerWidth <= 1100) return
+      const frameWidth = chatFrameRef.current?.getBoundingClientRect().width
+      if (!frameWidth) return
+      setChatSidebarWidth((current) => clampChatSidebarWidth(current, frameWidth, assistantPanelCollapsed))
+    }
+    clampSidebarWidth()
+    window.addEventListener('resize', clampSidebarWidth)
+    return () => window.removeEventListener('resize', clampSidebarWidth)
+  }, [assistantPanelCollapsed])
+
+  useEffect(() => {
+    window.localStorage.setItem(assistantReplyRatioStorageKey, String(assistantReplyRatio))
+  }, [assistantReplyRatio])
+
+  useEffect(() => {
+    if (assistantPanelCollapsed) return
+    const body = assistantPanelBodyRef.current
+    if (!body) return
+
+    const clampReplyRatio = () => {
+      const bodyWidth = body.getBoundingClientRect().width
+      if (!bodyWidth) return
+      setAssistantReplyRatio((current) => clampAssistantReplyRatio(current, bodyWidth))
+    }
+    clampReplyRatio()
+    const observer = new ResizeObserver(clampReplyRatio)
+    observer.observe(body)
+    return () => observer.disconnect()
+  }, [assistantPanelCollapsed, selectedChatId])
+
+  useEffect(() => {
     if (!selectedChatId) {
       historyRequestSeqRef.current += 1
       statusCardRequestSeqRef.current += 1
@@ -645,10 +766,11 @@ export function ChatsPage() {
     void markChatRead(selectedChatId).then((response) => {
       setChats((current) => current.map((chat) => chat.id === response.chat.id ? response.chat : chat))
       setHistory((current) => current && current.chat.id === response.chat.id ? { ...current, chat: response.chat } : current)
+      void loadChatFilterCounts()
     }).catch(() => {
       // Read receipts are best effort; loading the conversation must not fail.
     })
-  }, [loadHistory, loadSavedStatusCard, selectedChatId])
+  }, [loadChatFilterCounts, loadHistory, loadSavedStatusCard, selectedChatId])
 
   useEffect(() => {
     activeAssistantChatIdRef.current = selectedChatId
@@ -680,6 +802,59 @@ export function ChatsPage() {
     document.addEventListener('mousedown', handlePointerDown)
     return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [attachmentMenuOpen])
+
+  useEffect(() => {
+    if (!listMenuOpen) {
+      return
+    }
+
+    const closeListMenu = (event: MouseEvent) => {
+      if (!listMenuRef.current?.contains(event.target as Node)) {
+        setListMenuOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setListMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', closeListMenu)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeListMenu)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [listMenuOpen])
+
+  useEffect(() => {
+    if (!chatContextMenu) {
+      return
+    }
+
+    const closeMenu = (event: MouseEvent) => {
+      if (chatContextMenuRef.current?.contains(event.target as Node)) {
+        return
+      }
+      setChatContextMenu(undefined)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setChatContextMenu(undefined)
+      }
+    }
+
+    const closeOnWindowBlur = () => setChatContextMenu(undefined)
+
+    document.addEventListener('mousedown', closeMenu)
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('blur', closeOnWindowBlur)
+    return () => {
+      document.removeEventListener('mousedown', closeMenu)
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('blur', closeOnWindowBlur)
+    }
+  }, [chatContextMenu])
 
   useEffect(() => {
     if (!assistantBusy || !assistantDraftRef.current) {
@@ -1410,38 +1585,249 @@ export function ChatsPage() {
   )
   const canSendMessage = Boolean(canSendInCurrentChat && draftMessage.trim() && !sending)
   const canAnalyzeStatusCard = Boolean(selectedChatId && activeHistory && activeStatusCardAgent && !statusCardBusy)
+  const favoriteList = chatLabels.find((label) => label.name.trim() === favoriteListName)
+  const customLists = chatLabels.filter((label) => label.id !== favoriteList?.id)
+  const activePrimaryFilter: ChatPrimaryFilter = chatView === 'unread'
+    ? 'unread'
+    : selectedChatType === 'group'
+      ? 'groups'
+      : favoriteList && selectedLabelId === favoriteList.id
+        ? 'favorites'
+        : 'all'
+  const auxiliaryFilterActive = chatView === 'archived'
+    || Boolean(selectedLabelId && selectedLabelId !== favoriteList?.id)
   const sendBlockReason =
     activeHistory && !canSendInCurrentChat
       ? getChatSendBlockedReason(activeHistory.chat.wa_chat_jid, activeHistory.chat.chat_type)
       : undefined
   const hasAdoptedAssistantReply = adoptedReplyIndex !== undefined
 
+  async function saveChatMetadataFor(chat: ChatSummary, patch: Partial<{
+    note: string
+    pinned: boolean
+    archived: boolean
+    marked_unread: boolean
+    muted_until: string | null
+    label_ids: string[]
+  }>) {
+    if (chatMetadataBusy) return false
+    setChatMetadataBusy(true)
+    setError(undefined)
+    try {
+      const response = await updateChatMetadata(chat.id, {
+        note: patch.note ?? chat.note,
+        pinned: patch.pinned ?? chat.pinned,
+        archived: patch.archived ?? chat.archived,
+        marked_unread: patch.marked_unread ?? chat.marked_unread,
+        muted_until: patch.muted_until !== undefined ? patch.muted_until : chat.muted_until ?? null,
+        label_ids: patch.label_ids ?? chat.labels.map((label) => label.id),
+      })
+      setChats((current) => current.map((item) => item.id === chat.id ? { ...item, ...response.chat } : item))
+      setHistory((current) => current?.chat.id === chat.id ? { ...current, chat: response.chat } : current)
+      if (selectedChatId === chat.id) {
+        setChatNote(response.chat.note)
+      }
+      void loadChatsList(true)
+      void loadChatFilterCounts()
+      return true
+    } catch (metadataError) {
+      setError(metadataError instanceof Error ? metadataError.message : '保存会话设置失败')
+      return false
+    } finally {
+      setChatMetadataBusy(false)
+    }
+  }
+
   async function saveChatMetadata(patch: Partial<{
     note: string
     pinned: boolean
     archived: boolean
     marked_unread: boolean
+    muted_until: string | null
     label_ids: string[]
   }>) {
-    if (!selectedChat || chatMetadataBusy) return
+    if (!selectedChat) return
+    await saveChatMetadataFor(selectedChat, patch)
+  }
+
+  function openChatContextMenu(event: ReactMouseEvent, chat: ChatSummary) {
+    event.preventDefault()
+    openChatContextMenuAt(chat, event.clientX, event.clientY)
+  }
+
+  function openChatContextMenuAt(chat: ChatSummary, clientX: number, clientY: number) {
+    const menuWidth = 210
+    const menuHeight = 360
+    setChatContextMenu({
+      chatId: chat.id,
+      x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
+    })
+  }
+
+  function openNoteEditor(chat: ChatSummary) {
+    setChatContextMenu(undefined)
+    setNoteEditorChatId(chat.id)
+    setNoteEditorDraft(chat.note)
+  }
+
+  async function saveNoteEditor() {
+    const chat = chats.find((item) => item.id === noteEditorChatId)
+    if (!chat) return
+    if (await saveChatMetadataFor(chat, { note: noteEditorDraft })) {
+      setNoteEditorChatId(undefined)
+    }
+  }
+
+  async function toggleChatReadState(chat: ChatSummary) {
+    setChatContextMenu(undefined)
+    if (!chat.marked_unread) {
+      await saveChatMetadataFor(chat, { marked_unread: true })
+      return
+    }
     setChatMetadataBusy(true)
     setError(undefined)
     try {
-      const response = await updateChatMetadata(selectedChat.id, {
-        note: patch.note ?? selectedChat.note,
-        pinned: patch.pinned ?? selectedChat.pinned,
-        archived: patch.archived ?? selectedChat.archived,
-        marked_unread: patch.marked_unread ?? selectedChat.marked_unread,
-        label_ids: patch.label_ids ?? selectedChat.labels.map((label) => label.id),
-      })
-      setChats((current) => current.map((chat) => chat.id === selectedChat.id ? { ...chat, ...response.chat } : chat))
-      setHistory((current) => current?.chat.id === selectedChat.id ? { ...current, chat: response.chat } : current)
-      setChatNote(response.chat.note)
+      const response = await markChatRead(chat.id)
+      setChats((current) => current.map((item) => item.id === chat.id ? { ...item, ...response.chat } : item))
+      setHistory((current) => current?.chat.id === chat.id ? { ...current, chat: response.chat } : current)
       void loadChatsList(true)
-    } catch (metadataError) {
-      setError(metadataError instanceof Error ? metadataError.message : '保存会话设置失败')
+    } catch (readError) {
+      setError(readError instanceof Error ? readError.message : '更新已读状态失败')
     } finally {
       setChatMetadataBusy(false)
+    }
+  }
+
+  function selectPrimaryFilter(filter: ChatPrimaryFilter) {
+    startTransition(() => {
+      setChatView(filter === 'unread' ? 'unread' : 'active')
+      setSelectedChatType(filter === 'groups' ? 'group' : '')
+      setSelectedLabelId(filter === 'favorites' ? favoriteList?.id ?? '__favorites__' : '')
+      setListMenuOpen(false)
+    })
+  }
+
+  function selectCustomList(labelId: string) {
+    startTransition(() => {
+      setChatView('active')
+      setSelectedChatType('')
+      setSelectedLabelId(labelId)
+      setListMenuOpen(false)
+    })
+  }
+
+  function closeListCreator() {
+    listCandidatesRequestSeqRef.current += 1
+    setListCreatorOpen(false)
+    setListCandidatesLoading(false)
+  }
+
+  async function openListCreator(chatId?: string) {
+    const requestSeq = listCandidatesRequestSeqRef.current + 1
+    listCandidatesRequestSeqRef.current = requestSeq
+    setChatContextMenu(undefined)
+    setListMenuOpen(false)
+    setListNameDraft('')
+    setListChatIds(chatId ? [chatId] : [])
+    setListCandidates([])
+    setListCandidatesLoading(Boolean(selectedAccountId))
+    setListCreatorOpen(true)
+    if (!selectedAccountId) return
+    try {
+      const response = await listChats({ accountId: selectedAccountId, archived: false, limit: 2000 })
+      if (listCandidatesRequestSeqRef.current !== requestSeq) return
+      setListCandidates(response.chats)
+    } catch {
+      if (listCandidatesRequestSeqRef.current !== requestSeq) return
+      // Keep the currently visible conversations available if refreshing fails.
+      setListCandidates(chats)
+    } finally {
+      if (listCandidatesRequestSeqRef.current === requestSeq) {
+        setListCandidatesLoading(false)
+      }
+    }
+  }
+
+  async function ensureFavoriteList() {
+    if (favoriteList) {
+      return favoriteList
+    }
+    const response = await createChatLabel(selectedAccountId, favoriteListName, '#25d366')
+    setChatLabels((current) => [...current, response.label].sort(compareChatLabels))
+    setSelectedLabelId((current) => current === '__favorites__' ? response.label.id : current)
+    return response.label
+  }
+
+  async function toggleFavorite(chat: ChatSummary) {
+    setChatContextMenu(undefined)
+    setError(undefined)
+    try {
+      const label = await ensureFavoriteList()
+      const hasFavorite = chat.labels.some((item) => item.id === label.id)
+      await saveChatMetadataFor(chat, {
+        label_ids: hasFavorite
+          ? chat.labels.filter((item) => item.id !== label.id).map((item) => item.id)
+          : [...chat.labels.map((item) => item.id), label.id],
+      })
+    } catch (favoriteError) {
+      setError(favoriteError instanceof Error ? favoriteError.message : '更新特别关注失败')
+    }
+  }
+
+  async function toggleChatList(chat: ChatSummary, label: ChatLabel) {
+    const isIncluded = chat.labels.some((item) => item.id === label.id)
+    setChatContextMenu(undefined)
+    await saveChatMetadataFor(chat, {
+      label_ids: isIncluded
+        ? chat.labels.filter((item) => item.id !== label.id).map((item) => item.id)
+        : [...chat.labels.map((item) => item.id), label.id],
+    })
+  }
+
+  async function muteChat(chat: ChatSummary, duration: 'eight-hours' | 'one-week' | 'always' | 'off') {
+    setChatContextMenu(undefined)
+    const mutedUntil = duration === 'off' ? null : createMutedUntil(duration)
+    await saveChatMetadataFor(chat, { muted_until: mutedUntil })
+  }
+
+  async function handleCreateList() {
+    const name = listNameDraft.trim()
+    if (!selectedAccountId || !name || !listChatIds.length || listBusy) {
+      return
+    }
+    setListBusy(true)
+    setError(undefined)
+    try {
+      const response = await createChatLabel(selectedAccountId, name)
+      const selectedChats = listCandidates.filter((chat) => listChatIds.includes(chat.id))
+      const updatedChats = await Promise.all(selectedChats.map(async (chat) => {
+        const result = await updateChatMetadata(chat.id, {
+          note: chat.note,
+          pinned: chat.pinned,
+          archived: chat.archived,
+          marked_unread: chat.marked_unread,
+          muted_until: chat.muted_until ?? null,
+          label_ids: [...chat.labels.map((label) => label.id), response.label.id],
+        })
+        return result.chat
+      }))
+      const updatedById = new Map(updatedChats.map((chat) => [chat.id, chat]))
+      setChatLabels((current) => [...current, response.label].sort(compareChatLabels))
+      setChats((current) => current.map((chat) => updatedById.get(chat.id) ?? chat))
+      setHistory((current) => current && updatedById.has(current.chat.id)
+        ? { ...current, chat: updatedById.get(current.chat.id) as ChatHeader }
+        : current)
+      setChatView('active')
+      setSelectedChatType('')
+      setSelectedLabelId(response.label.id)
+      closeListCreator()
+      setListNameDraft('')
+      setListChatIds([])
+    } catch (listError) {
+      setError(listError instanceof Error ? listError.message : '创建列表失败')
+    } finally {
+      setListBusy(false)
     }
   }
 
@@ -1450,71 +1836,192 @@ export function ChatsPage() {
     setError(undefined)
     try {
       const response = await createChatLabel(selectedAccountId, newLabelName.trim())
-      setChatLabels((current) => [...current, response.label].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')))
+      setChatLabels((current) => [...current, response.label].sort(compareChatLabels))
       setNewLabelName('')
     } catch (labelError) {
       setError(labelError instanceof Error ? labelError.message : '创建标签失败')
     }
   }
 
+  function handleChatSidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return
+    const frame = chatFrameRef.current
+    if (!frame) return
+
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = chatSidebarWidth
+    const frameWidth = frame.getBoundingClientRect().width
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setChatSidebarWidth(clampChatSidebarWidth(
+        startWidth + moveEvent.clientX - startX,
+        frameWidth,
+        assistantPanelCollapsed,
+      ))
+    }
+    const stopResize = () => {
+      document.removeEventListener('pointermove', handlePointerMove)
+      document.removeEventListener('pointerup', stopResize)
+      document.removeEventListener('pointercancel', stopResize)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+    }
+
+    document.addEventListener('pointermove', handlePointerMove)
+    document.addEventListener('pointerup', stopResize)
+    document.addEventListener('pointercancel', stopResize)
+  }
+
+  function handleChatSidebarResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    const frameWidth = chatFrameRef.current?.getBoundingClientRect().width
+    if (!frameWidth) return
+    event.preventDefault()
+    const delta = event.key === 'ArrowLeft' ? -20 : 20
+    setChatSidebarWidth((current) => clampChatSidebarWidth(
+      current + delta,
+      frameWidth,
+      assistantPanelCollapsed,
+    ))
+  }
+
+  function handleAssistantColumnResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return
+    const body = assistantPanelBodyRef.current
+    if (!body) return
+
+    event.preventDefault()
+    const startX = event.clientX
+    const startRatio = assistantReplyRatio
+    const bodyWidth = body.getBoundingClientRect().width
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaRatio = ((moveEvent.clientX - startX) / bodyWidth) * 100
+      setAssistantReplyRatio(clampAssistantReplyRatio(startRatio + deltaRatio, bodyWidth))
+    }
+    const stopResize = () => {
+      document.removeEventListener('pointermove', handlePointerMove)
+      document.removeEventListener('pointerup', stopResize)
+      document.removeEventListener('pointercancel', stopResize)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+    }
+
+    document.addEventListener('pointermove', handlePointerMove)
+    document.addEventListener('pointerup', stopResize)
+    document.addEventListener('pointercancel', stopResize)
+  }
+
+  function handleAssistantColumnResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    const bodyWidth = assistantPanelBodyRef.current?.getBoundingClientRect().width
+    if (!bodyWidth) return
+    event.preventDefault()
+    const delta = event.key === 'ArrowLeft' ? -2 : 2
+    setAssistantReplyRatio((current) => clampAssistantReplyRatio(current + delta, bodyWidth))
+  }
+
   return (
     <div className="page page-chats whatsapp-chat-page">
-      <section className="chat-frame whatsapp-chat-frame">
+      <section
+        ref={chatFrameRef}
+        className={`chat-frame whatsapp-chat-frame${assistantPanelCollapsed ? ' assistant-panel-collapsed' : ''}`}
+        style={{ '--chat-sidebar-width': `${chatSidebarWidth}px` } as CSSProperties}
+      >
         <aside className="panel chat-sidebar-panel whatsapp-chat-sidebar">
+          <header className="whatsapp-chat-sidebar-header">
+            <h2>聊天</h2>
+            <label className="whatsapp-chat-sidebar-account">
+              <span className="visually-hidden">WhatsApp 账号</span>
+              <select
+                value={selectedAccountId}
+                onChange={(event) => {
+                  setSelectedAccountId(event.target.value)
+                  setSelectedChatId(undefined)
+                  setChatView('active')
+                  setSelectedChatType('')
+                  setSelectedLabelId('')
+                }}
+                aria-label="WhatsApp 账号"
+              >
+                {accounts.map((account) => <option key={account.id} value={account.id}>{account.display_name}</option>)}
+              </select>
+            </label>
+          </header>
           <label className="field whatsapp-chat-search-field">
             <span className="visually-hidden">搜索会话</span>
+            <Icon name="search" />
             <input
+              ref={chatSearchRef}
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索或开始新聊天"
             />
           </label>
 
-          <div className="whatsapp-chat-filter-bar">
-            <label className="field compact-field">
-              <span>账号</span>
-              <select
-                value={selectedAccountId}
-                onChange={(event) => {
-                  setSelectedAccountId(event.target.value)
-                  setSelectedChatId(undefined)
-                }}
-              >
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.display_name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="field compact-field">
-              <span>类型</span>
-              <select
-                value={selectedChatType}
-                onChange={(event) => setSelectedChatType(event.target.value as ChatType | '')}
-              >
-                {chatTypeOptions.map((option) => (
-                  <option key={option.value || 'all'} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="chat-view-tabs" role="tablist" aria-label="会话视图">
-              {([['active', '全部'], ['unread', '未读'], ['archived', '归档']] as const).map(([value, label]) => (
-                <button key={value} type="button" className={chatView === value ? 'active' : ''} onClick={() => setChatView(value)}>{label}</button>
+          <div className="whatsapp-chat-filter-shell" ref={listMenuRef}>
+            <div className="chat-view-tabs whatsapp-primary-filters" role="tablist" aria-label="会话筛选">
+              {([
+                ['all', '全部'],
+                ['unread', '未读'],
+                ['groups', '群组'],
+                ['favorites', favoriteListName],
+              ] as Array<[ChatPrimaryFilter, string]>).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={activePrimaryFilter === value && !auxiliaryFilterActive}
+                  className={activePrimaryFilter === value && !auxiliaryFilterActive ? 'active' : ''}
+                  onClick={() => selectPrimaryFilter(value)}
+                >
+                  {label}
+                  {getPrimaryFilterCount(value, chatFilterCounts) > 0
+                    ? <span className="chat-filter-count">{getPrimaryFilterCount(value, chatFilterCounts)}</span>
+                    : null}
+                </button>
               ))}
+              <button
+                className={`chat-list-add-button${listMenuOpen || auxiliaryFilterActive ? ' active' : ''}`}
+                type="button"
+                aria-label="列表"
+                title="列表"
+                aria-haspopup="menu"
+                aria-expanded={listMenuOpen}
+                onClick={() => setListMenuOpen((current) => !current)}
+              >
+                <Icon name="plus" />
+              </button>
             </div>
 
-            <label className="field compact-field">
-              <span>标签</span>
-              <select value={selectedLabelId} onChange={(event) => setSelectedLabelId(event.target.value)}>
-                <option value="">全部标签</option>
-                {chatLabels.map((label) => <option key={label.id} value={label.id}>{label.name}</option>)}
-              </select>
-            </label>
+            {listMenuOpen ? (
+              <div className="chat-list-menu" role="menu">
+                <button type="button" role="menuitem" onClick={() => void openListCreator()}>
+                  <span className="chat-list-menu-icon"><Icon name="plus" /></span>
+                  <span><strong>创建新列表</strong><small>整理常用客户和群组</small></span>
+                </button>
+                <button type="button" role="menuitem" className={chatView === 'archived' ? 'selected' : ''} onClick={() => { setChatView('archived'); setSelectedChatType(''); setSelectedLabelId(''); setListMenuOpen(false) }}>
+                  <span className="chat-list-menu-icon"><Icon name="archive" /></span>
+                  <span><strong>已归档</strong></span>
+                </button>
+                {customLists.length ? <div className="chat-list-menu-divider" /> : null}
+                {customLists.map((label) => (
+                  <button key={label.id} type="button" role="menuitem" className={selectedLabelId === label.id ? 'selected' : ''} onClick={() => selectCustomList(label.id)}>
+                    <span className="chat-list-menu-icon"><Icon name="list" /></span>
+                    <span><strong>{label.name}</strong></span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {chats.length > 0 ? (
@@ -1526,26 +2033,24 @@ export function ChatsPage() {
                     type="button"
                     className={`chat-row whatsapp-chat-row${selectedChatId === chat.id ? ' selected' : ''}`}
                     onClick={() => startTransition(() => setSelectedChatId(chat.id))}
+                    onContextMenu={(event) => openChatContextMenu(event, chat)}
                   >
-                    <div className="whatsapp-chat-avatar" aria-hidden="true">
-                      {getChatAvatarLabel(getChatDisplayName(chat))}
-                    </div>
+                    <ChatAvatar chat={chat} />
 
                     <div className="whatsapp-chat-row-content">
                       <div className="chat-row-header whatsapp-chat-row-header">
                         <strong>{getChatDisplayName(chat)}</strong>
-                        <small>{formatDateTime(chat.last_message_at)}</small>
+                        <small>{formatChatTimestamp(chat.last_message_at)}</small>
                       </div>
 
-                      <span className={`whatsapp-chat-row-note${chat.note ? '' : ' empty'}`}>
-                        {chat.note || '添加备注'}
-                      </span>
+                      {chat.note ? <span className="whatsapp-chat-row-note">{chat.note}</span> : null}
 
                       <div className="chat-row-meta whatsapp-chat-row-meta">
-                        <p>{getChatPreviewText(chat)}</p>
-                        <span className="chat-row-badges">
-                          {chat.labels.slice(0, 2).map((label) => <span key={label.id} className="chat-label-chip compact" style={{ '--label-color': label.color } as CSSProperties}>{label.name}</span>)}
-                          <StatusBadge status={chat.chat_type} />
+                        <p>{chat.latest_from_me ? <span className="chat-preview-check">✓✓</span> : null}{getChatPreviewText(chat)}</p>
+                        <span className="chat-row-indicators" aria-label="会话状态">
+                          {isChatMuted(chat) ? <Icon name="bellOff" /> : null}
+                          {chat.pinned ? <Icon name="pin" /> : null}
+                          {chat.marked_unread ? <span className="chat-unread-dot" title="未读" /> : null}
                         </span>
                       </div>
                     </div>
@@ -1561,18 +2066,36 @@ export function ChatsPage() {
           )}
         </aside>
 
+        <div
+          className="chat-sidebar-resizer"
+          role="separator"
+          aria-label="调整会话列表宽度"
+          aria-orientation="vertical"
+          aria-valuemin={minChatSidebarWidth}
+          aria-valuemax={Math.round(chatFrameRef.current?.getBoundingClientRect().width
+            ? getChatSidebarMaxWidth(chatFrameRef.current.getBoundingClientRect().width, assistantPanelCollapsed)
+            : minChatSidebarWidth)}
+          aria-valuenow={Math.round(chatSidebarWidth)}
+          tabIndex={0}
+          title="拖动调整会话列表宽度"
+          onPointerDown={handleChatSidebarResizeStart}
+          onKeyDown={handleChatSidebarResizeKeyDown}
+        />
+
         <section className="panel chat-main-panel whatsapp-chat-main">
           {selectedChat && activeHistory ? (
             <>
               <header className="chat-contact-toolbar">
                 <button className="chat-contact-identity" type="button" onClick={() => setChatInfoOpen((current) => !current)}>
-                  <span className="whatsapp-chat-avatar">{getChatAvatarLabel(getChatDisplayName(selectedChat))}</span>
+                  <ChatAvatar chat={selectedChat} />
                   <span><strong>{getChatDisplayName(selectedChat)}</strong><small>{selectedChat.note || selectedChat.phone_number || selectedChat.wa_chat_jid}</small></span>
                 </button>
                 <div className="chat-contact-toolbar-actions">
-                  <button type="button" className={selectedChat.pinned ? 'active' : ''} onClick={() => void saveChatMetadata({ pinned: !selectedChat.pinned })} title="置顶会话"><Icon name="pin" /></button>
-                  <button type="button" className={selectedChat.marked_unread ? 'active' : ''} onClick={() => void saveChatMetadata({ marked_unread: !selectedChat.marked_unread })} title="标记未读"><Icon name="bellOff" /></button>
-                  <button type="button" className={selectedChat.archived ? 'active' : ''} onClick={() => void saveChatMetadata({ archived: !selectedChat.archived })} title={selectedChat.archived ? '取消归档' : '归档会话'}><Icon name="archive" /></button>
+                  <button type="button" onClick={() => chatSearchRef.current?.focus()} title="搜索会话" aria-label="搜索会话"><Icon name="search" /></button>
+                  <button type="button" onClick={(event) => openChatContextMenuAt(selectedChat, event.clientX, event.clientY + 12)} title="更多操作" aria-label="更多操作"><Icon name="moreVertical" /></button>
+                  {assistantPanelCollapsed ? (
+                    <button className="assistant-panel-open-button" type="button" onClick={() => setAssistantPanelCollapsed(false)} title="展开智能体面板" aria-label="展开智能体面板"><Icon name="chevronRight" /></button>
+                  ) : null}
                 </div>
               </header>
 
@@ -1704,7 +2227,6 @@ export function ChatsPage() {
                       {!message.from_me ? (
                         <div className="message-meta">
                           <strong>{getMessageSenderName(message)}</strong>
-                          <span>{formatDateTime(message.sent_at)}</span>
                         </div>
                       ) : null}
 
@@ -1739,7 +2261,7 @@ export function ChatsPage() {
                       </div>
 
                       <div className="whatsapp-message-foot">
-                        <span>{formatDateTime(message.sent_at)}</span>
+                        <span>{formatMessageTime(message.sent_at)}</span>
                         {message.from_me ? <span className="whatsapp-message-check">✓✓</span> : null}
                       </div>
                     </article>
@@ -1843,7 +2365,7 @@ export function ChatsPage() {
                         }
                       }}
                       placeholder={canSendInCurrentChat ? '输入消息' : '当前会话不支持发送消息'}
-                      rows={3}
+                      rows={1}
                       disabled={!canSendInCurrentChat}
                     />
                   </div>
@@ -1853,15 +2375,13 @@ export function ChatsPage() {
                     type="button"
                     onClick={() => void handleSendMessage()}
                     disabled={!canSendMessage}
+                    aria-label={sending ? '发送中' : '发送消息'}
+                    title={sending ? '发送中' : '发送消息'}
                   >
                     <Icon name="send" />
-                    <span>{sending ? '发送中...' : '发送'}</span>
                   </button>
                 </div>
 
-                <div className="whatsapp-compose-meta">
-                  <span className="field-hint">当前会话：{getChatDisplayName(activeHistory.chat)}</span>
-                </div>
                 {composeNotice ? <div className="compose-attachment-notice">{composeNotice}</div> : null}
               </div>
             </>
@@ -1873,7 +2393,7 @@ export function ChatsPage() {
           )}
         </section>
 
-        <aside className="panel chat-assistant-panel whatsapp-chat-assistant">
+        <aside className="panel chat-assistant-panel whatsapp-chat-assistant" aria-hidden={assistantPanelCollapsed}>
           <div className="whatsapp-assistant-header">
             <div className="assistant-header-controls">
               <span className="assistant-toolbar-title">选择智能体客服</span>
@@ -1936,10 +2456,15 @@ export function ChatsPage() {
                 {assistantBusy ? '生成中...' : '生成回复建议'}
               </button>
             </div>
+            <button className="assistant-panel-close-button" type="button" onClick={() => setAssistantPanelCollapsed(true)} title="隐藏智能体面板" aria-label="隐藏智能体面板"><Icon name="chevronRight" /></button>
           </div>
 
           {selectedChat && activeHistory ? (
-            <div className="assistant-panel-body whatsapp-assistant-body">
+            <div
+              ref={assistantPanelBodyRef}
+              className="assistant-panel-body whatsapp-assistant-body"
+              style={{ '--assistant-reply-width': `${assistantReplyRatio}%` } as CSSProperties}
+            >
               <div className="assistant-reply-column">
                 <section className="assistant-card assistant-options-card">
                   <div className="assistant-card-header-row">
@@ -2012,6 +2537,20 @@ export function ChatsPage() {
                   )}
                 </section>
               </div>
+
+              <div
+                className="assistant-column-resizer"
+                role="separator"
+                aria-label="调整回复方案和采纳区宽度"
+                aria-orientation="vertical"
+                aria-valuemin={Math.round(getAssistantReplyRatioBounds(assistantPanelBodyRef.current?.getBoundingClientRect().width ?? 0).min)}
+                aria-valuemax={Math.round(getAssistantReplyRatioBounds(assistantPanelBodyRef.current?.getBoundingClientRect().width ?? 0).max)}
+                aria-valuenow={Math.round(assistantReplyRatio)}
+                tabIndex={0}
+                title="拖动调整回复方案和采纳区宽度"
+                onPointerDown={handleAssistantColumnResizeStart}
+                onKeyDown={handleAssistantColumnResizeKeyDown}
+              />
 
               <div className="assistant-draft-column">
                 <section className="assistant-card assistant-draft-card">
@@ -2099,6 +2638,133 @@ export function ChatsPage() {
       </section>
 
       {error ? <div className="error-banner">{error}</div> : null}
+
+      {chatContextMenu ? (() => {
+        const chat = chats.find((item) => item.id === chatContextMenu.chatId)
+        if (!chat) return null
+        return (
+          <div
+            ref={chatContextMenuRef}
+            className="chat-context-menu"
+            role="menu"
+            style={{ left: chatContextMenu.x, top: chatContextMenu.y }}
+          >
+            <button type="button" role="menuitem" onClick={() => { setChatContextMenu(undefined); void saveChatMetadataFor(chat, { archived: !chat.archived }) }}>
+              <Icon name="archive" /><span>{chat.archived ? '取消归档' : '归档聊天'}</span>
+            </button>
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={chatContextMenu.submenu === 'mute'} onClick={() => setChatContextMenu((current) => current ? { ...current, submenu: current.submenu === 'mute' ? undefined : 'mute' } : current)}>
+              <Icon name="bellOff" /><span>{isChatMuted(chat) ? '已静音' : '静音通知'}</span><Icon name="chevronRight" />
+            </button>
+            {chatContextMenu.submenu === 'mute' ? (
+              <div className="chat-context-submenu" role="menu" aria-label="静音时长">
+                {isChatMuted(chat) ? <button type="button" role="menuitem" onClick={() => void muteChat(chat, 'off')}><span>取消静音</span></button> : null}
+                <button type="button" role="menuitem" onClick={() => void muteChat(chat, 'eight-hours')}><span>8 小时</span></button>
+                <button type="button" role="menuitem" onClick={() => void muteChat(chat, 'one-week')}><span>1 周</span></button>
+                <button type="button" role="menuitem" onClick={() => void muteChat(chat, 'always')}><span>始终</span></button>
+              </div>
+            ) : null}
+            <button type="button" role="menuitem" onClick={() => { setChatContextMenu(undefined); void saveChatMetadataFor(chat, { pinned: !chat.pinned }) }}>
+              <Icon name="pin" /><span>{chat.pinned ? '取消置顶' : '置顶聊天'}</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => void toggleChatReadState(chat)}>
+              <Icon name={chat.marked_unread ? 'check' : 'bellOff'} /><span>{chat.marked_unread ? '标记已读' : '标记为未读'}</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => void toggleFavorite(chat)}>
+              <Icon name="heart" /><span>{favoriteList && chat.labels.some((label) => label.id === favoriteList.id) ? `从“${favoriteListName}”移除` : `添加到“${favoriteListName}”`}</span>
+            </button>
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={chatContextMenu.submenu === 'lists'} onClick={() => setChatContextMenu((current) => current ? { ...current, submenu: current.submenu === 'lists' ? undefined : 'lists' } : current)}>
+              <Icon name="list" /><span>添加到列表</span><Icon name="chevronRight" />
+            </button>
+            {chatContextMenu.submenu === 'lists' ? (
+              <div className="chat-context-submenu" role="menu" aria-label="选择列表">
+                {customLists.map((label) => (
+                  <button key={label.id} type="button" role="menuitemcheckbox" aria-checked={chat.labels.some((item) => item.id === label.id)} onClick={() => void toggleChatList(chat, label)}>
+                    <Icon name={chat.labels.some((item) => item.id === label.id) ? 'check' : 'list'} />
+                    <span>{label.name}</span>
+                  </button>
+                ))}
+                <button type="button" role="menuitem" onClick={() => void openListCreator(chat.id)}><Icon name="plus" /><span>创建新列表</span></button>
+              </div>
+            ) : null}
+            <div className="chat-context-divider" />
+            <button type="button" role="menuitem" onClick={() => openNoteEditor(chat)}>
+              <Icon name="edit" /><span>{chat.note ? '修改备注' : '添加备注'}</span>
+            </button>
+          </div>
+        )
+      })() : null}
+
+      {listCreatorOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !listBusy) closeListCreator()
+        }}>
+          <section className="chat-list-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-list-dialog-title">
+            <header>
+              <button type="button" className="icon-button" onClick={closeListCreator} aria-label="返回"><Icon name="chevronRight" /></button>
+              <h2 id="chat-list-dialog-title">创建新列表</h2>
+            </header>
+            <label className="chat-list-name-field">
+              <span>列表名称</span>
+              <input autoFocus maxLength={50} value={listNameDraft} onChange={(event) => setListNameDraft(event.target.value)} placeholder="列表名称" />
+              <small>{listNameDraft.length}/50</small>
+            </label>
+            <div className="chat-list-members-heading">
+              <strong>已包含</strong>
+              <span>{listChatIds.length} 个会话</span>
+            </div>
+            <div className="chat-list-member-picker">
+              {listCandidatesLoading ? (
+                <div className="chat-list-member-state">正在加载会话...</div>
+              ) : listCandidates.length === 0 ? (
+                <div className="chat-list-member-state">暂无可添加的会话</div>
+              ) : listCandidates.map((chat) => {
+                const checked = listChatIds.includes(chat.id)
+                return (
+                  <label key={chat.id} className={checked ? 'selected' : ''}>
+                    <input type="checkbox" checked={checked} onChange={() => setListChatIds((current) => checked ? current.filter((id) => id !== chat.id) : [...current, chat.id])} />
+                    <ChatAvatar chat={chat} />
+                    <span><strong>{getChatDisplayName(chat)}</strong><small>{chat.chat_type === 'group' ? '群组' : chat.phone_number || '单聊'}</small></span>
+                  </label>
+                )
+              })}
+            </div>
+            <footer>
+              <button type="button" className="primary-button" disabled={!listNameDraft.trim() || !listChatIds.length || listBusy} onClick={() => void handleCreateList()}>{listBusy ? '创建中...' : '创建列表'}</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
+      {noteEditorChatId ? (() => {
+        const chat = chats.find((item) => item.id === noteEditorChatId)
+        if (!chat) return null
+        return (
+          <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setNoteEditorChatId(undefined)
+          }}>
+            <section className="chat-note-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-note-title">
+              <header>
+                <div><span>会话备注</span><strong id="chat-note-title">{getChatDisplayName(chat)}</strong></div>
+                <button type="button" className="icon-button" onClick={() => setNoteEditorChatId(undefined)} aria-label="关闭">×</button>
+              </header>
+              <textarea
+                autoFocus
+                rows={6}
+                maxLength={2000}
+                value={noteEditorDraft}
+                onChange={(event) => setNoteEditorDraft(event.target.value)}
+                placeholder="记录客户身份、偏好和后续跟进事项"
+              />
+              <footer>
+                <button type="button" className="secondary-button" onClick={() => setNoteEditorDraft('')} disabled={!noteEditorDraft}>清空</button>
+                <span>{noteEditorDraft.length}/2000</span>
+                <button type="button" className="secondary-button" onClick={() => setNoteEditorChatId(undefined)}>取消</button>
+                <button type="button" className="primary-button" onClick={() => void saveNoteEditor()} disabled={chatMetadataBusy}>{chatMetadataBusy ? '保存中...' : '保存'}</button>
+              </footer>
+            </section>
+          </div>
+        )
+      })() : null}
     </div>
   )
 }
@@ -2117,6 +2783,14 @@ function StatusMetric({
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  )
+}
+
+function ChatAvatar({ chat }: { chat: ChatSummary }) {
+  return (
+    <span className="whatsapp-chat-avatar" aria-hidden="true">
+      {chat.profile_photo_url ? <img src={chat.profile_photo_url} alt="" /> : getChatAvatarLabel(getChatDisplayName(chat))}
+    </span>
   )
 }
 
@@ -2873,17 +3547,129 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
-function formatDateTime(value?: string) {
+function formatChatTimestamp(value?: string) {
   if (!value) {
-    return '暂无时间'
+    return ''
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  const now = new Date()
+  if (isSameLocalDate(date, now)) {
+    return formatMessageTime(value)
+  }
+
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (isSameLocalDate(date, yesterday)) {
+    return '昨天'
+  }
+
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
+}
+
+function formatMessageTime(value?: string) {
+  if (!value) {
+    return ''
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
   }
 
   return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(value))
+    hour12: false,
+    hourCycle: 'h23',
+  }).format(date)
+}
+
+function isSameLocalDate(left: Date, right: Date) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate()
+}
+
+function compareChatLabels(left: ChatLabel, right: ChatLabel) {
+  if (left.name === favoriteListName) return -1
+  if (right.name === favoriteListName) return 1
+  return left.name.localeCompare(right.name, 'zh-CN')
+}
+
+function readStoredChatSidebarWidth() {
+  const stored = Number(window.localStorage.getItem(chatSidebarWidthStorageKey))
+  return Number.isFinite(stored) && stored >= minChatSidebarWidth ? stored : defaultChatSidebarWidth
+}
+
+function readStoredAssistantPanelCollapsed() {
+  return window.localStorage.getItem(assistantPanelCollapsedStorageKey) === 'true'
+}
+
+function readStoredAssistantReplyRatio() {
+  const storedValue = window.localStorage.getItem(assistantReplyRatioStorageKey)
+  if (!storedValue) return defaultAssistantReplyRatio
+  const stored = Number(storedValue)
+  return Number.isFinite(stored) && stored > 0 && stored < 100 ? stored : defaultAssistantReplyRatio
+}
+
+function getChatSidebarMaxWidth(frameWidth: number, assistantPanelCollapsed: boolean) {
+  const reservedWidth = minChatMainWidth + (assistantPanelCollapsed ? 0 : minAssistantPanelWidth) + 24
+  return Math.max(minChatSidebarWidth, Math.min(frameWidth * 0.4, frameWidth - reservedWidth))
+}
+
+function clampChatSidebarWidth(width: number, frameWidth: number, assistantPanelCollapsed: boolean) {
+  return Math.min(
+    Math.max(width, minChatSidebarWidth),
+    getChatSidebarMaxWidth(frameWidth, assistantPanelCollapsed),
+  )
+}
+
+function getAssistantReplyRatioBounds(bodyWidth: number) {
+  if (bodyWidth <= 0) {
+    return { min: 0, max: 100 }
+  }
+  const dividerAndGapsWidth = 18
+  const min = (minAssistantReplyWidth / bodyWidth) * 100
+  const max = ((bodyWidth - minAssistantDraftWidth - dividerAndGapsWidth) / bodyWidth) * 100
+  return { min, max: Math.max(min, max) }
+}
+
+function clampAssistantReplyRatio(ratio: number, bodyWidth: number) {
+  const bounds = getAssistantReplyRatioBounds(bodyWidth)
+  return Math.min(Math.max(ratio, bounds.min), bounds.max)
+}
+
+function getPrimaryFilterCount(
+  filter: ChatPrimaryFilter,
+  counts: { unread: number; groups: number; favorites: number },
+) {
+  if (filter === 'all') return 0
+  return counts[filter]
+}
+
+function isChatMuted(chat: Pick<ChatSummary, 'muted_until'>) {
+  if (!chat.muted_until) {
+    return false
+  }
+  const mutedUntil = new Date(chat.muted_until)
+  return !Number.isNaN(mutedUntil.getTime()) && mutedUntil.getTime() > Date.now()
+}
+
+function createMutedUntil(duration: 'eight-hours' | 'one-week' | 'always') {
+  const mutedUntil = new Date()
+  if (duration === 'eight-hours') {
+    mutedUntil.setHours(mutedUntil.getHours() + 8)
+  } else if (duration === 'one-week') {
+    mutedUntil.setDate(mutedUntil.getDate() + 7)
+  } else {
+    mutedUntil.setFullYear(mutedUntil.getFullYear() + 100)
+  }
+  return mutedUntil.toISOString()
 }
 
 function getChatAvatarLabel(value?: string) {

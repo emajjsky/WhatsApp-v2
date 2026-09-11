@@ -100,7 +100,7 @@ docker compose -f deploy/docker/docker-compose.electron-cloud.yml ps
 
 ## 云端后台
 
-`APP_ENV=electron-cloud` 时，云端 Web 只显示后台入口。服务器这边不需要 WhatsApp 登录、对话、话术和导出页面。
+`APP_ENV=electron-cloud` 时，云端 Web 只显示后台入口。服务器这边不需要 WhatsApp 登录、对话和导出页面；话术知识统一在后台 Skill 管理中维护。
 
 后台配置顺序：
 

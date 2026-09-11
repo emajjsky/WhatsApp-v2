@@ -21,14 +21,12 @@ type Permission string
 const (
 	PermissionAccounts Permission = "accounts"
 	PermissionChats    Permission = "chats"
-	PermissionScripts  Permission = "scripts"
 	PermissionExports  Permission = "exports"
 )
 
 var DefaultUserPermissions = []Permission{
 	PermissionAccounts,
 	PermissionChats,
-	PermissionScripts,
 	PermissionExports,
 }
 

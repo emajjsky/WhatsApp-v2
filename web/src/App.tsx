@@ -7,7 +7,6 @@ import { ChatsPage } from './pages/ChatsPage'
 import { ExportsPage } from './pages/ExportsPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
-import { ScriptsPage } from './pages/ScriptsPage'
 import { ProxyPoolPage } from './pages/ProxyPoolPage'
 import { ContactsPage } from './pages/ContactsPage'
 
@@ -29,7 +28,6 @@ export default function App() {
               <Route path="/chats" element={<ChatsPage />} />
               <Route path="/contacts" element={<ContactsPage />} />
               <Route path="/exports" element={<ExportsPage />} />
-              <Route path="/scripts" element={<ScriptsPage />} />
               <Route path="/proxies" element={<ProxyPoolPage />} />
             </>
           ) : null}

@@ -21,7 +21,6 @@ import (
 	"whatsapp-agent-platform/internal/health"
 	"whatsapp-agent-platform/internal/ingest"
 	"whatsapp-agent-platform/internal/proxies"
-	"whatsapp-agent-platform/internal/scripts"
 	"whatsapp-agent-platform/internal/sessions"
 	"whatsapp-agent-platform/internal/storage"
 )
@@ -321,30 +320,6 @@ func New(cfg config.Config) (*App, error) {
 	} else {
 		logger.Warn("database is not configured; account, chat, export, and agent APIs are disabled")
 	}
-
-	scriptService, err := scripts.NewService("data/scripts", logger)
-	if err != nil {
-		if database != nil {
-			_ = database.Close()
-		}
-		return nil, err
-	}
-	if bootstrapAdmin.ID != "" {
-		if err := scriptService.AssignOrphanDocuments(context.Background(), bootstrapAdmin.ID); err != nil {
-			if database != nil {
-				_ = database.Close()
-			}
-			return nil, err
-		}
-	}
-	scriptHandler, err := scripts.NewHandler(scriptService)
-	if err != nil {
-		if database != nil {
-			_ = database.Close()
-		}
-		return nil, err
-	}
-	deps.ScriptHandler = scriptHandler
 
 	deps.HealthService = health.NewService(cfg, databaseSQL(database), sessionManager)
 	if authService != nil {

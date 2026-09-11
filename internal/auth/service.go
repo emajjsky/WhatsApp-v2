@@ -754,8 +754,6 @@ func normalizePermission(value Permission) Permission {
 		return PermissionAccounts
 	case PermissionChats:
 		return PermissionChats
-	case PermissionScripts:
-		return PermissionScripts
 	case PermissionExports:
 		return PermissionExports
 	default:

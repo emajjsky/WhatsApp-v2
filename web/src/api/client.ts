@@ -253,7 +253,7 @@ export interface SendChatMessageResponse {
 
 export type UserRole = 'admin' | 'user'
 export type UserStatus = 'active' | 'disabled'
-export type UserPermission = 'accounts' | 'chats' | 'scripts' | 'exports'
+export type UserPermission = 'accounts' | 'chats' | 'exports'
 export type InvitationStatus = 'active' | 'disabled'
 export type DesktopDeviceStatus = 'active' | 'disabled'
 
@@ -349,15 +349,6 @@ export interface ExportJobView {
   created_at: string
   started_at?: string
   completed_at?: string
-}
-
-export interface ScriptDocumentView {
-  id: string
-  title: string
-  file_name: string
-  content_type: string
-  byte_size: number
-  created_at: string
 }
 
 export type LiveUpdateType = 'session_changed' | 'chat_stored' | 'message_stored'
@@ -1251,32 +1242,6 @@ export async function downloadExportArchive(jobIds: string[]) {
     jsonBody: { job_ids: jobIds },
     fallbackFilename: 'whatsapp-exports.zip',
   })
-}
-
-export async function listScripts() {
-  return request<{ scripts: ScriptDocumentView[] }>('/api/scripts')
-}
-
-export async function uploadScript(payload: { title?: string; file?: File; content?: string }) {
-  const formData = new FormData()
-  if (payload.title) {
-    formData.set('title', payload.title)
-  }
-  if (payload.file) {
-    formData.set('file', payload.file)
-  }
-  if (payload.content) {
-    formData.set('content', payload.content)
-  }
-
-  return request<{ script: ScriptDocumentView }>('/api/scripts', {
-    method: 'POST',
-    body: formData,
-  })
-}
-
-export async function deleteScript(scriptId: string) {
-  return request<void>(`/api/scripts/${scriptId}`, { method: 'DELETE' })
 }
 
 export async function listAgentRules(params?: { accountId?: string; enabled?: boolean }) {

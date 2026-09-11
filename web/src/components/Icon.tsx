@@ -11,22 +11,25 @@ export type IconName =
   | 'bellOff'
   | 'check'
   | 'chevronDown'
+  | 'chevronRight'
   | 'delete'
   | 'document'
   | 'download'
   | 'edit'
   | 'export'
   | 'fileText'
+  | 'heart'
   | 'image'
   | 'key'
+  | 'list'
   | 'logout'
+  | 'moreVertical'
   | 'plus'
   | 'pin'
   | 'qr'
   | 'copy'
   | 'reply'
   | 'save'
-  | 'script'
   | 'search'
   | 'send'
   | 'shield'
@@ -112,6 +115,11 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M6 9l6 6 6-6" />
     </>
   ),
+  chevronRight: (
+    <>
+      <path d="M9 6l6 6-6 6" />
+    </>
+  ),
   delete: (
     <>
       <path d="M5 7h14" />
@@ -187,6 +195,28 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M5 12h14" />
     </>
   ),
+  list: (
+    <>
+      <path d="M8 6h12" />
+      <path d="M8 12h12" />
+      <path d="M8 18h12" />
+      <circle cx="4" cy="6" r="1" />
+      <circle cx="4" cy="12" r="1" />
+      <circle cx="4" cy="18" r="1" />
+    </>
+  ),
+  heart: (
+    <>
+      <path d="M20.8 4.8a5.5 5.5 0 0 0-7.8 0L12 5.9l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.4a5.5 5.5 0 0 0 0-7.8z" />
+    </>
+  ),
+  moreVertical: (
+    <>
+      <circle cx="12" cy="5" r="1.3" />
+      <circle cx="12" cy="12" r="1.3" />
+      <circle cx="12" cy="19" r="1.3" />
+    </>
+  ),
   pin: (
     <>
       <path d="M9 4h6l-1 5 3 3v2H7v-2l3-3-1-5z" />
@@ -213,14 +243,6 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M5 4h12l2 2v14H5V4z" />
       <path d="M8 4v6h8" />
       <path d="M8 20v-6h8v6" />
-    </>
-  ),
-  script: (
-    <>
-      <path d="M8 4h9a2 2 0 0 1 2 2v13H8a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z" />
-      <path d="M8 16h11" />
-      <path d="M9.5 8h5" />
-      <path d="M9.5 11h6" />
     </>
   ),
   search: (

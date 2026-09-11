@@ -164,7 +164,6 @@ const providerOptions: Array<{ value: ProviderType; label: string }> = [
 const permissionOptions: Array<{ value: UserPermission; label: string }> = [
   { value: 'accounts', label: '账号接入' },
   { value: 'chats', label: '对话查看' },
-  { value: 'scripts', label: '剧本' },
   { value: 'exports', label: '导出中心' },
 ]
 
@@ -1094,7 +1093,7 @@ function SkillAdminPanel() {
                     />
                   </label>
                 </div>
-                <label className="script-upload-drop">
+                <label className="knowledge-upload-drop">
                   <strong>从本地文件填充内容</strong>
                   <span>建议使用 txt、md、csv、json。PDF/Word 先登记文件名，自动抽文本后续补。</span>
                   <input
