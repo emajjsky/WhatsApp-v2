@@ -421,7 +421,30 @@ class AgentRunnerServer(ThreadingHTTPServer):
                 },
             )
         )
-        status_card = parse_status_card_payload(provider_response.draft)
+        try:
+            status_card = parse_status_card_payload(provider_response.draft)
+        except ProviderError:
+            repair_response = provider.generate(
+                ProviderRequest(
+                    rule_name="status_card_repair",
+                    prompt_template=(
+                        "You repair status-card output into strict JSON. Return exactly one JSON object "
+                        "matching the requested schema, with no markdown or explanation."
+                    ),
+                    knowledge_summary=None,
+                    knowledge_references=[],
+                    chat_title=None,
+                    customer_message=provider_response.draft,
+                    recent_messages=[],
+                    metadata={"task": "status_card_repair"},
+                )
+            )
+            try:
+                status_card = parse_status_card_payload(repair_response.draft)
+            except ProviderError as exc:
+                raise ProviderError(
+                    "状态分析结果格式异常，系统自动修复后仍无法解析，请检查状态卡提示词或更换模型"
+                ) from exc
 
         return {
             "request_id": request_id,
@@ -537,17 +560,21 @@ def parse_json_object_payload(text: str) -> dict[str, Any] | None:
             cleaned = cleaned[4:].strip()
     try:
         decoded = json.loads(cleaned)
-    except Exception:
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start < 0 or end <= start:
-            return None
-        try:
-            decoded = json.loads(cleaned[start : end + 1])
-        except Exception:
-            return None
+        return decoded if isinstance(decoded, dict) else None
+    except (TypeError, ValueError):
+        pass
 
-    return decoded if isinstance(decoded, dict) else None
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(cleaned):
+        if character != "{":
+            continue
+        try:
+            decoded, _ = decoder.raw_decode(cleaned[index:])
+        except ValueError:
+            continue
+        if isinstance(decoded, dict):
+            return decoded
+    return None
 
 
 def parse_translation_payload(text: str) -> dict[str, str]:

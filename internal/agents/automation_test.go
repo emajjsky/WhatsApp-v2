@@ -75,6 +75,22 @@ func adminTestContext() context.Context {
 	})
 }
 
+func TestSystemConfigRuleCombinesRulesAndRolePrompt(t *testing.T) {
+	t.Parallel()
+
+	rule := systemConfigRule("account-1", SystemAgentConfig{
+		ID:             "agent-1",
+		Name:           "客服助手",
+		Purpose:        AgentPurposeReply,
+		ProviderConfig: map[string]any{"rules_prompt": "固定输出规则"},
+		PromptTemplate: "你负责耐心解答客户问题。",
+	})
+
+	require.Contains(t, rule.PromptTemplate, "固定输出规则")
+	require.Contains(t, rule.PromptTemplate, "你负责耐心解答客户问题。")
+	require.Contains(t, rule.PromptTemplate, "[角色与功能要求]")
+}
+
 func TestServiceUpsertRuleAcceptsManualReplyMode(t *testing.T) {
 	t.Parallel()
 

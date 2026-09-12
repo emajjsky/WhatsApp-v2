@@ -1660,9 +1660,32 @@ func systemConfigRule(accountID string, config SystemAgentConfig) AgentRule {
 		ReplyMode:      replyMode,
 		ScopeFilter:    ScopeFilter{},
 		TriggerFilter:  TriggerFilter{MatchMode: MatchModeAny, IgnoreFromMe: true},
-		PromptTemplate: strings.TrimSpace(config.PromptTemplate),
+		PromptTemplate: systemAgentPrompt(config),
 		ProviderConfig: cloneProviderConfig(config.ProviderConfig),
 		SkillIDs:       normalizeStringList(config.SkillIDs),
+	}
+}
+
+func systemAgentPrompt(config SystemAgentConfig) string {
+	rulesPrompt := strings.TrimSpace(anyString(config.ProviderConfig["rules_prompt"]))
+	if rulesPrompt == "" {
+		rulesPrompt = defaultSystemAgentRulesPrompt(config.Purpose)
+	}
+	rolePrompt := strings.TrimSpace(config.PromptTemplate)
+	if rolePrompt == "" {
+		return rulesPrompt
+	}
+	return rulesPrompt + "\n\n[角色与功能要求]\n" + rolePrompt
+}
+
+func defaultSystemAgentRulesPrompt(purpose AgentPurpose) string {
+	switch purpose {
+	case AgentPurposeTranslation:
+		return "必须遵守：只输出一个严格 JSON 对象，不要 Markdown、代码块、思考过程或解释。检测原文语种，并按照系统本次请求指定的 target_language 翻译，不要把目标语言写死为中文，不要输出多份译文。JSON Schema：{\"source_language_code\":\"ISO 639 语言代码\",\"source_language_name\":\"中文语种名\",\"translated_text\":\"本次目标语言的译文\"}。"
+	case AgentPurposeStatusCard:
+		return "必须遵守：只输出一个严格 JSON 对象，不要 Markdown、代码块、思考过程或解释。JSON 必须可以被 JSON.parse 解析。必须包含完整字段：{\"current_stage\":\"string\",\"customer_types\":[\"string\"],\"current_risk\":\"低|中|高\",\"summary\":\"string\",\"evidence\":[\"string\"],\"next_action\":\"string\",\"confidence\":\"string\"}。"
+	default:
+		return "必须遵守：只输出严格 JSON，不要 Markdown、代码块、思考过程或解释。JSON 必须可以被 JSON.parse 解析。所有回复正文默认使用中文草稿，不要直接翻译成外语。必须输出 3 个方案，每个方案包含 title、strategy、content，方案之间要有明显差异。不要承诺收益，不要诱导高风险投资，不要使用夸大保证。"
 	}
 }
 

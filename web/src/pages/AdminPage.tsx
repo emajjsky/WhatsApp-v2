@@ -59,6 +59,7 @@ interface AgentConfigForm {
   stageLabels: string
   customerTypeLabels: string
   riskLabels: string
+  rulesPrompt: string
   promptTemplate: string
   skillIds: string[]
   providerPresetId: string
@@ -94,40 +95,23 @@ interface SkillFileForm {
   sortOrder: string
 }
 
-const defaultReplyPrompt = `你是 WhatsApp 跨境客服回复策略助手。你的任务是基于客户最新消息和上下文，输出 3 个不同回复策略，帮助客服选择最合适的一条。
-
-必须遵守：
-1. 只输出严格 JSON，不要 Markdown，不要代码块，不要解释。
+const defaultReplyRulesPrompt = `必须遵守：
+1. 只输出严格 JSON，不要 Markdown，不要代码块，不要思考过程，不要解释。
 2. JSON 必须可以被 JSON.parse 解析。
 3. 所有回复正文默认使用中文草稿，便于中国客服审核；不要直接翻译成外语，外语翻译由系统后续处理。
-4. 每个方案要能直接复制给客户发送，语气自然、简洁、有 WhatsApp 聊天感。
-5. 三个方案必须有明显差异，避免只是同义改写。
+4. 每个方案要能直接复制给客户发送，语气自然、简洁，有 WhatsApp 聊天感。
+5. 必须输出 3 个方案，方案之间要有明显差异，避免只是同义改写。
 6. 不要承诺收益，不要诱导高风险投资，不要使用夸大保证。
 
 输出 JSON Schema：
-{
-  "replies": [
-    {
-      "title": "回复方案 1",
-      "strategy": "策略名称，例如：共情破冰 / 专业解释 / 轻推入群",
-      "content": "可直接发送给客户的中文回复正文"
-    },
-    {
-      "title": "回复方案 2",
-      "strategy": "策略名称",
-      "content": "可直接发送给客户的中文回复正文"
-    },
-    {
-      "title": "回复方案 3",
-      "strategy": "策略名称",
-      "content": "可直接发送给客户的中文回复正文"
-    }
-  ]
-}`
-const defaultTranslationPrompt =
-  '你是 WhatsApp 客服翻译助手。检测原文语种，并按照系统本次请求指定的 target_language 翻译。不要把目标语言写死为中文，也不要输出多份译文。只输出一个严格 JSON 对象：{"source_language_code":"ISO 639 语言代码","source_language_name":"中文语种名","translated_text":"本次目标语言的译文"}。'
-const defaultStatusCardPrompt =
-  '你是 WhatsApp 私域转化顾问。基于完整聊天记录分析客户所处阶段、客户类型、风险等级，并给出下一步引导入群和转化动作。只输出严格 JSON。'
+{"replies":[{"title":"回复方案 1","strategy":"策略名称","content":"可直接发送给客户的中文回复正文"},{"title":"回复方案 2","strategy":"策略名称","content":"可直接发送给客户的中文回复正文"},{"title":"回复方案 3","strategy":"策略名称","content":"可直接发送给客户的中文回复正文"}]}`
+const defaultTranslationRulesPrompt =
+  '必须遵守：只输出一个严格 JSON 对象，不要 Markdown、代码块、思考过程或解释。检测原文语种，并按照系统本次请求指定的 target_language 翻译，不要把目标语言写死为中文，不要输出多份译文。JSON Schema：{"source_language_code":"ISO 639 语言代码","source_language_name":"中文语种名","translated_text":"本次目标语言的译文"}。'
+const defaultStatusCardRulesPrompt =
+  '必须遵守：只输出一个严格 JSON 对象，不要 Markdown、代码块、思考过程或解释。JSON 必须可以被 JSON.parse 解析。必须包含完整字段：{"current_stage":"string","customer_types":["string"],"current_risk":"低|中|高","summary":"string","evidence":["string"],"next_action":"string","confidence":"string"}。'
+const defaultReplyRolePrompt = '你负责根据客户最新消息和上下文，生成适合当前场景的中文客服回复方案。'
+const defaultTranslationRolePrompt = '你负责准确识别原文，并翻译成系统指定的目标语言，保持原意、语气和格式。'
+const defaultStatusCardRolePrompt = '你负责分析客户当前阶段、客户类型和风险，并给出简洁、可执行的下一步建议。'
 
 const defaultStatusStageLabels = [
   '新线索',
@@ -1746,6 +1730,7 @@ function SystemAgentPanel() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
+  const [rulesExpanded, setRulesExpanded] = useState(false)
 
   const purposeConfigs = useMemo(
     () => configs.filter((config) => config.purpose === purpose),
@@ -1807,6 +1792,10 @@ function SystemAgentPanel() {
   useEffect(() => {
     setForm(selectedConfig ? mapSystemConfigToForm(selectedConfig) : createDefaultConfigForm(purpose))
   }, [purpose, selectedConfig, selectedConfigId])
+
+  useEffect(() => {
+    setRulesExpanded(false)
+  }, [purpose, selectedConfigId])
 
   function updateForm(next: Partial<AgentConfigForm>) {
     setForm((current) => ({ ...current, ...next }))
@@ -1907,7 +1896,6 @@ function SystemAgentPanel() {
               onClick={() => setPurpose('reply')}
             >
               <strong>回复 Agent</strong>
-              <span>用户在对话页按场景选择</span>
             </button>
             <button
               type="button"
@@ -1915,7 +1903,6 @@ function SystemAgentPanel() {
               onClick={() => setPurpose('translation')}
             >
               <strong>翻译 Agent</strong>
-              <span>管理员选择一个当前生效</span>
             </button>
             <button
               type="button"
@@ -1923,7 +1910,6 @@ function SystemAgentPanel() {
               onClick={() => setPurpose('status_card')}
             >
               <strong>状态卡 Agent</strong>
-              <span>分析客户阶段、类型和风险</span>
             </button>
           </div>
 
@@ -2139,17 +2125,36 @@ function SystemAgentPanel() {
               </section>
             ) : null}
 
-            <section className="admin-form-section">
+            <section className="admin-form-section admin-prompt-section">
               <div className="admin-form-section-title">
-                <strong>提示词</strong>
-                <span>控制智能体生成内容的规则和风格</span>
+                <div>
+                  <strong>规则提示词</strong>
+                  <span>系统自动生效，负责输出格式和基础约束</span>
+                </div>
+                <button
+                  className="icon-button admin-prompt-toggle"
+                  type="button"
+                  onClick={() => setRulesExpanded((current) => !current)}
+                  aria-expanded={rulesExpanded}
+                  aria-label={rulesExpanded ? '收起规则提示词' : '展开规则提示词'}
+                  title={rulesExpanded ? '收起规则提示词' : '展开规则提示词'}
+                >
+                  <Icon name="chevronDown" className={rulesExpanded ? 'rotate-180' : ''} />
+                </button>
               </div>
+              {rulesExpanded ? (
+                <label className="field agent-prompt-field">
+                  <span>系统规则（自动生效）</span>
+                  <textarea rows={8} value={form.rulesPrompt} readOnly />
+                </label>
+              ) : null}
               <label className="field agent-prompt-field">
-                <span>Prompt</span>
+                <span>角色与功能要求</span>
                 <textarea
-                  rows={8}
+                  rows={6}
                   value={form.promptTemplate}
                   onChange={(event) => updateForm({ promptTemplate: event.target.value })}
+                  placeholder={getPurposeRolePlaceholder(purpose)}
                 />
               </label>
             </section>
@@ -2194,12 +2199,13 @@ function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
     stageLabels: defaultStatusStageLabels.join('\n'),
     customerTypeLabels: defaultCustomerTypeLabels.join('\n'),
     riskLabels: defaultRiskLabels.join('\n'),
+    rulesPrompt: getPurposeRulesPrompt(purpose),
     promptTemplate:
       purpose === 'translation'
-        ? defaultTranslationPrompt
+        ? defaultTranslationRolePrompt
         : purpose === 'status_card'
-          ? defaultStatusCardPrompt
-          : defaultReplyPrompt,
+          ? defaultStatusCardRolePrompt
+          : defaultReplyRolePrompt,
     skillIds: [],
     providerPresetId: '',
   }
@@ -2332,6 +2338,28 @@ function getPurposeNamePlaceholder(purpose: AgentPurpose) {
   }
 }
 
+function getPurposeRolePlaceholder(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return '例如：你是面向东南亚客户的专业翻译，保持客服语气自然、礼貌。'
+    case 'status_card':
+      return '例如：你是销售主管，重点判断客户意向和下一步跟进动作。'
+    default:
+      return '例如：你是耐心专业的跨境客服，重点帮助客户了解产品并推进下一步。'
+  }
+}
+
+function getPurposeRulesPrompt(purpose: AgentPurpose) {
+  switch (purpose) {
+    case 'translation':
+      return defaultTranslationRulesPrompt
+    case 'status_card':
+      return defaultStatusCardRulesPrompt
+    default:
+      return defaultReplyRulesPrompt
+  }
+}
+
 function getPurposeDefaultName(purpose: AgentPurpose) {
   switch (purpose) {
     case 'translation':
@@ -2361,10 +2389,42 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
       defaultCustomerTypeLabels,
     ).join('\n'),
     riskLabels: readConfigStringList(providerConfig, 'risk_labels', defaultRiskLabels).join('\n'),
-    promptTemplate: config.prompt_template || fallback.promptTemplate,
+    rulesPrompt: readConfigString(providerConfig, 'rules_prompt') || getPurposeRulesPrompt(config.purpose),
+    promptTemplate: normalizeStoredRolePrompt(
+      config.purpose,
+      config.prompt_template,
+      Boolean(readConfigString(providerConfig, 'rules_prompt')),
+    ) || fallback.promptTemplate,
     skillIds: config.skill_ids ?? [],
     providerPresetId: readConfigString(providerConfig, 'preset_id'),
   }
+}
+
+function normalizeStoredRolePrompt(purpose: AgentPurpose, prompt: string, hasStoredRules: boolean) {
+  const trimmed = prompt.trim()
+  if (!trimmed || hasStoredRules) {
+    return trimmed
+  }
+
+  if (
+    purpose === 'reply' &&
+    trimmed.includes('输出 JSON Schema') &&
+    trimmed.includes('回复方案 3') &&
+    trimmed.includes('不要承诺收益')
+  ) {
+    return defaultReplyRolePrompt
+  }
+  if (
+    purpose === 'translation' &&
+    trimmed.includes('target_language') &&
+    trimmed.includes('translated_text')
+  ) {
+    return defaultTranslationRolePrompt
+  }
+  if (purpose === 'status_card' && trimmed.startsWith('你是 WhatsApp 私域转化顾问。') && trimmed.endsWith('只输出严格 JSON。')) {
+    return defaultStatusCardRolePrompt
+  }
+  return trimmed
 }
 
 function buildProviderConfig(form: AgentConfigForm, preset: ProviderPresetView): AgentProviderConfig {
@@ -2372,6 +2432,7 @@ function buildProviderConfig(form: AgentConfigForm, preset: ProviderPresetView):
     type: normalizeProviderType(preset.provider_type),
     model: form.model.trim(),
     preset_id: preset.id,
+    rules_prompt: form.rulesPrompt.trim(),
   }))
 }
 

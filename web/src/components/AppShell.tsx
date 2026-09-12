@@ -79,14 +79,11 @@ export function AppShell() {
               key={item.to}
               to={item.to}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
-              title={item.label}
+              data-tooltip={item.label}
               aria-label={item.label}
             >
               <span className="nav-icon">
                 <Icon name={item.icon} />
-              </span>
-              <span className="nav-copy">
-                <span className="nav-title">{item.label}</span>
               </span>
             </NavLink>
           ))}
@@ -98,11 +95,10 @@ export function AppShell() {
             className="secondary-button sidebar-logout"
             type="button"
             onClick={handleLogout}
-            title={`退出登录：${auth.user?.email ?? ''}`}
+            data-tooltip="退出登录"
             aria-label="退出登录"
           >
             <Icon name="logout" />
-            <span>退出</span>
           </button>
         </section>
       </aside>

@@ -16,7 +16,15 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.52`.
+Current packaging version: `0.1.53`.
+
+## 0.1.53 Prompt layers and navigation polish
+
+- Separates system output rules from the editable agent role and function prompt.
+- Keeps the system rules active for reply, translation, and status-card agents,
+  while new agents only require role and function requirements.
+- Makes the system rules collapsed and read-only by default, with backward
+  compatibility for existing agent configurations.
 
 ## 0.1.52 Chat workspace and translation contract
 

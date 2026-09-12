@@ -4762,7 +4762,7 @@ a {
 
 .admin-purpose-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--line);
@@ -4771,31 +4771,26 @@ a {
 }
 
 .admin-purpose-button {
-  min-height: 46px;
+  min-height: 40px;
   padding: 7px 9px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
   color: var(--text-soft);
-  display: grid;
-  gap: 2px;
-  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
-.admin-purpose-button strong,
-.admin-purpose-button span {
+.admin-purpose-button strong {
   display: block;
 }
 
 .admin-purpose-button strong {
   color: var(--text);
   font-size: 12px;
-}
-
-.admin-purpose-button span {
-  color: var(--text-soft);
-  font-size: 10px;
-  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .admin-purpose-button.active {
@@ -4932,6 +4927,39 @@ a {
   font-size: 11px;
 }
 
+.admin-form-section-title > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.admin-prompt-toggle {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 50%;
+  color: #54656f;
+}
+
+.admin-prompt-toggle:hover,
+.admin-prompt-toggle:focus-visible {
+  background: #e9edef;
+  color: #008069;
+}
+
+.admin-prompt-toggle .app-icon {
+  width: 17px;
+  height: 17px;
+  transition: transform 140ms ease;
+}
+
+.admin-prompt-section textarea[readonly] {
+  color: #54656f;
+  background: #f0f2f5;
+  cursor: default;
+}
+
 .admin-provider-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -4967,6 +4995,11 @@ a {
 .admin-provider-option.active {
   border-color: rgba(18, 140, 126, 0.36);
   background: #ecf7f2;
+}
+
+.system-agent-selector-head > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .admin-provider-preset-select {
@@ -8825,5 +8858,179 @@ a {
   .whatsapp-chat-page .assistant-panel-close-button,
   .whatsapp-chat-page .assistant-panel-open-button {
     display: inline-flex;
+  }
+}
+
+/* WhatsApp-style icon-only application rail. */
+@media (min-width: 901px) {
+  .app-shell {
+    --app-sidebar-width: 60px;
+  }
+
+  .app-shell.app-shell-chat-mode {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  .sidebar-compact,
+  .sidebar-chat-mode {
+    width: 60px;
+    padding: 10px 6px;
+    overflow: visible;
+    border-right: 1px solid #e1e5e7;
+    background: #f7f8f8;
+  }
+
+  .sidebar-compact .nav-list,
+  .sidebar-chat-mode .nav-list {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+    align-content: start;
+    gap: 8px;
+    padding: 0;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .sidebar-compact .nav-link,
+  .nav-list-chat-mode .nav-link {
+    position: relative;
+    width: 46px;
+    height: 46px;
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    justify-self: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .sidebar-compact .nav-link:hover,
+  .sidebar-compact .nav-link:focus-visible {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .sidebar-compact .nav-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: transparent;
+    color: #54656f;
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  .sidebar-compact .nav-icon .app-icon {
+    width: 22px;
+    height: 22px;
+    stroke-width: 1.8;
+  }
+
+  .sidebar-compact .nav-link:hover .nav-icon,
+  .sidebar-compact .nav-link:focus-visible .nav-icon {
+    background: #e9edef;
+    color: #111b21;
+  }
+
+  .sidebar-compact .nav-link.active,
+  .nav-list-chat-mode .nav-link.active {
+    border: 0;
+    background: transparent;
+  }
+
+  .sidebar-compact .nav-link.active .nav-icon {
+    background: #111b21;
+    color: #fff;
+  }
+
+  .sidebar-compact .nav-link::after,
+  .sidebar-compact .sidebar-logout::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    z-index: 120;
+    top: 50%;
+    left: calc(100% + 9px);
+    padding: 6px 9px;
+    border-radius: 5px;
+    background: #111b21;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-3px, -50%);
+    transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+    visibility: hidden;
+    white-space: nowrap;
+  }
+
+  .sidebar-compact .nav-link:hover::after,
+  .sidebar-compact .nav-link:focus-visible::after,
+  .sidebar-compact .sidebar-logout:hover::after,
+  .sidebar-compact .sidebar-logout:focus-visible::after {
+    opacity: 1;
+    transform: translate(0, -50%);
+    visibility: visible;
+  }
+
+  .sidebar-compact .sidebar-note-compact {
+    width: 100%;
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 0;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .sidebar-compact .sidebar-version {
+    color: #667781;
+    font-size: 9px;
+    font-weight: 600;
+  }
+
+  .sidebar-compact .sidebar-logout {
+    position: relative;
+    width: 42px;
+    height: 42px;
+    min-height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #54656f;
+    box-shadow: none;
+  }
+
+  .sidebar-compact .sidebar-logout:hover,
+  .sidebar-compact .sidebar-logout:focus-visible {
+    background: #e9edef;
+    color: #111b21;
+  }
+
+  .sidebar-compact .sidebar-logout .app-icon {
+    width: 21px;
+    height: 21px;
+  }
+
+  .admin-purpose-switch {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

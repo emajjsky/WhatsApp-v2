@@ -96,11 +96,12 @@ def _build_user_message(request: ProviderRequest) -> str:
         lines = [
             "[Status Card Task]",
             "Analyze this WhatsApp conversation for private-domain conversion and group-entry guidance.",
-            "Return only strict JSON. Do not add markdown or explanations outside JSON.",
+            "Return exactly one strict JSON object. Do not add markdown, code fences, thinking, or explanations.",
             'JSON schema: {"current_stage":"string","customer_types":["string"],"current_risk":"低|中|高","summary":"string","evidence":["string"],"next_action":"string","confidence":"string"}',
             "current_stage must use one of the stage labels when possible.",
             "customer_types must use zero or more customer type labels when possible.",
             "current_risk must use one of the risk labels.",
+            "Keep summary and next_action concise. Return at most three short evidence items.",
             "",
             "[Stage Labels]",
             " / ".join(stage_labels) if stage_labels else "新线索 / 已破冰 / 问费用 / 问进群 / 已进群 / 问推荐 / 问操作 / 异议中 / check-in / 沉默待复访",
@@ -133,6 +134,19 @@ def _build_user_message(request: ProviderRequest) -> str:
             ]
         )
         return "\n".join(lines).strip()
+
+    if request.metadata.get("task") == "status_card_repair":
+        return "\n".join(
+            [
+                "[Status Card JSON Repair]",
+                "Convert the content below into exactly one valid JSON object matching this schema.",
+                'JSON schema: {"current_stage":"string","customer_types":["string"],"current_risk":"string","summary":"string","evidence":["string"],"next_action":"string","confidence":"string"}',
+                "Preserve the original meaning. Do not add markdown, code fences, thinking, or explanations.",
+                "",
+                "[Content To Repair]",
+                request.customer_message.strip(),
+            ]
+        ).strip()
 
     lines: list[str] = []
 
@@ -373,6 +387,8 @@ def _build_chat_body(config: OpenAICompatibleConfig, request: ProviderRequest, s
         body["stream"] = True
     if config.enable_thinking is not None:
         body["enable_thinking"] = config.enable_thinking
+    if request.metadata.get("task") in {"translation", "status_card", "status_card_repair"}:
+        body["response_format"] = {"type": "json_object"}
     body.update(config.extra_body)
     return body
 
@@ -388,32 +404,48 @@ class OpenAICompatibleProvider(BaseProvider):
         body = _build_chat_body(self._config, request, stream=False)
 
         endpoint = self._config.base_url + "/chat/completions"
-        raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        attempts = [body]
+        if "response_format" in body:
+            fallback_body = dict(body)
+            fallback_body.pop("response_format", None)
+            attempts.append(fallback_body)
 
-        req = urllib.request.Request(
-            endpoint,
-            data=raw,
-            method="POST",
-            headers={
-                "Content-Type": "application/json; charset=utf-8",
-                "Authorization": f"Bearer {self._config.api_key}",
-            },
-        )
+        data = b""
+        status = 0
+        for attempt_index, attempt_body in enumerate(attempts):
+            raw = json.dumps(attempt_body, ensure_ascii=False).encode("utf-8")
+            req = urllib.request.Request(
+                endpoint,
+                data=raw,
+                method="POST",
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Authorization": f"Bearer {self._config.api_key}",
+                },
+            )
 
-        try:
-            with urllib.request.urlopen(req, timeout=self._config.timeout_seconds) as resp:
-                status = getattr(resp, "status", 200)
-                data = resp.read()
-        except urllib.error.HTTPError as exc:
             try:
-                detail = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                detail = ""
-            raise ProviderError(f"openai_compatible http {exc.code}: {detail}".strip()) from exc
-        except urllib.error.URLError as exc:
-            raise ProviderError(f"openai_compatible network error: {exc.reason}") from exc
-        except Exception as exc:
-            raise ProviderError(f"openai_compatible request failed: {exc}") from exc
+                with urllib.request.urlopen(req, timeout=self._config.timeout_seconds) as resp:
+                    status = getattr(resp, "status", 200)
+                    data = resp.read()
+                break
+            except urllib.error.HTTPError as exc:
+                try:
+                    detail = exc.read().decode("utf-8", errors="replace")
+                except Exception:
+                    detail = ""
+                can_retry_without_json_mode = (
+                    attempt_index == 0
+                    and len(attempts) > 1
+                    and exc.code in {400, 404, 422}
+                )
+                if can_retry_without_json_mode:
+                    continue
+                raise ProviderError(f"openai_compatible http {exc.code}: {detail}".strip()) from exc
+            except urllib.error.URLError as exc:
+                raise ProviderError(f"openai_compatible network error: {exc.reason}") from exc
+            except Exception as exc:
+                raise ProviderError(f"openai_compatible request failed: {exc}") from exc
 
         if status < 200 or status >= 300:
             raise ProviderError(f"openai_compatible returned status {status}")
