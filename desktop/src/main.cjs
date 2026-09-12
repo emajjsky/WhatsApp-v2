@@ -991,6 +991,7 @@ async function startAPI() {
       APP_ENV: 'desktop',
       HTTP_HOST: '127.0.0.1',
       HTTP_PORT: String(API_PORT),
+      HTTP_WRITE_TIMEOUT: process.env.HTTP_WRITE_TIMEOUT || '3m',
       DB_DRIVER: 'postgres',
       DB_DSN: `postgres://postgres@127.0.0.1:${POSTGRES_PORT}/${DATABASE_NAME}?sslmode=disable`,
       DB_AUTO_MIGRATE: 'true',

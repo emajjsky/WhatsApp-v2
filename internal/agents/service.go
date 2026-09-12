@@ -660,6 +660,11 @@ func (s *Service) UpsertSystemConfig(ctx context.Context, input UpsertSystemConf
 	if input.Enabled && normalizeProviderType(anyString(providerConfig["type"])) == "" {
 		return SystemAgentConfig{}, fmt.Errorf("provider_config.type is required when config is enabled")
 	}
+	if input.Enabled {
+		if err := s.validateSystemProviderConfig(ctx, providerConfig); err != nil {
+			return SystemAgentConfig{}, err
+		}
+	}
 	if purpose == AgentPurposeTranslation && input.Enabled && normalizeProviderType(anyString(providerConfig["type"])) != "openai_compatible" {
 		return SystemAgentConfig{}, fmt.Errorf("translation config requires provider_config.type openai_compatible")
 	}
@@ -1462,6 +1467,51 @@ func normalizeProviderConfig(config map[string]any) (map[string]any, error) {
 	normalized["type"] = providerType
 
 	return normalized, nil
+}
+
+func (s *Service) validateSystemProviderConfig(ctx context.Context, config map[string]any) error {
+	presetID := strings.TrimSpace(anyString(config["preset_id"]))
+	if presetID == "" {
+		return fmt.Errorf("provider_config.preset_id is required; select a Provider preset")
+	}
+
+	preset, err := s.repository.GetProviderPresetByID(ctx, presetID)
+	if err != nil {
+		return fmt.Errorf("provider preset %q not found: %w", presetID, err)
+	}
+	if !preset.Enabled {
+		return fmt.Errorf("provider preset %q is disabled", preset.Name)
+	}
+
+	providerType := normalizeProviderType(anyString(config["type"]))
+	if providerType != preset.ProviderType {
+		return fmt.Errorf("provider type does not match Provider preset %q", preset.Name)
+	}
+	if providerType != "openai_compatible" {
+		return nil
+	}
+	if strings.TrimSpace(preset.APIKey) == "" {
+		return fmt.Errorf("provider preset %q has no API key; configure it first", preset.Name)
+	}
+
+	model := strings.TrimSpace(anyString(config["model"]))
+	if model == "" {
+		model = strings.TrimSpace(preset.DefaultModel)
+		if model == "" && len(preset.Models) > 0 {
+			model = strings.TrimSpace(preset.Models[0])
+		}
+		if model != "" {
+			config["model"] = model
+		}
+	}
+	if model == "" {
+		return fmt.Errorf("provider preset %q has no default model", preset.Name)
+	}
+	if len(preset.Models) > 0 && !containsString(preset.Models, model) {
+		return fmt.Errorf("model %q is not available in Provider preset %q", model, preset.Name)
+	}
+
+	return nil
 }
 
 func normalizeProviderType(value string) string {

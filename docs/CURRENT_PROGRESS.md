@@ -24,7 +24,7 @@
 - 桌面端可以使用云端后台配置的回复 Agent、翻译 Agent、状态卡 Agent。
 - Electron 云端服务已支持独立部署，不影响 `main`。
 - Windows 安装包已生成到 `desktop/release/`。
-- Windows 客户端当前已发布 `0.1.50`；本版本包含 Provider、列表和 Agent 稳定性修复。
+- Windows 客户端当前已发布 `0.1.51`；本版本修复慢速 Provider 触发 502/network error 的 API 写超时问题，并加强 Agent Provider 配置校验。
 - 云端后台用户管理已重排，管理员可在用户卡片内输入并确认新密码。
 - 已过滤 WhatsApp 内部协议消息，历史 `protocol:*` 脏记录不再显示为客户会话。
 - 消息入库已改成有界顺序队列，避免历史同步产生无界并发，并确保入库后再触发前端和 Agent。

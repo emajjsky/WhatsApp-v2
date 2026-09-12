@@ -339,6 +339,13 @@ class AgentRunnerServer(ThreadingHTTPServer):
             "You are a precise translation engine for customer support. "
             "Return only strict JSON and do not add markdown."
         )
+        prompt_template = (
+            f"{prompt_template}\n\n"
+            "[Request Translation Contract]\n"
+            f"For this request, the target language is {target_language_name} ({target_language}). "
+            "Translate into this target language, even if an earlier generic instruction names another language. "
+            "The target language in this request is authoritative. Return only strict JSON."
+        )
 
         provider = build_provider(provider_config)
         provider_response = provider.generate(

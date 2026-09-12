@@ -71,7 +71,10 @@ func Load() (Config, error) {
 			Host:            stringEnv("HTTP_HOST", "0.0.0.0"),
 			Port:            intEnv("HTTP_PORT", 8080),
 			ReadTimeout:     durationEnv("HTTP_READ_TIMEOUT", 10*time.Second),
-			WriteTimeout:    durationEnv("HTTP_WRITE_TIMEOUT", 15*time.Second),
+			// Agent generation may wait for the provider's first token. Keep the
+			// server deadline above the runner timeout so slow-but-valid models do
+			// not become an apparent network error.
+			WriteTimeout:    durationEnv("HTTP_WRITE_TIMEOUT", 3*time.Minute),
 			IdleTimeout:     durationEnv("HTTP_IDLE_TIMEOUT", 60*time.Second),
 			ShutdownTimeout: durationEnv("HTTP_SHUTDOWN_TIMEOUT", 20*time.Second),
 		},
