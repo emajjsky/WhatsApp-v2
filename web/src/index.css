@@ -8867,6 +8867,17 @@ a {
     --app-sidebar-width: 60px;
   }
 
+  /* Keep rail tooltips above every page panel and form. */
+  .app-shell > .sidebar {
+    position: relative;
+    z-index: 200;
+  }
+
+  .app-shell > .workspace {
+    position: relative;
+    z-index: 1;
+  }
+
   .app-shell.app-shell-chat-mode {
     grid-template-columns: 60px minmax(0, 1fr);
   }
@@ -8957,7 +8968,7 @@ a {
   .sidebar-compact .sidebar-logout::after {
     content: attr(data-tooltip);
     position: absolute;
-    z-index: 120;
+    z-index: 1000;
     top: 50%;
     left: calc(100% + 9px);
     padding: 6px 9px;

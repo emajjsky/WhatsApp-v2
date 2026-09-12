@@ -16,7 +16,11 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.53`.
+Current packaging version: `0.1.54`.
+
+## 0.1.54 Navigation tooltip layering
+
+- Keeps the left navigation hover labels above admin forms and page panels.
 
 ## 0.1.53 Prompt layers and navigation polish
 
