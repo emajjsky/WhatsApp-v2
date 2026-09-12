@@ -48,7 +48,6 @@ import {
 } from '../api/client'
 import { EmptyPanel } from '../components/EmptyPanel'
 import { Icon, type IconName } from '../components/Icon'
-import { StatusBadge } from '../components/StatusBadge'
 
 type ChatDisplaySource = {
   wa_chat_jid: string
@@ -95,6 +94,7 @@ type ChatContextMenuState = {
   chatId: string
   x: number
   y: number
+  source: 'row' | 'toolbar'
   submenu?: 'mute' | 'lists'
 }
 
@@ -240,7 +240,9 @@ export function ChatsPage() {
   const [statusCard, setStatusCard] = useState<StatusCardView>()
   const [statusCardBusyByChatId, setStatusCardBusyByChatId] = useState<Record<string, boolean>>({})
   const [statusCardNotice, setStatusCardNotice] = useState<string>()
+  const [statusCardOpen, setStatusCardOpen] = useState(false)
   const [statusCardCollapsed, setStatusCardCollapsed] = useState(false)
+  const [visibleCustomListCount, setVisibleCustomListCount] = useState(0)
   const [agentConfigsLoading, setAgentConfigsLoading] = useState(true)
   const [assistantBusyByChatId, setAssistantBusyByChatId] = useState<Record<string, boolean>>({})
   const [assistantSendingByChatId, setAssistantSendingByChatId] = useState<Record<string, boolean>>({})
@@ -255,6 +257,7 @@ export function ChatsPage() {
   const activeAssistantChatIdRef = useRef<string | undefined>(undefined)
   const composeAttachmentRef = useRef<HTMLDivElement>(null)
   const chatContextMenuRef = useRef<HTMLDivElement>(null)
+  const statusCardPanelRef = useRef<HTMLElement>(null)
   const listMenuRef = useRef<HTMLDivElement>(null)
   const chatSearchRef = useRef<HTMLInputElement>(null)
   const documentInputRef = useRef<HTMLInputElement>(null)
@@ -278,6 +281,8 @@ export function ChatsPage() {
   const replyToMessage = selectedChatId ? replyToMessageByChatId[selectedChatId] : undefined
   const composeNotice = selectedChatId ? composeNoticeByChatId[selectedChatId] : undefined
   const statusCardBusy = selectedChatId ? Boolean(statusCardBusyByChatId[selectedChatId]) : false
+  const favoriteList = chatLabels.find((label) => label.name.trim() === favoriteListName)
+  const customLists = chatLabels.filter((label) => label.id !== favoriteList?.id)
 
   const scrollTimelineToBottom = useCallback(() => {
     const timeline = timelineRef.current
@@ -791,6 +796,7 @@ export function ChatsPage() {
         : emptyAssistantWorkspace(),
     )
     setAttachmentMenuOpen(false)
+    setStatusCardOpen(false)
   }, [emptyAssistantWorkspace, restoreAssistantWorkspace, selectedChatId])
 
   useEffect(() => {
@@ -866,6 +872,67 @@ export function ChatsPage() {
       window.removeEventListener('blur', closeOnWindowBlur)
     }
   }, [chatContextMenu])
+
+  useEffect(() => {
+    if (!statusCardOpen) {
+      return
+    }
+
+    const closePanel = (event: MouseEvent) => {
+      if (!statusCardPanelRef.current?.contains(event.target as Node)) {
+        setStatusCardOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setStatusCardOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', closePanel)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closePanel)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [statusCardOpen])
+
+  useEffect(() => {
+    const shell = listMenuRef.current
+    if (!shell) {
+      return
+    }
+
+    const updateVisibleLists = () => {
+      const availableWidth = shell.clientWidth
+      if (!availableWidth) {
+        return
+      }
+
+      // Keep the four official filters and the overflow menu on one line.
+      const fixedWidth = 176
+      const overflowWidth = 32
+      const gapWidth = 10
+      let remaining = Math.max(0, availableWidth - fixedWidth - overflowWidth - gapWidth)
+      let count = 0
+      const favoriteLabel = chatLabels.find((label) => label.name.trim() === favoriteListName)
+      const availableLists = chatLabels.filter((label) => label.id !== favoriteLabel?.id)
+      for (const label of availableLists) {
+        const itemWidth = Math.min(116, Math.max(54, label.name.trim().length * 12 + 18))
+        if (remaining < itemWidth) {
+          break
+        }
+        remaining -= itemWidth + 3
+        count += 1
+      }
+      setVisibleCustomListCount(count)
+    }
+
+    updateVisibleLists()
+    const observer = new ResizeObserver(updateVisibleLists)
+    observer.observe(shell)
+    return () => observer.disconnect()
+  }, [chatLabels])
 
   useEffect(() => {
     if (!assistantBusy || !assistantDraftRef.current) {
@@ -1596,8 +1663,8 @@ export function ChatsPage() {
   )
   const canSendMessage = Boolean(canSendInCurrentChat && draftMessage.trim() && !sending)
   const canAnalyzeStatusCard = Boolean(selectedChatId && activeHistory && activeStatusCardAgent && !statusCardBusy)
-  const favoriteList = chatLabels.find((label) => label.name.trim() === favoriteListName)
-  const customLists = chatLabels.filter((label) => label.id !== favoriteList?.id)
+  const visibleCustomLists = customLists.slice(0, visibleCustomListCount)
+  const overflowCustomLists = customLists.slice(visibleCustomListCount)
   const translationAgentConfigured = translationAgents.some(isConfiguredSystemAgent)
   const activePrimaryFilter: ChatPrimaryFilter = chatView === 'unread'
     ? 'unread'
@@ -1664,16 +1731,22 @@ export function ChatsPage() {
 
   function openChatContextMenu(event: ReactMouseEvent, chat: ChatSummary) {
     event.preventDefault()
-    openChatContextMenuAt(chat, event.clientX, event.clientY)
+    openChatContextMenuAt(chat, event.clientX, event.clientY, 'row')
   }
 
-  function openChatContextMenuAt(chat: ChatSummary, clientX: number, clientY: number) {
+  function openChatContextMenuAt(
+    chat: ChatSummary,
+    clientX: number,
+    clientY: number,
+    source: ChatContextMenuState['source'],
+  ) {
     const menuWidth = 210
-    const menuHeight = 360
+    const menuHeight = source === 'toolbar' ? 410 : 360
     setChatContextMenu({
       chatId: chat.id,
       x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
+      source,
     })
   }
 
@@ -2002,18 +2075,7 @@ export function ChatsPage() {
                     : null}
                 </button>
               ))}
-              <button
-                className={`chat-list-add-button${listMenuOpen || auxiliaryFilterActive ? ' active' : ''}`}
-                type="button"
-                aria-label="列表"
-                title="列表"
-                aria-haspopup="menu"
-                aria-expanded={listMenuOpen}
-                onClick={() => setListMenuOpen((current) => !current)}
-              >
-                <Icon name="plus" />
-              </button>
-              {customLists.map((label) => (
+              {visibleCustomLists.map((label) => (
                 <button
                   key={label.id}
                   type="button"
@@ -2026,25 +2088,37 @@ export function ChatsPage() {
                   {label.name}
                 </button>
               ))}
+              <button
+                className={`chat-list-add-button${listMenuOpen || auxiliaryFilterActive ? ' active' : ''}`}
+                type="button"
+                aria-label="更多列表"
+                title="更多列表"
+                aria-haspopup="menu"
+                aria-expanded={listMenuOpen}
+                onClick={() => setListMenuOpen((current) => !current)}
+              >
+                <Icon name="chevronDown" />
+              </button>
             </div>
 
             {listMenuOpen ? (
               <div className="chat-list-menu" role="menu" aria-label="列表管理">
-                <button type="button" role="menuitem" onClick={() => void openListCreator()}>
-                  <span className="chat-list-menu-icon"><Icon name="plus" /></span>
-                  <span><strong>创建新列表</strong><small>整理常用客户和群组</small></span>
-                </button>
                 <button type="button" role="menuitem" className={chatView === 'archived' ? 'selected' : ''} onClick={() => { setChatView('archived'); setSelectedChatType(''); setSelectedLabelId(''); setListMenuOpen(false) }}>
                   <span className="chat-list-menu-icon"><Icon name="archive" /></span>
                   <span><strong>已归档</strong></span>
                 </button>
-                {customLists.length ? <div className="chat-list-menu-divider" /> : null}
-                {customLists.map((label) => (
+                {overflowCustomLists.length ? <div className="chat-list-menu-divider" /> : null}
+                {overflowCustomLists.map((label) => (
                   <button key={label.id} type="button" role="menuitem" className={selectedLabelId === label.id ? 'selected' : ''} onClick={() => selectCustomList(label.id)}>
                     <span className="chat-list-menu-icon"><Icon name="list" /></span>
                     <span><strong>{label.name}</strong></span>
                   </button>
                 ))}
+                <div className="chat-list-menu-divider" />
+                <button type="button" role="menuitem" onClick={() => void openListCreator()}>
+                  <span className="chat-list-menu-icon"><Icon name="plus" /></span>
+                  <span><strong>新列表</strong></span>
+                </button>
               </div>
             ) : null}
           </div>
@@ -2115,9 +2189,16 @@ export function ChatsPage() {
                   <ChatAvatar chat={selectedChat} />
                   <span><strong>{getChatDisplayName(selectedChat)}</strong><small>{selectedChat.note || selectedChat.phone_number || selectedChat.wa_chat_jid}</small></span>
                 </button>
+                {statusCard ? (
+                  <div className="chat-contact-status-tags" aria-label="客户状态">
+                    <span title={`当前阶段：${statusCard.current_stage}`}>{statusCard.current_stage || '阶段未判断'}</span>
+                    <span className={`tone-${getRiskTone(statusCard.current_risk) ?? 'neutral'}`} title={`当前风险：${statusCard.current_risk}`}>{statusCard.current_risk || '风险未判断'}</span>
+                    <span title={`客户类型：${statusCard.customer_types.join('、')}`}>{statusCard.customer_types[0] || '类型未判断'}</span>
+                  </div>
+                ) : null}
                 <div className="chat-contact-toolbar-actions">
                   <button type="button" onClick={() => chatSearchRef.current?.focus()} title="搜索会话" aria-label="搜索会话"><Icon name="search" /></button>
-                  <button type="button" onClick={(event) => openChatContextMenuAt(selectedChat, event.clientX, event.clientY + 12)} title="更多操作" aria-label="更多操作"><Icon name="moreVertical" /></button>
+                  <button type="button" onClick={(event) => openChatContextMenuAt(selectedChat, event.clientX, event.clientY + 12, 'toolbar')} title="更多操作" aria-label="更多操作"><Icon name="moreVertical" /></button>
                   {assistantPanelCollapsed ? (
                     <button className="assistant-panel-open-button" type="button" onClick={() => setAssistantPanelCollapsed(false)} title="展开智能体面板" aria-label="展开智能体面板"><Icon name="chevronRight" /></button>
                   ) : null}
@@ -2144,92 +2225,59 @@ export function ChatsPage() {
                 </aside>
               ) : null}
 
-              <section className="chat-status-strip whatsapp-chat-status-strip">
-                {agentConfigsLoading ? (
-                  <div className="warning-banner">加载中...</div>
-                ) : !activeStatusCardAgent ? (
-                  <div className="warning-banner">未启用状态卡智能体。</div>
-                ) : (
-                  <div className={`chat-status-card-grid${statusCardCollapsed ? ' collapsed' : ''}`}>
-                    <div className="chat-status-top-row">
-                      <div className="chat-status-title-row">
-                        <span>用户状态卡</span>
-                        {statusCard ? (
-                          <span>{statusCard.message_count} 条记录</span>
-                        ) : (
-                          <span>{activeHistory.messages.length} 条已加载消息</span>
-                        )}
-                      </div>
-                      <StatusBadge status={activeHistory.chat.chat_type} />
+              {statusCardOpen ? (
+                <aside ref={statusCardPanelRef} className="chat-status-popover" aria-label="用户状态卡">
+                  <header>
+                    <div>
+                      <strong>用户状态卡</strong>
+                      <span>{statusCard ? `${statusCard.message_count} 条记录` : `${activeHistory.messages.length} 条已加载消息`}</span>
+                    </div>
+                    <div className="chat-status-popover-actions">
                       <button
-                        className="secondary-button assistant-mini-button chat-status-collapse-button"
-                        type="button"
-                        onClick={() => setStatusCardCollapsed((current) => !current)}
-                        aria-expanded={!statusCardCollapsed}
-                        title={statusCardCollapsed ? '展开摘要和建议' : '收起摘要和建议'}
-                      >
-                        <Icon name="chevronDown" className={statusCardCollapsed ? '' : 'rotate-180'} />
-                        <span>{statusCardCollapsed ? '展开' : '收起'}</span>
-                      </button>
-                      <button
-                        className="primary-button assistant-mini-button chat-status-analyze-button"
+                        className="primary-button chat-status-analyze-button"
                         type="button"
                         onClick={() => void handleAnalyzeStatusCard()}
                         disabled={!canAnalyzeStatusCard}
                       >
                         {statusCardBusy ? '分析中...' : statusCard ? '重分析' : '分析'}
                       </button>
+                      <button className="chat-status-close-button" type="button" onClick={() => setStatusCardOpen(false)} aria-label="关闭用户状态卡">×</button>
                     </div>
-                    <div className="chat-status-overview-row">
-                      <StatusMetric label="当前阶段" value={statusCard?.current_stage || '未判断'} />
-                      <StatusMetric
-                        label="当前风险"
-                        value={statusCard?.current_risk || '未判断'}
-                        tone={getRiskTone(statusCard?.current_risk || '')}
-                      />
-                      <div className="assistant-status-metric assistant-status-type-metric">
-                        <span>客户类型</span>
-                        <div className="assistant-chip-row">
-                          {(statusCard?.customer_types.length ? statusCard.customer_types : ['未判断']).map(
-                            (item) => (
-                              <span className="toolbar-chip" key={item}>
-                                {item}
-                              </span>
-                            ),
-                          )}
-                        </div>
+                  </header>
+                  {agentConfigsLoading ? (
+                    <div className="warning-banner">正在加载状态卡配置...</div>
+                  ) : !activeStatusCardAgent ? (
+                    <div className="warning-banner">管理员后台尚未启用状态卡智能体。</div>
+                  ) : null}
+                  <div className="chat-status-overview-row">
+                    <StatusMetric label="当前阶段" value={statusCard?.current_stage || '未判断'} />
+                    <StatusMetric label="当前风险" value={statusCard?.current_risk || '未判断'} tone={getRiskTone(statusCard?.current_risk || '')} />
+                    <div className="assistant-status-metric assistant-status-type-metric">
+                      <span>客户类型</span>
+                      <div className="assistant-chip-row">
+                        {(statusCard?.customer_types.length ? statusCard.customer_types : ['未判断']).map((item) => <span className="toolbar-chip" key={item}>{item}</span>)}
                       </div>
                     </div>
-                    {!statusCardCollapsed ? (
-                      <div className="assistant-status-text-scroll">
-                        {statusCard?.summary ? (
-                          <p className="assistant-status-summary">
-                            <strong>摘要</strong>
-                            <span>{statusCard.summary}</span>
-                          </p>
-                        ) : (
-                          <p className="assistant-status-empty">点击分析后显示客户状态摘要。</p>
-                        )}
-                        {statusCard?.next_action ? (
-                          <p className="assistant-status-summary">
-                            <strong>建议</strong>
-                            <span>{statusCard.next_action}</span>
-                          </p>
-                        ) : null}
-                        {statusCard?.evidence.length ? (
-                          <ul className="assistant-evidence-list">
-                            {statusCard.evidence.slice(0, 3).map((item) => (
-                              <li key={item}>{item}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </div>
-                    ) : null}
                   </div>
-                )}
-
-                {statusCardNotice ? <div className="warning-banner">{statusCardNotice}</div> : null}
-              </section>
+                  <button
+                    className="chat-status-detail-toggle"
+                    type="button"
+                    onClick={() => setStatusCardCollapsed((current) => !current)}
+                    aria-expanded={!statusCardCollapsed}
+                  >
+                    <span>摘要与建议</span>
+                    <Icon name="chevronDown" className={statusCardCollapsed ? '' : 'rotate-180'} />
+                  </button>
+                  {!statusCardCollapsed ? (
+                    <div className="chat-status-popover-detail">
+                      {statusCard?.summary ? <p className="assistant-status-summary"><strong>摘要</strong><span>{statusCard.summary}</span></p> : <p className="assistant-status-empty">点击分析后显示客户状态摘要。</p>}
+                      {statusCard?.next_action ? <p className="assistant-status-summary"><strong>建议</strong><span>{statusCard.next_action}</span></p> : null}
+                      {statusCard?.evidence.length ? <ul className="assistant-evidence-list">{statusCard.evidence.slice(0, 3).map((item) => <li key={item}>{item}</li>)}</ul> : null}
+                    </div>
+                  ) : null}
+                  {statusCardNotice ? <div className="warning-banner">{statusCardNotice}</div> : null}
+                </aside>
+              ) : null}
 
               <div className="whatsapp-history-toolbar">
                 {activeHistory.has_more ? (
@@ -2674,6 +2722,14 @@ export function ChatsPage() {
             role="menu"
             style={{ left: chatContextMenu.x, top: chatContextMenu.y }}
           >
+            {chatContextMenu.source === 'toolbar' ? (
+              <>
+                <button type="button" role="menuitem" onClick={() => { setChatContextMenu(undefined); setStatusCardOpen(true) }}>
+                  <Icon name="user" /><span>用户状态卡</span>
+                </button>
+                <div className="chat-context-divider" />
+              </>
+            ) : null}
             <button type="button" role="menuitem" onClick={() => { setChatContextMenu(undefined); void saveChatMetadataFor(chat, { archived: !chat.archived }) }}>
               <Icon name="archive" /><span>{chat.archived ? '取消归档' : '归档聊天'}</span>
             </button>
@@ -3632,6 +3688,9 @@ function readStoredChatSidebarWidth() {
 }
 
 function readStoredAssistantPanelCollapsed() {
+  if (window.innerWidth <= 1100) {
+    return true
+  }
   return window.localStorage.getItem(assistantPanelCollapsedStorageKey) === 'true'
 }
 

@@ -337,14 +337,17 @@ class AgentRunnerServer(ThreadingHTTPServer):
         target_language_name = optional_string(payload.get("target_language_name")) or target_language
         prompt_template = optional_string(payload.get("prompt_template")) or (
             "You are a precise translation engine for customer support. "
-            "Return only strict JSON and do not add markdown."
+            "Follow the target language supplied by this request; do not assume Chinese. "
+            "Return one strict JSON object and do not add markdown."
         )
         prompt_template = (
             f"{prompt_template}\n\n"
             "[Request Translation Contract]\n"
             f"For this request, the target language is {target_language_name} ({target_language}). "
             "Translate into this target language, even if an earlier generic instruction names another language. "
-            "The target language in this request is authoritative. Return only strict JSON."
+            "The target language in this request is authoritative. Return exactly one translation, not three alternatives. "
+            'Return only this strict JSON object: {"source_language_code":"string",'
+            '"source_language_name":"Simplified Chinese language name","translated_text":"string"}.'
         )
 
         provider = build_provider(provider_config)

@@ -16,7 +16,14 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.47`.
+Current packaging version: `0.1.52`.
+
+## 0.1.52 Chat workspace and translation contract
+
+- Keeps official conversation filters on one line and moves overflow custom lists into the list menu.
+- Moves the customer status card into the chat toolbar menu and shows analyzed status tags beside the contact name.
+- Keeps the composer pinned to the bottom and uses an overlay assistant panel in compact desktop windows.
+- Makes each translation request's target language authoritative and returns exactly one translated result.
 
 ## 0.1.47 Customer workspace
 

@@ -125,7 +125,7 @@ const defaultReplyPrompt = `你是 WhatsApp 跨境客服回复策略助手。你
   ]
 }`
 const defaultTranslationPrompt =
-  '你是 WhatsApp 客服翻译助手。检测原文语种，并把文本准确翻译成目标语种。source_language_name 使用中文语种名。只输出严格 JSON。'
+  '你是 WhatsApp 客服翻译助手。检测原文语种，并按照系统本次请求指定的 target_language 翻译。不要把目标语言写死为中文，也不要输出多份译文。只输出一个严格 JSON 对象：{"source_language_code":"ISO 639 语言代码","source_language_name":"中文语种名","translated_text":"本次目标语言的译文"}。'
 const defaultStatusCardPrompt =
   '你是 WhatsApp 私域转化顾问。基于完整聊天记录分析客户所处阶段、客户类型、风险等级，并给出下一步引导入群和转化动作。只输出严格 JSON。'
 

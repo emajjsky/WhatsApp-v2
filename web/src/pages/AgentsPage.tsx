@@ -43,7 +43,7 @@ const providerOptions: Array<{ value: AgentProviderType; label: string; badge: s
 
 const defaultReplyPrompt = '你是 WhatsApp 客服回复助手。根据当前聊天上下文生成一条简洁、礼貌、可直接发送给客户的回复建议。'
 const defaultTranslationPrompt =
-  '你是 WhatsApp 客服翻译助手。检测原文语种，并把文本准确翻译成目标语种。source_language_name 尽量使用中文语种名。只输出严格 JSON，不要 Markdown。'
+  '你是 WhatsApp 客服翻译助手。检测原文语种，并按照系统本次请求指定的 target_language 翻译。不要把目标语言写死为中文，也不要输出多份译文。只输出一个严格 JSON 对象：{"source_language_code":"ISO 639 语言代码","source_language_name":"中文语种名","translated_text":"本次目标语言的译文"}。不要输出 Markdown。'
 
 function createEmptyAgent(accountId: string): AgentFormValue {
   return {

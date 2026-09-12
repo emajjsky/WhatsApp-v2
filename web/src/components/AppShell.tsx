@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { type UserPermission } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from './Icon'
@@ -21,6 +21,7 @@ const adminNavItems = [{ to: '/admin', label: '后台', icon: 'admin' as IconNam
 
 export function AppShell() {
   const auth = useAuth()
+  const location = useLocation()
   const navigate = useNavigate()
   const [appVersion, setAppVersion] = useState('')
   const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
@@ -33,6 +34,7 @@ export function AppShell() {
   const navItems = (auth.user?.role === 'admin' ? [...visibleBaseNavItems, ...adminNavItems] : visibleBaseNavItems).filter(
     (item) => item.to !== '/proxies' || isDesktopRuntime,
   )
+  const isChatMode = location.pathname.startsWith('/chats')
 
   async function handleLogout() {
     await auth.logout()
@@ -69,9 +71,9 @@ export function AppShell() {
   }, [])
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar sidebar-compact">
-        <nav className="nav-list" aria-label="主导航">
+    <div className={`app-shell${isChatMode ? ' app-shell-chat-mode' : ''}`}>
+      <aside className={`sidebar sidebar-compact${isChatMode ? ' sidebar-chat-mode' : ''}`}>
+        <nav className={`nav-list${isChatMode ? ' nav-list-chat-mode' : ''}`} aria-label="主导航">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
