@@ -1,6 +1,7 @@
 import {
   createContext,
   type ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -32,18 +33,37 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
+const previewUser: AuthUser = {
+  id: 'local-preview-user',
+  email: 'preview@example.com',
+  display_name: '本地预览',
+  role: 'admin',
+  status: 'active',
+  permissions: ['accounts', 'chats', 'exports'],
+  desktop: { enabled: true, max_devices: 10 },
+  created_at: '2026-09-12T00:00:00+08:00',
+  updated_at: '2026-09-12T00:00:00+08:00',
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser>()
+  const previewMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === '1'
+  const [user, setUser] = useState<AuthUser | undefined>(previewMode ? previewUser : undefined)
   const [registrationEnabled, setRegistrationEnabled] = useState(false)
   const [environment, setEnvironment] = useState<string>()
   const [loading, setLoading] = useState(true)
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
+    if (previewMode) {
+      setUser(previewUser)
+      setRegistrationEnabled(false)
+      setEnvironment('local-preview')
+      return
+    }
     const response = await getAuthSession()
     setUser(response.authenticated ? response.user : undefined)
     setRegistrationEnabled(response.registration_enabled)
     setEnvironment(response.environment)
-  }
+  }, [previewMode])
 
   useEffect(() => {
     let cancelled = false
@@ -51,6 +71,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async function load() {
       setLoading(true)
       try {
+        if (previewMode) {
+          setUser(previewUser)
+          setRegistrationEnabled(false)
+          setEnvironment('local-preview')
+          return
+        }
         const response = await getAuthSession()
         if (cancelled) {
           return
@@ -70,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [previewMode])
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -94,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       refresh,
     }),
-    [environment, loading, registrationEnabled, user],
+    [environment, loading, refresh, registrationEnabled, user],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -12,6 +12,7 @@ import {
   startPairing,
   subscribeLiveUpdates,
   type AccountView,
+  type AccountStatus,
   type LocalProxyView,
   type PairingMethod,
 } from '../api/client'
@@ -25,7 +26,97 @@ const initialForm = {
   platformLabel: '',
 }
 
+const mockProxyBindings: Record<string, string> = {
+  'mock-account-7': 'mock-proxy-1',
+  'mock-account-6': 'mock-proxy-1',
+  'mock-account-5': 'mock-proxy-2',
+  'mock-account-4': 'mock-proxy-2',
+  'mock-account-3': 'mock-proxy-3',
+}
+
+const mockProxies: LocalProxyView[] = [
+  {
+    id: 'mock-proxy-1',
+    name: '印尼静态 01',
+    scheme: 'socks5',
+    host: 'id-static.example.com',
+    port: 50014,
+    country: '印度尼西亚',
+    exit_ip: '45.198.228.105',
+    enabled: true,
+    last_checked_at: '2026-09-12T13:40:00+08:00',
+    has_credentials: true,
+    route_mode: 'auto',
+    created_at: '2026-08-20T09:00:00+08:00',
+    updated_at: '2026-09-12T13:40:00+08:00',
+  },
+  {
+    id: 'mock-proxy-2',
+    name: '印尼静态 02',
+    scheme: 'socks5',
+    host: 'id-static-02.example.com',
+    port: 50015,
+    country: '印度尼西亚',
+    exit_ip: '45.198.138.32',
+    enabled: true,
+    last_checked_at: '2026-09-12T13:39:00+08:00',
+    has_credentials: true,
+    route_mode: 'auto',
+    created_at: '2026-08-20T09:00:00+08:00',
+    updated_at: '2026-09-12T13:39:00+08:00',
+  },
+  {
+    id: 'mock-proxy-3',
+    name: '美国静态 01',
+    scheme: 'socks5',
+    host: 'us-static.example.com',
+    port: 6688,
+    country: '美国',
+    exit_ip: '178.93.218.53',
+    enabled: true,
+    last_checked_at: '2026-09-12T13:38:00+08:00',
+    has_credentials: true,
+    route_mode: 'direct',
+    created_at: '2026-08-20T09:00:00+08:00',
+    updated_at: '2026-09-12T13:38:00+08:00',
+  },
+]
+
+const mockAccountSeeds: Array<[string, string, string, string, AccountStatus]> = [
+  ['mock-account-7', '售后服务群', '8613800000007', '售后 1 号机', 'connected'],
+  ['mock-account-6', '印尼运营群', '6281372396886', '印尼运营', 'connected'],
+  ['mock-account-5', '重点客户群', '120363144038483', '重点客户', 'connected'],
+  ['mock-account-4', '客服测试号', '8613800000004', '夜班客服', 'connected'],
+  ['mock-account-3', '营销备用号', '8613800000003', '营销备用', 'connected'],
+  ['mock-account-2', '内容发布号', '8613800000002', '内容发布', 'reconnecting'],
+  ['mock-account-1', '新建测试号', '8613800000001', '待配对', 'pending'],
+  ...Array.from({ length: 15 }, (_, index) => [
+    `mock-account-extra-${index + 1}`,
+    `备用客服号 ${String(index + 1).padStart(2, '0')}`,
+    `861380000${String(index + 10).padStart(3, '0')}`,
+    index % 2 === 0 ? '客服备用' : '运营备用',
+    index % 5 === 0 ? 'reconnecting' : 'connected',
+  ] as [string, string, string, string, AccountStatus]),
+]
+
+const mockAccounts: AccountView[] = mockAccountSeeds.map(([id, displayName, phoneNumber, platformLabel, status], index) => ({
+  id,
+  display_name: displayName,
+  phone_number: phoneNumber,
+  platform_label: platformLabel,
+  status,
+  last_seen_at: `2026-09-12T13:${String(42 - index).padStart(2, '0')}:00+08:00`,
+  created_at: '2026-08-25T23:25:00+08:00',
+  updated_at: `2026-09-12T13:${String(42 - index).padStart(2, '0')}:00+08:00`,
+  session: {
+    status,
+    updated_at: `2026-09-12T13:${String(42 - index).padStart(2, '0')}:00+08:00`,
+    connected_at: status === 'connected' ? '2026-08-25T23:30:00+08:00' : undefined,
+  },
+}))
+
 export function AccountsPage() {
+  const mockMode = new URLSearchParams(window.location.search).get('mock') === '1'
   const [accounts, setAccounts] = useState<AccountView[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<string>()
   const [loading, setLoading] = useState(true)
@@ -46,22 +137,46 @@ export function AccountsPage() {
   const [loadingAccountProxy, setLoadingAccountProxy] = useState(false)
   const [savingAccountProxy, setSavingAccountProxy] = useState(false)
   const [localExitIP, setLocalExitIP] = useState('')
-  const [localExitIPLoading, setLocalExitIPLoading] = useState(true)
+  const [modal, setModal] = useState<'create' | 'account'>()
+  const [createFlowAccountId, setCreateFlowAccountId] = useState<string>()
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) ?? accounts[0]
-  const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
+  const isDesktopRuntime = mockMode || Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
   const selectedProxy = localProxies.find((item) => item.id === selectedProxyID)
   const localTestModeSelected = Boolean(selectedAccount?.id && localTestAccounts[selectedAccount.id] && !selectedProxyID)
   const selectedProxyReady = Boolean(
     selectedProxy?.enabled && selectedProxy.last_checked_at && !selectedProxy.last_check_error,
   )
   const pairingBlocked = Boolean(
-    isDesktopRuntime && (!selectedProxyID ? !localTestModeSelected : !selectedProxyReady),
+    !mockMode && isDesktopRuntime && (!selectedProxyID ? !localTestModeSelected : !selectedProxyReady),
   )
   const selectedBusyAction = busyAction && busyAction.accountId === selectedAccount?.id ? busyAction.method : undefined
   const isSelectedAccountBusy = selectedBusyAction !== undefined
 
+  useEffect(() => {
+    const account = createFlowAccountId ? accounts.find((item) => item.id === createFlowAccountId) : undefined
+    if (modal !== 'create' || !account || account.status !== 'connected') {
+      return undefined
+    }
+
+    const timer = window.setTimeout(() => {
+      setModal(undefined)
+      setCreateFlowAccountId(undefined)
+      setNotice(undefined)
+    }, 450)
+
+    return () => window.clearTimeout(timer)
+  }, [accounts, createFlowAccountId, modal])
+
   const loadAccounts = useCallback(async (preferredAccountId?: string, background = false) => {
+    if (mockMode) {
+      setAccounts(mockAccounts)
+      setSelectedAccountId((current) => preferredAccountId ?? current ?? mockAccounts[0]?.id)
+      setAccountProxyIDs(mockProxyBindings)
+      accountProxyIDsRef.current = mockProxyBindings
+      setLoading(false)
+      return
+    }
     if (!background) {
       setLoading(true)
     }
@@ -113,7 +228,7 @@ export function AccountsPage() {
         setLoading(false)
       }
     }
-  }, [])
+  }, [mockMode])
 
   useEffect(() => {
     void loadAccounts()
@@ -121,6 +236,13 @@ export function AccountsPage() {
 
   useEffect(() => {
     let cancelled = false
+
+    if (mockMode) {
+      setLocalExitIP('45.198.228.105')
+      return () => {
+        cancelled = true
+      }
+    }
 
     async function loadLocalExitIP() {
       try {
@@ -131,10 +253,6 @@ export function AccountsPage() {
       } catch {
         if (!cancelled) {
           setLocalExitIP('')
-        }
-      } finally {
-        if (!cancelled) {
-          setLocalExitIPLoading(false)
         }
       }
     }
@@ -148,10 +266,18 @@ export function AccountsPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [])
+  }, [mockMode])
 
   useEffect(() => {
     let cancelled = false
+
+    if (mockMode) {
+      setLocalProxies(mockProxies)
+      return () => {
+        cancelled = true
+      }
+    }
+
     async function loadProxyPool() {
       try {
         const response = await listLocalProxies()
@@ -168,7 +294,7 @@ export function AccountsPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [mockMode])
 
   useEffect(() => {
     if (!selectedAccount?.id) {
@@ -176,6 +302,14 @@ export function AccountsPage() {
       return
     }
     let cancelled = false
+    if (mockMode) {
+      const proxyID = mockProxyBindings[selectedAccount.id] ?? ''
+      setSelectedProxyID(proxyID)
+      setLoadingAccountProxy(false)
+      return () => {
+        cancelled = true
+      }
+    }
     setLoadingAccountProxy(true)
     void getAccountProxy(selectedAccount.id)
       .then((response) => {
@@ -199,21 +333,27 @@ export function AccountsPage() {
     return () => {
       cancelled = true
     }
-  }, [selectedAccount?.id])
+  }, [mockMode, selectedAccount?.id])
 
   useEffect(() => {
+    if (mockMode) {
+      return undefined
+    }
     const timer = window.setInterval(() => {
       void loadAccounts(undefined, true)
     }, 4000)
 
     return () => window.clearInterval(timer)
-  }, [loadAccounts])
+  }, [loadAccounts, mockMode])
 
   useEffect(() => {
+    if (mockMode) {
+      return undefined
+    }
     return subscribeLiveUpdates(() => {
       void loadAccounts(undefined, true)
     })
-  }, [loadAccounts])
+  }, [loadAccounts, mockMode])
 
   useEffect(() => {
     let cancelled = false
@@ -258,6 +398,24 @@ export function AccountsPage() {
     setError(undefined)
 
     try {
+      if (mockMode) {
+        const mockAccount: AccountView = {
+          id: `mock-account-${Date.now()}`,
+          display_name: form.displayName.trim() || '新建模拟账号',
+          phone_number: form.phoneNumber.trim() || undefined,
+          platform_label: form.platformLabel.trim() || undefined,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          session: { status: 'pending', updated_at: new Date().toISOString() },
+        }
+        setAccounts((current) => [mockAccount, ...current])
+        setSelectedAccountId(mockAccount.id)
+        setCreateFlowAccountId(mockAccount.id)
+        setForm(initialForm)
+        setNotice('模拟账号已创建（仅用于本地预览）')
+        return
+      }
       const response = await createAccount({
         display_name: form.displayName.trim(),
         phone_number: form.phoneNumber.trim() || undefined,
@@ -266,6 +424,7 @@ export function AccountsPage() {
 
       setForm(initialForm)
       await loadAccounts(response.account.id)
+      setCreateFlowAccountId(response.account.id)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '创建账号失败')
     } finally {
@@ -279,6 +438,12 @@ export function AccountsPage() {
     setError(undefined)
     setNotice(undefined)
     try {
+      if (mockMode) {
+        setSelectedProxyID(value)
+        setAccountProxyIDs((current) => ({ ...current, [selectedAccount.id]: value }))
+        setNotice(value ? '模拟代理已切换（仅用于本地预览）' : '已切换为本机网络（仅用于本地预览）')
+        return
+      }
       await setAccountProxy(selectedAccount.id, value)
       setSelectedProxyID(value)
       if (!value) {
@@ -301,6 +466,43 @@ export function AccountsPage() {
     setError(undefined)
 
     try {
+      if (mockMode) {
+        if (method === 'delete') {
+          setAccounts((current) => current.filter((account) => account.id !== accountId))
+          setSelectedAccountId(undefined)
+          if (createFlowAccountId === accountId) {
+            setModal(undefined)
+            setCreateFlowAccountId(undefined)
+          }
+          setNotice('模拟账号已删除（仅用于本地预览）')
+        } else if (method === 'qr' || method === 'pairing_code') {
+          const now = new Date()
+          const pairing = {
+            method,
+            qr_code: method === 'qr' ? `mock-pairing-${accountId}-${Date.now()}` : undefined,
+            pairing_code: method === 'pairing_code' ? '481 726 395' : undefined,
+            instruction: method === 'qr' ? '请用 WhatsApp 扫描二维码完成连接' : '请在 WhatsApp 中输入这组配对码',
+            expires_at: new Date(now.getTime() + 120000).toISOString(),
+          }
+          setAccounts((current) => current.map((account) => (
+            account.id === accountId
+              ? { ...account, status: 'pairing', updated_at: now.toISOString(), session: { ...account.session, status: 'pairing', updated_at: now.toISOString(), pairing } }
+              : account
+          )))
+          setNotice('模拟配对内容已生成（仅用于本地预览）')
+          window.setTimeout(() => {
+            const connectedAt = new Date().toISOString()
+            setAccounts((current) => current.map((account) => (
+              account.id === accountId
+                ? { ...account, status: 'connected', last_seen_at: connectedAt, updated_at: connectedAt, session: { status: 'connected', updated_at: connectedAt, connected_at: connectedAt } }
+                : account
+            )))
+          }, 1800)
+        } else {
+          setNotice(`模拟${method === 'logout' ? '退出登录' : '配对操作'}已触发（仅用于本地预览）`)
+        }
+        return
+      }
       if (method === 'delete') {
         const account = accounts.find((item) => item.id === accountId)
         const name = account?.display_name ?? accountId
@@ -331,111 +533,182 @@ export function AccountsPage() {
     }
   }
 
+  const modalAccount = createFlowAccountId
+    ? accounts.find((account) => account.id === createFlowAccountId)
+    : selectedAccount
+  const modalProxyID = modalAccount
+    ? modalAccount.id === selectedAccount?.id
+      ? selectedProxyID
+      : accountProxyIDs[modalAccount.id] ?? ''
+    : ''
+  const modalProxy = localProxies.find((proxy) => proxy.id === modalProxyID)
+
+  function closeModal() {
+    setModal(undefined)
+    setCreateFlowAccountId(undefined)
+    setError(undefined)
+  }
+
+  function openCreateModal() {
+    setForm(initialForm)
+    setSelectedAccountId(undefined)
+    setCreateFlowAccountId(undefined)
+    setNotice(undefined)
+    setError(undefined)
+    setModal('create')
+  }
+
+  function openAccountModal(accountId: string) {
+    setSelectedAccountId(accountId)
+    setCreateFlowAccountId(undefined)
+    setNotice(undefined)
+    setError(undefined)
+    setModal('account')
+  }
+
   return (
-    <div className="page page-accounts">
-      <section className="page-top-grid accounts-top-grid">
-        <article className="panel panel-stretch">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">第一步</p>
-              <h3>创建账号卡片</h3>
-            </div>
-            <span className="subtle-text">先建卡，再配对</span>
+    <div className="page page-accounts accounts-page-modern accounts-page-redesign">
+      <header className="accounts-page-header">
+        <div>
+          <p className="eyebrow">账号管理</p>
+          <h1>WhatsApp 账号</h1>
+          <p className="accounts-page-subtitle">每个账号独立管理连接状态与网络出口</p>
+        </div>
+        <button className="primary-button accounts-create-button" type="button" onClick={openCreateModal}>
+          <Icon name="plus" />
+          创建账号
+        </button>
+      </header>
+
+      {notice ? <div className="success-banner accounts-feedback">{notice}</div> : null}
+      {error ? <div className="error-banner accounts-feedback">{error}</div> : null}
+
+      <section className="panel account-list-panel account-list-panel-redesign">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">账号列表</p>
+            <h3>已配置账号</h3>
           </div>
+          <span className="subtle-text">{loading ? '正在读取...' : `共 ${accounts.length} 个账号`}</span>
+        </div>
 
-          <form className="form-grid" onSubmit={handleCreateAccount}>
-            <label className="field">
-              <span>账号名称</span>
-              <input
-                value={form.displayName}
-                onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))}
-                placeholder="例如：售后 1 号机"
-                required
-              />
-            </label>
-
-            <label className="field">
-              <span>手机号</span>
-              <input
-                value={form.phoneNumber}
-                onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
-                placeholder="配对码模式建议填写国际格式，例如 86138..."
-              />
-            </label>
-
-            <label className="field">
-              <span>内部标签</span>
-              <input
-                value={form.platformLabel}
-                onChange={(event) => setForm((current) => ({ ...current, platformLabel: event.target.value }))}
-                placeholder="例如：深圳门店 / 夜班"
-              />
-            </label>
-
-            <button className="primary-button" type="submit" disabled={submitting}>
-              <Icon name="plus" />
-              {submitting ? '正在创建...' : '创建账号'}
-            </button>
-          </form>
-
-        </article>
-
-        <article className="panel panel-stretch">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">第二步</p>
-              <h3>账号状态与配对信息</h3>
+        {accounts.length > 0 ? (
+          <div className="account-list-scroll account-list-scroll-vertical">
+            <div className="account-card-grid account-card-grid-vertical">
+              {accounts.map((account) => {
+                const proxy = localProxies.find((item) => item.id === accountProxyIDs[account.id])
+                return (
+                  <button
+                    key={account.id}
+                    type="button"
+                    className="account-card account-card-redesign"
+                    onClick={() => openAccountModal(account.id)}
+                  >
+                    <div className="account-card-header">
+                      <strong>{account.display_name}</strong>
+                      <StatusBadge status={account.session?.status ?? account.status} />
+                    </div>
+                    <p>{account.platform_label ?? '未填写内部标签'}</p>
+                    <dl className="account-card-details">
+                      <div>
+                        <dt>手机号</dt>
+                        <dd>{account.phone_number ?? '未填写'}</dd>
+                      </div>
+                      <div>
+                        <dt>出口 IP</dt>
+                        <dd>{proxy?.exit_ip ?? '本机网络'}</dd>
+                      </div>
+                    </dl>
+                    <div className="account-card-footer">
+                      <small>{formatDateTime(account.session?.updated_at ?? account.updated_at)}</small>
+                      <span>查看详情 <Icon name="chevronRight" /></span>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
-            <span className="subtle-text">{selectedAccount ? selectedAccount.display_name : '未选择账号'}</span>
           </div>
+        ) : (
+          <EmptyPanel title="还没有账号" description="点击右上角“创建账号”开始配置。" />
+        )}
+      </section>
 
-          {selectedAccount ? (
-            <div className="account-detail-workbench">
-              <div className="detail-card account-summary-card">
-                <div className="detail-card-header">
+      {modal ? (
+        <div className="account-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeModal()}>
+          <section className="account-modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
+            <header className="account-modal-header">
+              <div>
+                <p className="eyebrow">{modal === 'create' ? '新建账号' : '账号详情'}</p>
+                <h2 id="account-modal-title">{modal === 'create' && !createFlowAccountId ? '创建账号' : modalAccount?.display_name}</h2>
+              </div>
+              <button className="secondary-button account-modal-close" type="button" onClick={closeModal}>关闭</button>
+            </header>
+
+            {modal === 'create' && !createFlowAccountId ? (
+              <form className="account-create-form" onSubmit={handleCreateAccount}>
+                <label className="field">
+                  <span>账号名称</span>
+                  <input
+                    value={form.displayName}
+                    onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))}
+                    placeholder="例如：售后 1 号机"
+                    required
+                    autoFocus
+                  />
+                </label>
+                <label className="field">
+                  <span>手机号</span>
+                  <input
+                    value={form.phoneNumber}
+                    onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
+                    placeholder="配对码模式建议填写国际格式，例如 86138..."
+                  />
+                </label>
+                <label className="field">
+                  <span>内部标签</span>
+                  <input
+                    value={form.platformLabel}
+                    onChange={(event) => setForm((current) => ({ ...current, platformLabel: event.target.value }))}
+                    placeholder="例如：深圳门店 / 夜班"
+                  />
+                </label>
+                <div className="account-modal-actions">
+                  <button className="primary-button" type="submit" disabled={submitting}>
+                    <Icon name="plus" />
+                    {submitting ? '正在创建...' : '创建并继续配对'}
+                  </button>
+                </div>
+              </form>
+            ) : modalAccount ? (
+              <div className="account-modal-body">
+                <div className="account-modal-account-head">
                   <div>
-                    <h4>{selectedAccount.display_name}</h4>
-                    <p>{selectedAccount.platform_label ?? '未填写内部标签'}</p>
+                    <strong>{modalAccount.platform_label ?? '未填写内部标签'}</strong>
+                    <span>{modalAccount.phone_number ?? '未填写手机号'}</span>
                   </div>
-                  <StatusBadge status={selectedAccount.session?.status ?? selectedAccount.status} />
+                  <StatusBadge status={modalAccount.session?.status ?? modalAccount.status} />
                 </div>
 
-                <dl className="detail-grid">
-                  <div>
-                    <dt>手机号</dt>
-                    <dd>{selectedAccount.phone_number ?? '未填写'}</dd>
-                  </div>
-                  <div>
-                    <dt>最近状态时间</dt>
-                    <dd>{formatDateTime(selectedAccount.session?.updated_at ?? selectedAccount.updated_at)}</dd>
-                  </div>
-                  <div>
-                    <dt>最后在线</dt>
-                    <dd>{formatDateTime(selectedAccount.last_seen_at)}</dd>
-                  </div>
-                  <div>
-                    <dt>创建时间</dt>
-                    <dd>{formatDateTime(selectedAccount.created_at)}</dd>
-                  </div>
+                <dl className="account-modal-info">
+                  <div><dt>最近状态</dt><dd>{formatDateTime(modalAccount.session?.updated_at ?? modalAccount.updated_at)}</dd></div>
+                  <div><dt>最后在线</dt><dd>{formatDateTime(modalAccount.last_seen_at)}</dd></div>
+                  <div><dt>账号出口</dt><dd>{modalProxy?.exit_ip ?? (localExitIP || '本机网络')}</dd></div>
+                  <div><dt>连接路径</dt><dd>{modalProxy ? routeModeLabel(modalProxy.route_mode) : '本机网络'}</dd></div>
                 </dl>
 
                 {isDesktopRuntime ? (
-                  <div className="desktop-network-card account-proxy-card">
+                  <div className="desktop-network-card account-modal-network">
                     <div className="desktop-network-head">
                       <div>
-                        <strong>当前账号网络</strong>
-                        <span>{selectedProxy ? `只修改“${selectedAccount.display_name}”，不会影响其他账号` : '当前未绑定独立代理，使用本机网络'}</span>
+                        <strong>网络出口</strong>
+                        <span>只修改当前账号，不会影响其他账号</span>
                       </div>
-                      <strong className={`account-exit-ip${selectedProxy?.last_check_error ? ' account-exit-ip-error' : ''}`}>
-                        {selectedProxy
-                          ? (selectedProxy.last_check_error ? '代理检测失败' : selectedProxy.exit_ip ?? '出口未返回')
-                          : (localExitIP || (localExitIPLoading ? '获取中...' : '未返回'))}
-                      </strong>
+                      <strong className="account-exit-ip">{modalProxy?.exit_ip ?? (localExitIP || '未返回')}</strong>
                     </div>
                     <label className="field compact-field">
-                      <span>为此账号选择网络出口</span>
+                      <span>选择网络出口</span>
                       <select
-                        value={selectedProxyID}
+                        value={modalProxyID}
                         disabled={loadingAccountProxy || savingAccountProxy}
                         onChange={(event) => void handleSaveAccountProxy(event.target.value)}
                       >
@@ -447,146 +720,47 @@ export function AccountsPage() {
                         ))}
                       </select>
                     </label>
-                    <div className="account-proxy-meta">
-                      <span>账号出口 IP</span>
-                      <strong>{selectedProxy?.exit_ip ?? (localExitIP || (localExitIPLoading ? '获取中...' : '未返回'))}</strong>
-                      <span>连接路径</span>
-                      <strong>{selectedProxy ? routeModeLabel(selectedProxy.route_mode) : '本机网络'}</strong>
-                    </div>
-                    {pairingBlocked ? (
-                      <p className="field-hint account-pairing-hint">
-                        {!selectedProxyID
-                          ? '请先选择并验证账号代理；使用本机网络时，请先选择“本机网络”。'
-                          : '该代理尚未验证通过，请先到“IP代理”页面点击“检测此代理”。'}
-                      </p>
-                    ) : localTestModeSelected ? (
-                      <p className="field-hint account-pairing-hint account-pairing-hint-warning">当前使用本机网络，不能保证一号一 IP。</p>
-                    ) : null}
                   </div>
                 ) : null}
 
-                <div className="button-row">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={isSelectedAccountBusy || pairingBlocked}
-                    onClick={() => void runAccountAction(selectedAccount.id, 'qr')}
-                  >
+                {modalAccount.session?.last_error ? <div className="warning-banner">{modalAccount.session.last_error}</div> : null}
+
+                {modalAccount.session?.pairing ? (
+                  <div className="account-pairing-modal">
+                    <div>
+                      <p className="eyebrow">等待连接</p>
+                      <h3>{modalAccount.session.pairing.method === 'qr' ? '请扫码连接' : '请输入配对码'}</h3>
+                    </div>
+                    {modalAccount.session.pairing.qr_code && qrDataUrl ? <img className="pairing-qr-image" src={qrDataUrl} alt="WhatsApp 配对二维码" /> : null}
+                    <strong className="pairing-value">{modalAccount.session.pairing.qr_code ?? modalAccount.session.pairing.pairing_code}</strong>
+                    <p>{modalAccount.session.pairing.instruction}</p>
+                    <small>有效期至 {formatDateTime(modalAccount.session.pairing.expires_at)}</small>
+                  </div>
+                ) : null}
+
+                <div className="account-modal-actions account-modal-action-row">
+                  <button className="primary-button" type="button" disabled={isSelectedAccountBusy || pairingBlocked} onClick={() => void runAccountAction(modalAccount.id, 'qr')}>
                     <Icon name="qr" />
                     {selectedBusyAction === 'qr' ? '生成中...' : '二维码配对'}
                   </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={isSelectedAccountBusy || pairingBlocked}
-                    onClick={() => void runAccountAction(selectedAccount.id, 'pairing_code')}
-                  >
+                  <button className="secondary-button" type="button" disabled={isSelectedAccountBusy || pairingBlocked} onClick={() => void runAccountAction(modalAccount.id, 'pairing_code')}>
                     <Icon name="key" />
                     {selectedBusyAction === 'pairing_code' ? '生成中...' : '生成配对码'}
                   </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={isSelectedAccountBusy}
-                    onClick={() => void runAccountAction(selectedAccount.id, 'logout')}
-                  >
+                  <button className="secondary-button" type="button" disabled={isSelectedAccountBusy} onClick={() => void runAccountAction(modalAccount.id, 'logout')}>
                     <Icon name="logout" />
-                    {selectedBusyAction === 'logout' ? '退出中...' : '退出登录'}
+                    退出登录
                   </button>
-                  <button
-                    className="danger-button"
-                    type="button"
-                    disabled={isSelectedAccountBusy}
-                    onClick={() => void runAccountAction(selectedAccount.id, 'delete')}
-                  >
+                  <button className="danger-button" type="button" disabled={isSelectedAccountBusy} onClick={() => void runAccountAction(modalAccount.id, 'delete')}>
                     <Icon name="delete" />
-                    {selectedBusyAction === 'delete' ? '删除中...' : '删除账号'}
+                    删除账号
                   </button>
                 </div>
               </div>
-
-              {selectedAccount.session?.last_error ? (
-                <div className="warning-banner">{selectedAccount.session.last_error}</div>
-              ) : null}
-
-              {selectedAccount.session?.pairing ? (
-                <div className="pairing-card account-pairing-card">
-                  <p className="eyebrow">当前配对内容</p>
-                  <h4>{selectedAccount.session.pairing.method === 'qr' ? '扫码配对' : '配对码'}</h4>
-
-                  {selectedAccount.session.pairing.qr_code ? (
-                    <div className="pairing-qr-stack">
-                      {qrDataUrl ? (
-                        <img className="pairing-qr-image" src={qrDataUrl} alt="WhatsApp 配对二维码" />
-                      ) : (
-                        <p className="pairing-value">二维码生成中...</p>
-                      )}
-                    </div>
-                  ) : null}
-
-                  <p className="pairing-value">
-                    {selectedAccount.session.pairing.qr_code ??
-                      selectedAccount.session.pairing.pairing_code ??
-                      '暂时没有可展示内容'}
-                  </p>
-                  <p>{selectedAccount.session.pairing.instruction}</p>
-                  <small>有效期至 {formatDateTime(selectedAccount.session.pairing.expires_at)}</small>
-                </div>
-              ) : (
-                <EmptyPanel
-                  title="还没有配对内容"
-                  description="点击上面的二维码配对或生成配对码，这里会实时显示下一步操作。"
-                />
-              )}
-            </div>
-          ) : (
-            <EmptyPanel title="还没有选中账号" description="先创建一个账号卡片，右侧会显示状态和配对信息。" />
-          )}
-        </article>
-      </section>
-
-      <section className="panel account-list-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">账号列表</p>
-            <h3>当前可管理账号</h3>
-          </div>
-          <span className="subtle-text">{loading ? '正在读取...' : `共 ${accounts.length} 个账号`}</span>
+            ) : null}
+          </section>
         </div>
-
-        {accounts.length > 0 ? (
-          <div className="account-list-scroll">
-            <div className="account-card-grid">
-              {accounts.map((account) => (
-                <button
-                  key={account.id}
-                  type="button"
-                  className={`account-card${selectedAccount?.id === account.id ? ' selected' : ''}`}
-                  onClick={() => setSelectedAccountId(account.id)}
-                >
-                  <div className="account-card-header">
-                    <strong>{account.display_name}</strong>
-                    <StatusBadge status={account.session?.status ?? account.status} />
-                  </div>
-                  <p>{account.platform_label ?? '未填写内部标签'}</p>
-                  <span>{account.phone_number ?? '未填写手机号'}</span>
-                  <span className="account-card-proxy">
-                    {accountProxyIDs[account.id]
-                      ? `出口 ${localProxies.find((proxy) => proxy.id === accountProxyIDs[account.id])?.exit_ip ?? '未检测'}`
-                      : '本机网络 / 系统代理'}
-                  </span>
-                  <small>{formatDateTime(account.session?.updated_at ?? account.updated_at)}</small>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <EmptyPanel title="还没有账号" description="先在上面的表单里创建账号卡片。" />
-        )}
-      </section>
-
-      {notice ? <div className="success-banner">{notice}</div> : null}
-      {error ? <div className="error-banner">{error}</div> : null}
+      ) : null}
     </div>
   )
 }
