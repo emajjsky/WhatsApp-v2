@@ -10265,3 +10265,95 @@ a {
     gap: 0;
   }
 }
+
+/* Search results navigate to the original bubble and briefly mark its row. */
+.chat-message-search-result {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-message-search-result:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid #00a884;
+  outline-offset: -2px;
+}
+
+.chat-message-search-result.loading {
+  background: #e9f7f3;
+}
+
+.chat-message-search-jump-error {
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid #f6d7d4;
+  background: #fff4f2;
+  color: #b42318;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.whatsapp-chat-page .whatsapp-message-timeline {
+  overflow-x: hidden;
+  isolation: isolate;
+}
+
+.whatsapp-chat-page .whatsapp-message-card.search-highlighted {
+  z-index: 1;
+  animation: chat-search-bubble-flash 2.2s ease-out;
+}
+
+.whatsapp-chat-page .whatsapp-message-card.search-highlighted::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -6px;
+  bottom: -6px;
+  left: -100vw;
+  right: -100vw;
+  background: rgba(0, 168, 132, 0.22);
+  pointer-events: none;
+  animation: chat-search-row-flash 2.2s ease-out;
+}
+
+@keyframes chat-search-row-flash {
+  0%, 100% {
+    opacity: 0;
+  }
+  14%, 42%, 70% {
+    opacity: 1;
+  }
+  28%, 56%, 84% {
+    opacity: 0.24;
+  }
+}
+
+@keyframes chat-search-bubble-flash {
+  0%, 100% {
+    outline: 0 solid rgba(0, 168, 132, 0);
+  }
+  14%, 42%, 70% {
+    outline: 3px solid rgba(0, 128, 105, 0.52);
+  }
+  28%, 56%, 84% {
+    outline: 1px solid rgba(0, 128, 105, 0.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .whatsapp-chat-page .whatsapp-message-card.search-highlighted {
+    outline: 3px solid rgba(0, 128, 105, 0.52);
+    animation: none;
+  }
+
+  .whatsapp-chat-page .whatsapp-message-card.search-highlighted::before {
+    opacity: 1;
+    animation: none;
+  }
+}

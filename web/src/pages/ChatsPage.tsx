@@ -220,6 +220,9 @@ export function ChatsPage() {
   const [messageSearchResults, setMessageSearchResults] = useState<MessageView[]>([])
   const [messageSearchLoading, setMessageSearchLoading] = useState(false)
   const [messageSearchError, setMessageSearchError] = useState<string>()
+  const [messageJumpBusyId, setMessageJumpBusyId] = useState<string>()
+  const [messageJumpError, setMessageJumpError] = useState<string>()
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string>()
   const [selectedChatId, setSelectedChatId] = useState<string>()
   const [history, setHistory] = useState<MessageHistoryResponse>()
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -272,6 +275,10 @@ export function ChatsPage() {
   const chatSearchRef = useRef<HTMLInputElement>(null)
   const assistantPanelBeforeSearchRef = useRef<boolean | undefined>(undefined)
   const messageSearchRequestSeqRef = useRef(0)
+  const messageJumpRequestSeqRef = useRef(0)
+  const pendingJumpMessageIdRef = useRef<string | undefined>(undefined)
+  const messageHighlightTimerRef = useRef<number | undefined>(undefined)
+  const messageElementRefs = useRef<Map<string, HTMLElement>>(new Map())
   const documentInputRef = useRef<HTMLInputElement>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -306,16 +313,37 @@ export function ChatsPage() {
 
   const closeMessageSearch = useCallback(() => {
     messageSearchRequestSeqRef.current += 1
+    messageJumpRequestSeqRef.current += 1
     setMessageSearchOpen(false)
     setMessageSearch('')
     setMessageSearchResults([])
     setMessageSearchError(undefined)
     setMessageSearchLoading(false)
+    setMessageJumpBusyId(undefined)
+    setMessageJumpError(undefined)
     const previousCollapsed = assistantPanelBeforeSearchRef.current
     if (typeof previousCollapsed === 'boolean') {
       setAssistantPanelCollapsed(previousCollapsed)
       assistantPanelBeforeSearchRef.current = undefined
     }
+  }, [])
+
+  const scrollToMessage = useCallback((messageId: string) => {
+    const messageElement = messageElementRefs.current.get(messageId)
+    if (!messageElement) {
+      return false
+    }
+
+    messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setHighlightedMessageId(messageId)
+    if (messageHighlightTimerRef.current !== undefined) {
+      window.clearTimeout(messageHighlightTimerRef.current)
+    }
+    messageHighlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedMessageId((current) => current === messageId ? undefined : current)
+      messageHighlightTimerRef.current = undefined
+    }, 2200)
+    return true
   }, [])
 
   const scrollTimelineToBottom = useCallback(() => {
@@ -842,10 +870,15 @@ export function ChatsPage() {
 
   useEffect(() => {
     messageSearchRequestSeqRef.current += 1
+    messageJumpRequestSeqRef.current += 1
+    pendingJumpMessageIdRef.current = undefined
     setMessageSearchResults([])
     setMessageSearchError(undefined)
     setMessageSearchLoading(false)
     setMessageSearch('')
+    setMessageJumpBusyId(undefined)
+    setMessageJumpError(undefined)
+    setHighlightedMessageId(undefined)
   }, [selectedChatId])
 
   useEffect(() => {
@@ -862,6 +895,7 @@ export function ChatsPage() {
     const requestChatId = selectedChatId
     setMessageSearchLoading(true)
     setMessageSearchError(undefined)
+    setMessageJumpError(undefined)
 
     void searchChatMessages(requestChatId, query).then((response) => {
       if (messageSearchRequestSeqRef.current !== requestSeq || selectedChatId !== requestChatId) {
@@ -880,6 +914,26 @@ export function ChatsPage() {
       }
     })
   }, [deferredMessageSearch, messageSearchOpen, selectedChatId])
+
+  useEffect(() => {
+    const pendingMessageId = pendingJumpMessageIdRef.current
+    if (!pendingMessageId) {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      if (scrollToMessage(pendingMessageId)) {
+        pendingJumpMessageIdRef.current = undefined
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [history, scrollToMessage])
+
+  useEffect(() => () => {
+    if (messageHighlightTimerRef.current !== undefined) {
+      window.clearTimeout(messageHighlightTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (!messageSearchOpen) {
@@ -1149,6 +1203,63 @@ export function ChatsPage() {
       setError(loadError instanceof Error ? loadError.message : '加载更早消息失败')
     } finally {
       setHistoryLoading(false)
+    }
+  }
+
+  async function handleJumpToSearchMessage(message: MessageView) {
+    if (!selectedChatId || !history || history.chat.id !== selectedChatId || message.chat_id !== selectedChatId) {
+      return
+    }
+
+    messageJumpRequestSeqRef.current += 1
+    setMessageJumpError(undefined)
+    if (scrollToMessage(message.id)) {
+      setMessageJumpBusyId(undefined)
+      return
+    }
+
+    const requestSeq = messageJumpRequestSeqRef.current
+    const requestChatId = selectedChatId
+    const targetTime = new Date(message.sent_at)
+    if (Number.isNaN(targetTime.getTime())) {
+      setMessageJumpError('这条消息的时间信息无效，暂时无法定位')
+      return
+    }
+
+    targetTime.setMilliseconds(targetTime.getMilliseconds() + 1)
+    setMessageJumpBusyId(message.id)
+    try {
+      const response = await getChatMessages(requestChatId, {
+        limit: 100,
+        before: targetTime.toISOString(),
+      })
+      if (messageJumpRequestSeqRef.current !== requestSeq || activeAssistantChatIdRef.current !== requestChatId) {
+        return
+      }
+
+      pendingScrollModeRef.current = 'none'
+      pendingJumpMessageIdRef.current = message.id
+      setHistory((current) => {
+        if (!current || current.chat.id !== requestChatId || response.chat.id !== requestChatId) {
+          return current
+        }
+        return {
+          ...current,
+          chat: response.chat,
+          messages: mergeMessagesChronologically(current.messages, response.messages, [message]),
+          limit: response.limit,
+          has_more: response.has_more,
+          next_before: response.next_before,
+        }
+      })
+    } catch (jumpError) {
+      if (messageJumpRequestSeqRef.current === requestSeq) {
+        setMessageJumpError(jumpError instanceof Error ? jumpError.message : '加载目标消息失败')
+      }
+    } finally {
+      if (messageJumpRequestSeqRef.current === requestSeq) {
+        setMessageJumpBusyId(undefined)
+      }
     }
   }
 
@@ -2368,6 +2479,9 @@ export function ChatsPage() {
                     />
                   </label>
                   <div className="chat-message-search-results">
+                    {messageJumpError ? (
+                      <p className="chat-message-search-jump-error">{messageJumpError}</p>
+                    ) : null}
                     {!messageSearch.trim() ? (
                       <p className="chat-message-search-empty">输入关键词搜索当前会话消息</p>
                     ) : messageSearchLoading ? (
@@ -2376,13 +2490,20 @@ export function ChatsPage() {
                       <p className="chat-message-search-empty error-text">{messageSearchError}</p>
                     ) : messageSearchResults.length ? (
                       messageSearchResults.map((message) => (
-                        <article className="chat-message-search-result" key={message.id}>
+                        <button
+                          className={`chat-message-search-result${messageJumpBusyId === message.id ? ' loading' : ''}`}
+                          key={message.id}
+                          type="button"
+                          onClick={() => void handleJumpToSearchMessage(message)}
+                          aria-busy={messageJumpBusyId === message.id}
+                          aria-label={`定位消息：${message.text_content?.trim() || fallbackMessageCopy(message.message_type)}`}
+                        >
                           <div>
                             <strong>{message.from_me ? '你' : getMessageSenderName(message)}</strong>
                             <time dateTime={message.sent_at}>{formatMessageDateTime(message.sent_at)}</time>
                           </div>
-                          <p>{message.text_content?.trim() || fallbackMessageCopy(message.message_type)}</p>
-                        </article>
+                          <p>{messageJumpBusyId === message.id ? '正在定位消息...' : message.text_content?.trim() || fallbackMessageCopy(message.message_type)}</p>
+                        </button>
                       ))
                     ) : (
                       <p className="chat-message-search-empty">没有找到消息</p>
@@ -2481,7 +2602,14 @@ export function ChatsPage() {
                   return (
                     <article
                       key={message.id}
-                      className={`message-card whatsapp-message-card${message.from_me ? ' own' : ''}${hasMedia ? ' media-message' : ''}`}
+                      ref={(element) => {
+                        if (element) {
+                          messageElementRefs.current.set(message.id, element)
+                        } else {
+                          messageElementRefs.current.delete(message.id)
+                        }
+                      }}
+                      className={`message-card whatsapp-message-card${message.from_me ? ' own' : ''}${hasMedia ? ' media-message' : ''}${highlightedMessageId === message.id ? ' search-highlighted' : ''}`}
                     >
                       {!message.from_me ? (
                         <div className="message-meta">
@@ -3899,6 +4027,22 @@ function isSameLocalDate(left: Date, right: Date) {
   return left.getFullYear() === right.getFullYear()
     && left.getMonth() === right.getMonth()
     && left.getDate() === right.getDate()
+}
+
+function mergeMessagesChronologically(...messageGroups: MessageView[][]) {
+  const messagesByKey = new Map<string, MessageView>()
+  for (const messages of messageGroups) {
+    for (const message of messages) {
+      const waMessageID = message.wa_message_id?.trim()
+      const key = waMessageID ? `wa:${waMessageID}` : `id:${message.id}`
+      messagesByKey.set(key, message)
+    }
+  }
+
+  return [...messagesByKey.values()].sort((left, right) => {
+    const timeDifference = new Date(left.sent_at).getTime() - new Date(right.sent_at).getTime()
+    return timeDifference || left.id.localeCompare(right.id)
+  })
 }
 
 function compareChatLabels(left: ChatLabel, right: ChatLabel) {
