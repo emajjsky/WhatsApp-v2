@@ -16,7 +16,16 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.60`.
+Current packaging version: `0.1.61`.
+
+## 0.1.61 Conversation navigation persistence
+
+- Restore the previously selected WhatsApp account and conversation after
+  navigating to another module and returning to the chat workspace.
+- Remember the last opened conversation independently for each account,
+  including the active filters and conversation search query.
+- Fall back safely when a stored account, conversation, or custom list no
+  longer exists.
 
 ## 0.1.60 Admin navigation visibility fix
 

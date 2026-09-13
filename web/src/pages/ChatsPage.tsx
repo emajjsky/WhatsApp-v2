@@ -102,6 +102,15 @@ type ChatContextMenuState = {
 
 type ChatPrimaryFilter = 'all' | 'unread' | 'groups' | 'favorites'
 
+type StoredChatNavigation = {
+  accountId: string
+  chatIdsByAccount: Record<string, string>
+  chatView: 'active' | 'archived' | 'unread'
+  chatType: ChatType | ''
+  labelId: string
+  search: string
+}
+
 type AttachmentAction =
   | 'document'
   | 'media'
@@ -148,6 +157,7 @@ const chatSidebarWidthStorageKey = 'whatsapp.chatSidebarWidth.v1'
 const assistantPanelCollapsedStorageKey = 'whatsapp.assistantPanelCollapsed.v1'
 const assistantReplyRatioStorageKey = 'whatsapp.assistantReplyRatio.v1'
 const assistantPanelWidthStorageKey = 'whatsapp.assistantPanelWidth.v1'
+const chatNavigationStorageKey = 'whatsapp.chatNavigation.v1'
 const defaultChatSidebarWidth = 280
 const minChatSidebarWidth = 240
 const minChatMainWidth = 320
@@ -185,14 +195,26 @@ export function ChatsPage() {
   const [searchParams] = useSearchParams()
   const requestedAccountId = searchParams.get('account_id')?.trim() ?? ''
   const requestedChatId = searchParams.get('chat_id')?.trim() ?? ''
+  const [initialNavigation] = useState(readStoredChatNavigation)
+  const initialAccountId = requestedAccountId || initialNavigation.accountId
+  const initialChatId = requestedChatId || initialNavigation.chatIdsByAccount[initialAccountId]
+  const restoreStoredFilters = !requestedChatId
   const requestedChatIdRef = useRef(requestedChatId)
+  const chatNavigationRef = useRef(initialNavigation)
+  const shouldRevealRestoredChatRef = useRef(Boolean(initialChatId))
   const [accounts, setAccounts] = useState<AccountView[]>([])
   const [chats, setChats] = useState<ChatSummary[]>([])
-  const [selectedAccountId, setSelectedAccountId] = useState('')
-  const [selectedChatType, setSelectedChatType] = useState<ChatType | ''>('')
-  const [chatView, setChatView] = useState<'active' | 'archived' | 'unread'>('active')
+  const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId)
+  const [selectedChatType, setSelectedChatType] = useState<ChatType | ''>(
+    restoreStoredFilters ? initialNavigation.chatType : '',
+  )
+  const [chatView, setChatView] = useState<'active' | 'archived' | 'unread'>(
+    restoreStoredFilters ? initialNavigation.chatView : 'active',
+  )
   const [chatLabels, setChatLabels] = useState<ChatLabel[]>([])
-  const [selectedLabelId, setSelectedLabelId] = useState('')
+  const [selectedLabelId, setSelectedLabelId] = useState(
+    restoreStoredFilters ? initialNavigation.labelId : '',
+  )
   const [chatFilterCounts, setChatFilterCounts] = useState({ unread: 0, groups: 0, favorites: 0 })
   const [chatMetadataBusy, setChatMetadataBusy] = useState(false)
   const [chatNote, setChatNote] = useState('')
@@ -213,7 +235,7 @@ export function ChatsPage() {
   const [assistantPanelCollapsed, setAssistantPanelCollapsed] = useState(readStoredAssistantPanelCollapsed)
   const [assistantPanelWidth, setAssistantPanelWidth] = useState(readStoredAssistantPanelWidth)
   const [assistantReplyRatio, setAssistantReplyRatio] = useState(readStoredAssistantReplyRatio)
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(restoreStoredFilters ? initialNavigation.search : '')
   const deferredSearch = useDeferredValue(search)
   const [messageSearchOpen, setMessageSearchOpen] = useState(false)
   const [messageSearch, setMessageSearch] = useState('')
@@ -228,7 +250,7 @@ export function ChatsPage() {
   const [messageJumpBusyId, setMessageJumpBusyId] = useState<string>()
   const [messageJumpError, setMessageJumpError] = useState<string>()
   const [highlightedMessageId, setHighlightedMessageId] = useState<string>()
-  const [selectedChatId, setSelectedChatId] = useState<string>()
+  const [selectedChatId, setSelectedChatId] = useState<string | undefined>(initialChatId || undefined)
   const [history, setHistory] = useState<MessageHistoryResponse>()
   const [historyLoading, setHistoryLoading] = useState(false)
   const [sendingByChatId, setSendingByChatId] = useState<Record<string, boolean>>({})
@@ -278,6 +300,7 @@ export function ChatsPage() {
   const statusCardPanelRef = useRef<HTMLElement>(null)
   const listMenuRef = useRef<HTMLDivElement>(null)
   const chatSearchRef = useRef<HTMLInputElement>(null)
+  const chatListScrollRef = useRef<HTMLDivElement>(null)
   const assistantPanelBeforeSearchRef = useRef<boolean | undefined>(undefined)
   const messageSearchRequestSeqRef = useRef(0)
   const messageDateRequestSeqRef = useRef(0)
@@ -787,7 +810,14 @@ export function ChatsPage() {
       return
     }
     void listChatLabels(selectedAccountId)
-      .then((response) => setChatLabels(response.labels))
+      .then((response) => {
+        setChatLabels(response.labels)
+        setSelectedLabelId((current) => (
+          current && current !== '__favorites__' && !response.labels.some((label) => label.id === current)
+            ? ''
+            : current
+        ))
+      })
       .catch(() => setChatLabels([]))
   }, [selectedAccountId])
 
@@ -802,6 +832,43 @@ export function ChatsPage() {
   useEffect(() => {
     void loadChatFilterCounts()
   }, [loadChatFilterCounts])
+
+  useEffect(() => {
+    const chatIdsByAccount = { ...chatNavigationRef.current.chatIdsByAccount }
+    if (
+      selectedAccountId
+      && selectedChatId
+      && chats.some((chat) => chat.id === selectedChatId && chat.account_id === selectedAccountId)
+    ) {
+      chatIdsByAccount[selectedAccountId] = selectedChatId
+    }
+
+    const navigation: StoredChatNavigation = {
+      accountId: selectedAccountId,
+      chatIdsByAccount,
+      chatView,
+      chatType: selectedChatType,
+      labelId: selectedLabelId,
+      search,
+    }
+    chatNavigationRef.current = navigation
+    writeStoredChatNavigation(navigation)
+  }, [chatView, chats, search, selectedAccountId, selectedChatId, selectedChatType, selectedLabelId])
+
+  useEffect(() => {
+    if (!shouldRevealRestoredChatRef.current || !selectedChatId || !chats.length) {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const selectedRow = Array.from(
+        chatListScrollRef.current?.querySelectorAll<HTMLButtonElement>('[data-chat-id]') ?? [],
+      ).find((row) => row.dataset.chatId === selectedChatId)
+      selectedRow?.scrollIntoView({ block: 'center' })
+      shouldRevealRestoredChatRef.current = false
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [chats, selectedChatId])
 
   useEffect(() => {
     window.localStorage.setItem(chatSidebarWidthStorageKey, String(Math.round(chatSidebarWidth)))
@@ -2339,11 +2406,13 @@ export function ChatsPage() {
               <select
                 value={selectedAccountId}
                 onChange={(event) => {
-                  setSelectedAccountId(event.target.value)
-                  setSelectedChatId(undefined)
+                  const nextAccountId = event.target.value
+                  setSelectedAccountId(nextAccountId)
+                  setSelectedChatId(chatNavigationRef.current.chatIdsByAccount[nextAccountId] || undefined)
                   setChatView('active')
                   setSelectedChatType('')
                   setSelectedLabelId('')
+                  setSearch('')
                 }}
                 aria-label="WhatsApp 账号"
               >
@@ -2433,11 +2502,12 @@ export function ChatsPage() {
           </div>
 
           {chats.length > 0 ? (
-            <div className="chat-list-scroll whatsapp-chat-list-scroll">
+            <div ref={chatListScrollRef} className="chat-list-scroll whatsapp-chat-list-scroll">
               <div className="chat-list whatsapp-chat-list">
                 {chats.map((chat) => (
                   <button
                     key={chat.id}
+                    data-chat-id={chat.id}
                     type="button"
                     className={`chat-row whatsapp-chat-row${selectedChatId === chat.id ? ' selected' : ''}`}
                     onClick={() => startTransition(() => setSelectedChatId(chat.id))}
@@ -3463,6 +3533,56 @@ function choosePreferredChatId(chats: ChatSummary[], current?: string) {
 
   const firstSendable = chats.find((chat) => isChatSendable(chat.wa_chat_jid, chat.chat_type))
   return firstSendable?.id ?? chats[0]?.id
+}
+
+function readStoredChatNavigation(): StoredChatNavigation {
+  const fallback: StoredChatNavigation = {
+    accountId: '',
+    chatIdsByAccount: {},
+    chatView: 'active',
+    chatType: '',
+    labelId: '',
+    search: '',
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(chatNavigationStorageKey)
+    if (!raw) {
+      return fallback
+    }
+
+    const parsed = JSON.parse(raw) as Partial<StoredChatNavigation>
+    const chatIdsByAccount = Object.fromEntries(
+      Object.entries(parsed.chatIdsByAccount ?? {}).filter(
+        ([accountId, chatId]) => Boolean(accountId.trim()) && typeof chatId === 'string' && Boolean(chatId.trim()),
+      ),
+    )
+    const chatViews: StoredChatNavigation['chatView'][] = ['active', 'archived', 'unread']
+    const chatTypes: StoredChatNavigation['chatType'][] = ['', 'direct', 'group', 'broadcast', 'status']
+
+    return {
+      accountId: typeof parsed.accountId === 'string' ? parsed.accountId.trim() : '',
+      chatIdsByAccount,
+      chatView: chatViews.includes(parsed.chatView as StoredChatNavigation['chatView'])
+        ? parsed.chatView as StoredChatNavigation['chatView']
+        : 'active',
+      chatType: chatTypes.includes(parsed.chatType as StoredChatNavigation['chatType'])
+        ? parsed.chatType as StoredChatNavigation['chatType']
+        : '',
+      labelId: typeof parsed.labelId === 'string' ? parsed.labelId.trim() : '',
+      search: typeof parsed.search === 'string' ? parsed.search : '',
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function writeStoredChatNavigation(navigation: StoredChatNavigation) {
+  try {
+    window.sessionStorage.setItem(chatNavigationStorageKey, JSON.stringify(navigation))
+  } catch {
+    // Navigation persistence is best effort; chat loading remains usable if storage is unavailable.
+  }
 }
 
 function getChatDisplayName(chat: ChatDisplaySource) {
