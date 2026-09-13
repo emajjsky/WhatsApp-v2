@@ -151,10 +151,6 @@ export function AdminPage() {
   return (
     <div className="page page-admin">
       <header className="admin-page-header">
-        <div>
-          <p className="eyebrow">管理员后台</p>
-          <h2>系统配置</h2>
-        </div>
         <div className="admin-tab-list" role="tablist">
           <AdminTabButton
             active={tab === 'users'}
@@ -1861,7 +1857,7 @@ function ProviderPresetPanel() {
         <aside className="admin-record-list-inner">
           <div className="admin-list-caption"><strong>已保存 Provider</strong><span>点击项目编辑连接信息、模型和启用状态</span></div>
           <div className="system-agent-list">
-            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="admin-record-summary-main"><strong>{preset.name}</strong><span>{preset.provider_type} · {preset.base_url}</span></span><span className="admin-record-summary-meta"><span>{preset.enabled ? '已启用' : '已停用'}</span><small>{preset.models.length} 个模型 · 默认 {preset.default_model || '未选择'}</small></span><Icon name="chevronRight" /></button>)}
+            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary provider-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="admin-record-summary-main"><strong>{preset.name}</strong><span>{preset.provider_type} · {preset.base_url}</span></span><span className="admin-record-summary-meta"><span>{preset.enabled ? '已启用' : '已停用'}</span><small>{preset.models.length} 个模型 · 默认 {preset.default_model || '未选择'}</small></span><span className="admin-record-summary-arrow"><Icon name="chevronRight" /></span></button>)}
             {!presets.length ? <div className="system-agent-empty">还没有 Provider 配置</div> : null}
           </div>
         </aside>
