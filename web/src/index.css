@@ -2901,6 +2901,29 @@ a {
   }
 }
 
+/* Keep the real admin module navigation accessible after removing the duplicate title block. */
+.page.page-admin:not(.admin-mock-page) > .admin-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.page.page-admin:not(.admin-mock-page) > .admin-page-header > .admin-tab-list {
+  width: min(100%, 1160px);
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-start;
+  overflow-x: auto;
+}
+
+@media (max-width: 900px) {
+  .page.page-admin:not(.admin-mock-page) > .admin-page-header {
+    justify-content: flex-start;
+  }
+}
+
 .desktop-network-head,
 .desktop-network-actions {
   display: flex;
