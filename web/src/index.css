@@ -9520,8 +9520,283 @@ a {
 
 @media (max-width: 1100px) {
   .chat-sidebar-resizer,
+  .chat-assistant-resizer,
   .assistant-column-resizer {
     display: none;
+  }
+}
+
+/* Conversation workspace: panels touch each other and only the resizers occupy space. */
+@media (min-width: 1101px) {
+  .whatsapp-chat-page .whatsapp-chat-frame {
+    grid-template-columns:
+      var(--chat-sidebar-width, 280px)
+      6px
+      minmax(320px, 1fr)
+      6px
+      var(--assistant-panel-width, 520px);
+    gap: 0;
+  }
+
+  .whatsapp-chat-page .whatsapp-chat-frame.assistant-panel-collapsed {
+    grid-template-columns: var(--chat-sidebar-width, 280px) 6px minmax(320px, 1fr);
+  }
+
+  .whatsapp-chat-page .whatsapp-chat-sidebar,
+  .whatsapp-chat-page .whatsapp-chat-main,
+  .whatsapp-chat-page .whatsapp-chat-assistant {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .whatsapp-chat-page .whatsapp-chat-sidebar {
+    border-radius: 8px 0 0 8px;
+  }
+
+  .whatsapp-chat-page .whatsapp-chat-assistant {
+    border-radius: 0 8px 8px 0;
+  }
+
+  .chat-assistant-resizer {
+    position: relative;
+    z-index: 12;
+    width: 6px;
+    min-height: 0;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+  }
+
+  .chat-assistant-resizer::before {
+    content: "";
+    position: absolute;
+    top: 10px;
+    bottom: 10px;
+    left: 2px;
+    width: 2px;
+    border-radius: 1px;
+    background: #d8dde0;
+    transition: background-color 140ms ease;
+  }
+
+  .chat-assistant-resizer:hover::before,
+  .chat-assistant-resizer:focus-visible::before,
+  body[style*="col-resize"] .chat-assistant-resizer::before {
+    background: #00a884;
+  }
+}
+
+/* The chat header and composer follow the light WhatsApp workspace treatment. */
+.whatsapp-chat-page .chat-contact-toolbar {
+  background: #fff;
+}
+
+.whatsapp-chat-page .assistant-panel-body {
+  gap: 0;
+}
+
+.whatsapp-chat-page .assistant-reply-column,
+.whatsapp-chat-page .assistant-draft-column {
+  gap: 0;
+}
+
+.whatsapp-chat-page .assistant-reply-column .assistant-card,
+.whatsapp-chat-page .assistant-draft-column .assistant-card {
+  border-radius: 0;
+}
+
+.whatsapp-chat-page .whatsapp-chat-compose-shell {
+  min-height: 46px;
+  padding: 3px 6px;
+  border: 1px solid #e1e6e8;
+  border-radius: 23px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(11, 20, 26, 0.08);
+}
+
+.whatsapp-chat-page .whatsapp-chat-compose-box textarea {
+  min-height: 38px;
+  padding: 8px 7px;
+  color: #111b21;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.whatsapp-chat-page .whatsapp-send-button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* Search is a local overlay, so it never steals the session-list search input. */
+.chat-message-search-panel {
+  position: absolute;
+  z-index: 80;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(390px, 100%);
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  border-left: 1px solid #d8dde0;
+  background: #fff;
+  box-shadow: -12px 0 30px rgba(11, 20, 26, 0.16);
+}
+
+.chat-message-search-header {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  border-bottom: 1px solid #e9edef;
+  color: #111b21;
+}
+
+.chat-message-search-header strong {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.chat-message-search-header button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #54656f;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.chat-message-search-header button:hover,
+.chat-message-search-header button:focus-visible {
+  background: #f0f2f5;
+  color: #111b21;
+}
+
+.chat-message-search-field {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 10px 12px;
+  padding: 0 11px;
+  min-height: 38px;
+  border-radius: 19px;
+  background: #f0f2f5;
+  color: #54656f;
+}
+
+.chat-message-search-field .app-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.chat-message-search-field input {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #111b21;
+  font-size: 13px;
+}
+
+.chat-message-search-results {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: auto;
+}
+
+.chat-message-search-results::-webkit-scrollbar {
+  display: block !important;
+  width: 8px;
+}
+
+.chat-message-search-results::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: #c5cdd1;
+}
+
+.chat-message-search-result {
+  display: grid;
+  gap: 4px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.chat-message-search-result:hover {
+  background: #f5f6f6;
+}
+
+.chat-message-search-result > div {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chat-message-search-result strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #111b21;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-message-search-result time {
+  flex: 0 0 auto;
+  color: #667781;
+  font-size: 10px;
+}
+
+.chat-message-search-result p,
+.chat-message-search-empty {
+  margin: 0;
+  color: #3b4a54;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chat-message-search-result p {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.chat-message-search-empty {
+  padding: 28px 18px;
+  text-align: center;
+  color: #667781;
+}
+
+.chat-message-search-empty.error-text {
+  color: #b42318;
+}
+
+@media (max-width: 1100px) {
+  .whatsapp-chat-page .whatsapp-chat-frame {
+    gap: 0;
+  }
+
+  .chat-message-search-panel {
+    width: min(390px, 100%);
   }
 }
 
@@ -9965,5 +10240,28 @@ a {
 @media (max-width: 900px) {
   .page.page-accounts.accounts-page-redesign .accounts-page-header h1 {
     font-size: 24px;
+  }
+}
+
+/* Final chat workspace overrides must come after the legacy responsive rules. */
+@media (min-width: 1101px) {
+  .whatsapp-chat-page .whatsapp-chat-frame {
+    grid-template-columns:
+      var(--chat-sidebar-width, 280px)
+      6px
+      minmax(320px, 1fr)
+      6px
+      var(--assistant-panel-width, 520px);
+    gap: 0;
+  }
+
+  .whatsapp-chat-page .whatsapp-chat-frame.assistant-panel-collapsed {
+    grid-template-columns: var(--chat-sidebar-width, 280px) 6px minmax(320px, 1fr);
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1100px) {
+  .whatsapp-chat-page .whatsapp-chat-frame {
+    gap: 0;
   }
 }

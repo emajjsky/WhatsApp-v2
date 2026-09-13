@@ -238,6 +238,11 @@ export interface MessageHistoryResponse {
   next_before?: string
 }
 
+export interface MessageSearchResponse {
+  messages: MessageView[]
+  total: number
+}
+
 export interface SendChatMessagePayload {
   message_text: string
   reply_to_wa_message_id?: string
@@ -1101,7 +1106,6 @@ export async function getChatMessages(chatId: string, params?: { limit?: number;
   if (params?.before) {
     searchParams.set('before', params.before)
   }
-
   const queryString = searchParams.toString()
   return request<MessageHistoryResponse>(
     `/api/chats/${chatId}/messages${queryString ? `?${queryString}` : ''}`,
@@ -1326,6 +1330,13 @@ export async function listAgentRuns(params?: {
 
   const queryString = searchParams.toString()
   return request<AgentRunListResponse>(`/api/agent-runs${queryString ? `?${queryString}` : ''}`)
+}
+
+export async function searchChatMessages(chatId: string, query: string, limit = 100) {
+  const searchParams = new URLSearchParams({ query: query.trim(), limit: String(limit) })
+  return request<MessageSearchResponse>(
+    `/api/chats/${chatId}/search?${searchParams.toString()}`,
+  )
 }
 
 export async function createAssistantUsageLog(payload: CreateAssistantUsageLogPayload) {

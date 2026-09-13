@@ -32,6 +32,7 @@ type ChatListFilters struct {
 
 type MessageListFilters struct {
 	ChatID   string
+	Query    string
 	Limit    int
 	Before   *time.Time
 	DateFrom *time.Time
@@ -575,6 +576,10 @@ WHERE c.id IN (%s)%%s`, strings.Join(placeholders, ", "))
 func (r *Repository) ListMessages(ctx context.Context, filters MessageListFilters) ([]MessageView, bool, error) {
 	args := []any{filters.ChatID}
 	conditions := []string{"m.chat_id = $1", visibleMessageCondition("m")}
+	if query := strings.TrimSpace(filters.Query); query != "" {
+		args = append(args, "%"+query+"%")
+		conditions = append(conditions, fmt.Sprintf("LOWER(COALESCE(m.text_content, '')) LIKE LOWER($%d)", len(args)))
+	}
 
 	if filters.Before != nil {
 		args = append(args, *filters.Before)
@@ -715,6 +720,36 @@ LIMIT $%d`, strings.Join(conditions, " AND "), limitIndex)
 	}
 
 	return items, hasMore, nil
+}
+
+func (r *Repository) SearchMessages(ctx context.Context, chatID, query string, limit int) ([]MessageView, int, error) {
+	args := []any{chatID, "%" + strings.TrimSpace(query) + "%"}
+	conditions := []string{
+		"m.chat_id = $1",
+		visibleMessageCondition("m"),
+		"LOWER(COALESCE(m.text_content, '')) LIKE LOWER($2)",
+	}
+	if scopeCondition, scopeArgs := messageAccountScopeCondition(ctx, len(args)+1); scopeCondition != "" {
+		conditions = append(conditions, scopeCondition)
+		args = append(args, scopeArgs...)
+	}
+	where := strings.Join(conditions, " AND ")
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM messages m WHERE "+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count messages for chat %q: %w", chatID, err)
+	}
+
+	messages, _, err := r.ListMessages(ctx, MessageListFilters{
+		ChatID: chatID,
+		Query:  query,
+		Limit:  limit,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	reverseMessages(messages)
+	return messages, total, nil
 }
 
 func (r *Repository) listMediaByMessageIDs(ctx context.Context, messageIDs []string) (map[string][]MediaAttachment, error) {

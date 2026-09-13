@@ -93,6 +93,24 @@ func (h *Handler) handleChatByID(w http.ResponseWriter, r *http.Request) {
 	action := parts[1]
 
 	switch {
+	case r.Method == http.MethodGet && action == "search":
+		limit, err := parseIntQuery(r, "limit", 100)
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		result, err := h.service.SearchMessages(r.Context(), SearchMessagesInput{
+			ChatID: chatID,
+			Query:  r.URL.Query().Get("query"),
+			Limit:  limit,
+		})
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, result)
 	case r.Method == http.MethodGet && action == "messages":
 		limit, err := parseIntQuery(r, "limit", 50)
 		if err != nil {

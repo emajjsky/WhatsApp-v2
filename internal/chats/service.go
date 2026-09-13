@@ -58,12 +58,23 @@ type GetMessagesInput struct {
 	Before *time.Time
 }
 
+type SearchMessagesInput struct {
+	ChatID string
+	Query  string
+	Limit  int
+}
+
 type MessageHistoryResult struct {
 	Chat       ChatHeader    `json:"chat"`
 	Messages   []MessageView `json:"messages"`
 	Limit      int           `json:"limit"`
 	HasMore    bool          `json:"has_more"`
 	NextBefore *time.Time    `json:"next_before,omitempty"`
+}
+
+type MessageSearchResult struct {
+	Messages []MessageView `json:"messages"`
+	Total    int           `json:"total"`
 }
 
 type ListContactsInput struct {
@@ -149,10 +160,12 @@ func NewService(repository *Repository, sender messageSender) (*Service, error) 
 }
 
 const (
-	defaultChatListLimit    = 24
-	maxChatListLimit        = 5000
-	defaultMessageListLimit = 50
-	maxMessageListLimit     = 100
+	defaultChatListLimit      = 24
+	maxChatListLimit          = 5000
+	defaultMessageListLimit   = 50
+	maxMessageListLimit       = 100
+	defaultMessageSearchLimit = 100
+	maxMessageSearchLimit     = 100
 )
 
 func (s *Service) ListChats(ctx context.Context, input ListChatsInput) (ListChatsResult, error) {
@@ -362,6 +375,38 @@ func (s *Service) GetMessages(ctx context.Context, input GetMessagesInput) (Mess
 		HasMore:    hasMore,
 		NextBefore: nextBefore,
 	}, nil
+}
+
+func (s *Service) SearchMessages(ctx context.Context, input SearchMessagesInput) (MessageSearchResult, error) {
+	chatID := strings.TrimSpace(input.ChatID)
+	query := strings.TrimSpace(input.Query)
+	if chatID == "" {
+		return MessageSearchResult{}, fmt.Errorf("chat_id is required")
+	}
+	if query == "" {
+		return MessageSearchResult{}, fmt.Errorf("query is required")
+	}
+	if len([]rune(query)) > 200 {
+		return MessageSearchResult{}, fmt.Errorf("query is too long")
+	}
+
+	limit := input.Limit
+	if limit <= 0 {
+		limit = defaultMessageSearchLimit
+	}
+	if limit > maxMessageSearchLimit {
+		limit = maxMessageSearchLimit
+	}
+
+	if _, err := s.repository.GetChatHeader(ctx, chatID); err != nil {
+		return MessageSearchResult{}, mapRepositoryError(chatID, err)
+	}
+
+	messages, total, err := s.repository.SearchMessages(ctx, chatID, query, limit)
+	if err != nil {
+		return MessageSearchResult{}, err
+	}
+	return MessageSearchResult{Messages: messages, Total: total}, nil
 }
 
 func (s *Service) SendMessage(ctx context.Context, input SendMessageInput) (SendMessageResult, error) {

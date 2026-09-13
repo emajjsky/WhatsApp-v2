@@ -23,6 +23,7 @@ import {
   listChatLabels,
   listChats,
   markChatRead,
+  searchChatMessages,
   sendAgentRun,
   sendChatMedia,
   sendChatMessage,
@@ -145,10 +146,12 @@ const favoriteListName = '特别关注'
 const chatSidebarWidthStorageKey = 'whatsapp.chatSidebarWidth.v1'
 const assistantPanelCollapsedStorageKey = 'whatsapp.assistantPanelCollapsed.v1'
 const assistantReplyRatioStorageKey = 'whatsapp.assistantReplyRatio.v1'
+const assistantPanelWidthStorageKey = 'whatsapp.assistantPanelWidth.v1'
 const defaultChatSidebarWidth = 280
 const minChatSidebarWidth = 240
 const minChatMainWidth = 320
 const minAssistantPanelWidth = 450
+const defaultAssistantPanelWidth = 520
 const defaultAssistantReplyRatio = 40
 const minAssistantReplyWidth = 150
 const minAssistantDraftWidth = 240
@@ -207,9 +210,16 @@ export function ChatsPage() {
   const [listBusy, setListBusy] = useState(false)
   const [chatSidebarWidth, setChatSidebarWidth] = useState(readStoredChatSidebarWidth)
   const [assistantPanelCollapsed, setAssistantPanelCollapsed] = useState(readStoredAssistantPanelCollapsed)
+  const [assistantPanelWidth, setAssistantPanelWidth] = useState(readStoredAssistantPanelWidth)
   const [assistantReplyRatio, setAssistantReplyRatio] = useState(readStoredAssistantReplyRatio)
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false)
+  const [messageSearch, setMessageSearch] = useState('')
+  const deferredMessageSearch = useDeferredValue(messageSearch)
+  const [messageSearchResults, setMessageSearchResults] = useState<MessageView[]>([])
+  const [messageSearchLoading, setMessageSearchLoading] = useState(false)
+  const [messageSearchError, setMessageSearchError] = useState<string>()
   const [selectedChatId, setSelectedChatId] = useState<string>()
   const [history, setHistory] = useState<MessageHistoryResponse>()
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -260,6 +270,8 @@ export function ChatsPage() {
   const statusCardPanelRef = useRef<HTMLElement>(null)
   const listMenuRef = useRef<HTMLDivElement>(null)
   const chatSearchRef = useRef<HTMLInputElement>(null)
+  const assistantPanelBeforeSearchRef = useRef<boolean | undefined>(undefined)
+  const messageSearchRequestSeqRef = useRef(0)
   const documentInputRef = useRef<HTMLInputElement>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -283,6 +295,28 @@ export function ChatsPage() {
   const statusCardBusy = selectedChatId ? Boolean(statusCardBusyByChatId[selectedChatId]) : false
   const favoriteList = chatLabels.find((label) => label.name.trim() === favoriteListName)
   const customLists = chatLabels.filter((label) => label.id !== favoriteList?.id)
+
+  const openMessageSearch = useCallback(() => {
+    if (!messageSearchOpen) {
+      assistantPanelBeforeSearchRef.current = assistantPanelCollapsed
+    }
+    setMessageSearchOpen(true)
+    setAssistantPanelCollapsed(true)
+  }, [assistantPanelCollapsed, messageSearchOpen])
+
+  const closeMessageSearch = useCallback(() => {
+    messageSearchRequestSeqRef.current += 1
+    setMessageSearchOpen(false)
+    setMessageSearch('')
+    setMessageSearchResults([])
+    setMessageSearchError(undefined)
+    setMessageSearchLoading(false)
+    const previousCollapsed = assistantPanelBeforeSearchRef.current
+    if (typeof previousCollapsed === 'boolean') {
+      setAssistantPanelCollapsed(previousCollapsed)
+      assistantPanelBeforeSearchRef.current = undefined
+    }
+  }, [])
 
   const scrollTimelineToBottom = useCallback(() => {
     const timeline = timelineRef.current
@@ -741,11 +775,18 @@ export function ChatsPage() {
       const frameWidth = chatFrameRef.current?.getBoundingClientRect().width
       if (!frameWidth) return
       setChatSidebarWidth((current) => clampChatSidebarWidth(current, frameWidth, assistantPanelCollapsed))
+      if (!assistantPanelCollapsed) {
+        setAssistantPanelWidth((current) => clampAssistantPanelWidth(current, frameWidth, chatSidebarWidth))
+      }
     }
     clampSidebarWidth()
     window.addEventListener('resize', clampSidebarWidth)
     return () => window.removeEventListener('resize', clampSidebarWidth)
-  }, [assistantPanelCollapsed])
+  }, [assistantPanelCollapsed, chatSidebarWidth])
+
+  useEffect(() => {
+    window.localStorage.setItem(assistantPanelWidthStorageKey, String(Math.round(assistantPanelWidth)))
+  }, [assistantPanelWidth])
 
   useEffect(() => {
     window.localStorage.setItem(assistantReplyRatioStorageKey, String(assistantReplyRatio))
@@ -798,6 +839,61 @@ export function ChatsPage() {
     setAttachmentMenuOpen(false)
     setStatusCardOpen(false)
   }, [emptyAssistantWorkspace, restoreAssistantWorkspace, selectedChatId])
+
+  useEffect(() => {
+    messageSearchRequestSeqRef.current += 1
+    setMessageSearchResults([])
+    setMessageSearchError(undefined)
+    setMessageSearchLoading(false)
+    setMessageSearch('')
+  }, [selectedChatId])
+
+  useEffect(() => {
+    const query = deferredMessageSearch.trim()
+    if (!messageSearchOpen || !selectedChatId || !query) {
+      setMessageSearchResults([])
+      setMessageSearchError(undefined)
+      setMessageSearchLoading(false)
+      return
+    }
+
+    const requestSeq = messageSearchRequestSeqRef.current + 1
+    messageSearchRequestSeqRef.current = requestSeq
+    const requestChatId = selectedChatId
+    setMessageSearchLoading(true)
+    setMessageSearchError(undefined)
+
+    void searchChatMessages(requestChatId, query).then((response) => {
+      if (messageSearchRequestSeqRef.current !== requestSeq || selectedChatId !== requestChatId) {
+        return
+      }
+      setMessageSearchResults(response.messages)
+    }).catch((searchError) => {
+      if (messageSearchRequestSeqRef.current !== requestSeq || selectedChatId !== requestChatId) {
+        return
+      }
+      setMessageSearchResults([])
+      setMessageSearchError(searchError instanceof Error ? searchError.message : '搜索消息失败')
+    }).finally(() => {
+      if (messageSearchRequestSeqRef.current === requestSeq) {
+        setMessageSearchLoading(false)
+      }
+    })
+  }, [deferredMessageSearch, messageSearchOpen, selectedChatId])
+
+  useEffect(() => {
+    if (!messageSearchOpen) {
+      return
+    }
+
+    const handleSearchKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMessageSearch()
+      }
+    }
+    document.addEventListener('keydown', handleSearchKeyDown)
+    return () => document.removeEventListener('keydown', handleSearchKeyDown)
+  }, [closeMessageSearch, messageSearchOpen])
 
   useEffect(() => {
     const currentChat = chats.find((chat) => chat.id === selectedChatId)
@@ -1975,6 +2071,53 @@ export function ChatsPage() {
     ))
   }
 
+  function handleAssistantPanelResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return
+    const frame = chatFrameRef.current
+    if (!frame || assistantPanelCollapsed) return
+
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = assistantPanelWidth
+    const frameWidth = frame.getBoundingClientRect().width
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setAssistantPanelWidth(clampAssistantPanelWidth(
+        startWidth - (moveEvent.clientX - startX),
+        frameWidth,
+        chatSidebarWidth,
+      ))
+    }
+    const stopResize = () => {
+      document.removeEventListener('pointermove', handlePointerMove)
+      document.removeEventListener('pointerup', stopResize)
+      document.removeEventListener('pointercancel', stopResize)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+    }
+
+    document.addEventListener('pointermove', handlePointerMove)
+    document.addEventListener('pointerup', stopResize)
+    document.addEventListener('pointercancel', stopResize)
+  }
+
+  function handleAssistantPanelResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    const frameWidth = chatFrameRef.current?.getBoundingClientRect().width
+    if (!frameWidth || assistantPanelCollapsed) return
+    event.preventDefault()
+    const delta = event.key === 'ArrowLeft' ? 20 : -20
+    setAssistantPanelWidth((current) => clampAssistantPanelWidth(
+      current + delta,
+      frameWidth,
+      chatSidebarWidth,
+    ))
+  }
+
   function handleAssistantColumnResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return
     const body = assistantPanelBodyRef.current
@@ -2020,7 +2163,10 @@ export function ChatsPage() {
       <section
         ref={chatFrameRef}
         className={`chat-frame whatsapp-chat-frame${assistantPanelCollapsed ? ' assistant-panel-collapsed' : ''}`}
-        style={{ '--chat-sidebar-width': `${chatSidebarWidth}px` } as CSSProperties}
+        style={{
+          '--chat-sidebar-width': `${chatSidebarWidth}px`,
+          '--assistant-panel-width': `${assistantPanelWidth}px`,
+        } as CSSProperties}
       >
         <aside className="panel chat-sidebar-panel whatsapp-chat-sidebar">
           <header className="whatsapp-chat-sidebar-header">
@@ -2197,13 +2343,53 @@ export function ChatsPage() {
                   </div>
                 ) : null}
                 <div className="chat-contact-toolbar-actions">
-                  <button type="button" onClick={() => chatSearchRef.current?.focus()} title="搜索会话" aria-label="搜索会话"><Icon name="search" /></button>
+                  <button type="button" onClick={openMessageSearch} title="搜索消息" aria-label="搜索消息"><Icon name="search" /></button>
                   <button type="button" onClick={(event) => openChatContextMenuAt(selectedChat, event.clientX, event.clientY + 12, 'toolbar')} title="更多操作" aria-label="更多操作"><Icon name="moreVertical" /></button>
-                  {assistantPanelCollapsed ? (
+                  {assistantPanelCollapsed && !messageSearchOpen ? (
                     <button className="assistant-panel-open-button" type="button" onClick={() => setAssistantPanelCollapsed(false)} title="展开智能体面板" aria-label="展开智能体面板"><Icon name="chevronRight" /></button>
                   ) : null}
                 </div>
               </header>
+
+              {messageSearchOpen ? (
+                <aside className="chat-message-search-panel" aria-label="搜索消息">
+                  <header className="chat-message-search-header">
+                    <strong>搜索消息</strong>
+                    <button type="button" onClick={closeMessageSearch} aria-label="关闭搜索消息" title="关闭搜索消息">×</button>
+                  </header>
+                  <label className="chat-message-search-field">
+                    <Icon name="search" />
+                    <input
+                      autoFocus
+                      value={messageSearch}
+                      onChange={(event) => setMessageSearch(event.target.value)}
+                      placeholder="搜索当前会话"
+                      aria-label="搜索当前会话消息"
+                    />
+                  </label>
+                  <div className="chat-message-search-results">
+                    {!messageSearch.trim() ? (
+                      <p className="chat-message-search-empty">输入关键词搜索当前会话消息</p>
+                    ) : messageSearchLoading ? (
+                      <p className="chat-message-search-empty">搜索中...</p>
+                    ) : messageSearchError ? (
+                      <p className="chat-message-search-empty error-text">{messageSearchError}</p>
+                    ) : messageSearchResults.length ? (
+                      messageSearchResults.map((message) => (
+                        <article className="chat-message-search-result" key={message.id}>
+                          <div>
+                            <strong>{message.from_me ? '你' : getMessageSenderName(message)}</strong>
+                            <time dateTime={message.sent_at}>{formatMessageDateTime(message.sent_at)}</time>
+                          </div>
+                          <p>{message.text_content?.trim() || fallbackMessageCopy(message.message_type)}</p>
+                        </article>
+                      ))
+                    ) : (
+                      <p className="chat-message-search-empty">没有找到消息</p>
+                    )}
+                  </div>
+                </aside>
+              ) : null}
 
               {chatInfoOpen ? (
                 <aside className="chat-info-drawer">
@@ -2465,6 +2651,24 @@ export function ChatsPage() {
             />
           )}
         </section>
+
+        {!assistantPanelCollapsed ? (
+          <div
+            className="chat-assistant-resizer"
+            role="separator"
+            aria-label="调整聊天和智能体面板宽度"
+            aria-orientation="vertical"
+            aria-valuemin={minAssistantPanelWidth}
+            aria-valuemax={Math.round(chatFrameRef.current?.getBoundingClientRect().width
+              ? getAssistantPanelMaxWidth(chatFrameRef.current.getBoundingClientRect().width, chatSidebarWidth)
+              : minAssistantPanelWidth)}
+            aria-valuenow={Math.round(assistantPanelWidth)}
+            tabIndex={0}
+            title="拖动调整聊天和智能体面板宽度"
+            onPointerDown={handleAssistantPanelResizeStart}
+            onKeyDown={handleAssistantPanelResizeKeyDown}
+          />
+        ) : null}
 
         <aside className="panel chat-assistant-panel whatsapp-chat-assistant" aria-hidden={assistantPanelCollapsed}>
           <div className="whatsapp-assistant-header">
@@ -3670,6 +3874,27 @@ function formatMessageTime(value?: string) {
   }).format(date)
 }
 
+function formatMessageDateTime(value?: string) {
+  if (!value) {
+    return ''
+  }
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).format(date)
+}
+
 function isSameLocalDate(left: Date, right: Date) {
   return left.getFullYear() === right.getFullYear()
     && left.getMonth() === right.getMonth()
@@ -3701,6 +3926,11 @@ function readStoredAssistantReplyRatio() {
   return Number.isFinite(stored) && stored > 0 && stored < 100 ? stored : defaultAssistantReplyRatio
 }
 
+function readStoredAssistantPanelWidth() {
+  const stored = Number(window.localStorage.getItem(assistantPanelWidthStorageKey))
+  return Number.isFinite(stored) && stored >= minAssistantPanelWidth ? stored : defaultAssistantPanelWidth
+}
+
 function getChatSidebarMaxWidth(frameWidth: number, assistantPanelCollapsed: boolean) {
   const reservedWidth = minChatMainWidth + (assistantPanelCollapsed ? 0 : minAssistantPanelWidth) + 24
   return Math.max(minChatSidebarWidth, Math.min(frameWidth * 0.4, frameWidth - reservedWidth))
@@ -3710,6 +3940,21 @@ function clampChatSidebarWidth(width: number, frameWidth: number, assistantPanel
   return Math.min(
     Math.max(width, minChatSidebarWidth),
     getChatSidebarMaxWidth(frameWidth, assistantPanelCollapsed),
+  )
+}
+
+function getAssistantPanelMaxWidth(frameWidth: number, sidebarWidth: number) {
+  const availableWidth = frameWidth - sidebarWidth - minChatMainWidth - 12
+  return Math.max(
+    minAssistantPanelWidth,
+    Math.min(frameWidth * 0.55, availableWidth),
+  )
+}
+
+function clampAssistantPanelWidth(width: number, frameWidth: number, sidebarWidth: number) {
+  return Math.min(
+    Math.max(width, minAssistantPanelWidth),
+    getAssistantPanelMaxWidth(frameWidth, sidebarWidth),
   )
 }
 
