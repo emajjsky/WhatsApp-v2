@@ -31,12 +31,13 @@ type ChatListFilters struct {
 }
 
 type MessageListFilters struct {
-	ChatID   string
-	Query    string
-	Limit    int
-	Before   *time.Time
-	DateFrom *time.Time
-	DateTo   *time.Time
+	ChatID    string
+	Query     string
+	Limit     int
+	Before    *time.Time
+	DateFrom  *time.Time
+	DateTo    *time.Time
+	Ascending bool
 }
 
 type ChatSummary struct {
@@ -603,6 +604,11 @@ func (r *Repository) ListMessages(ctx context.Context, filters MessageListFilter
 	limitIndex := len(args) + 1
 	args = append(args, filters.Limit+1)
 
+	orderDirection := "DESC"
+	if filters.Ascending {
+		orderDirection = "ASC"
+	}
+
 	query := fmt.Sprintf(`
 SELECT
     m.id,
@@ -648,8 +654,8 @@ LEFT JOIN whatsmeow_contacts wmpn
     ON wmpn.our_jid = sc.device_id
    AND wmpn.their_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
 WHERE %s
-ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $%d`, strings.Join(conditions, " AND "), limitIndex)
+ORDER BY m.sent_at %s, m.id %s
+LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, limitIndex)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -705,7 +711,9 @@ LIMIT $%d`, strings.Join(conditions, " AND "), limitIndex)
 		items = items[:filters.Limit]
 	}
 
-	reverseMessages(items)
+	if !filters.Ascending {
+		reverseMessages(items)
+	}
 
 	mediaByMessageID, err := r.listMediaByMessageIDs(ctx, extractMessageIDs(items))
 	if err != nil {

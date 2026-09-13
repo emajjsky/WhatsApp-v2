@@ -22,7 +22,9 @@
 - 实时更新已恢复为 SSE 推送，页面不再只靠轮询
 - Provider 配置统一由后台维护，模型默认关闭思考输出并兼容较慢 Provider 的流式响应
 - 会话自定义列表可直接显示在顶部筛选栏，并可通过右键“更改列表”管理会话归属
-- Windows 客户端当前发布版本为 `0.1.57`
+- 会话消息支持关键词搜索和按日期定位；选择日期后会跳到当天第一条消息并高亮
+- 本地 IP 代理池采用四列卡片列表，新增和编辑代理统一在弹窗中完成
+- Windows 客户端当前发布版本为 `0.1.58`
 
 - Agent 配置将系统输出规则与角色/功能要求分开管理，三类 Agent 调用时自动合并生效；规则默认收起，用户只需填写角色和功能要求。
 
@@ -235,6 +237,7 @@ cd "path\to\repo"
 - 按账号筛选
 - 按聊天类型筛选
 - 按关键字搜索
+- 按日期跳转到当天第一条消息
 - 查看消息与媒体附件
 - 新消息到达时实时刷新
 - 右侧对话辅助手动生成回复建议
@@ -258,6 +261,7 @@ cd "path\to\repo"
 
 ## 已验证
 
+- `go test ./...`
 - `go test ./internal/proxychain ./internal/proxies ./internal/platform`
 - `cd web && npm run build`
 - `docker compose -f deploy/docker/docker-compose.all.yml up -d --build`
@@ -266,8 +270,6 @@ cd "path\to\repo"
 - 智能回复 Agent 页面构建与浏览器检查通过
 - 普通 Clash 入口链式到静态 SOCKS5 代理的双层 TCP 连接验证通过
 - HTTP CONNECT 成功后的隧道复用和 SOCKS5 用户名密码握手已修复
-
-说明：全量 `go test ./...` 可能包含耗时较长的集成测试，本轮没有将其作为通过项；发布前仍应在 Docker 环境单独跑完整测试。
 
 ## 下一步建议
 

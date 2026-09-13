@@ -15,6 +15,7 @@ import {
   analyzeStatusCard,
   createChatLabel,
   createAssistantUsageLog,
+  getFirstChatMessageByDate,
   getChatMessages,
   getMediaAssetUrl,
   getStatusCard,
@@ -220,6 +221,10 @@ export function ChatsPage() {
   const [messageSearchResults, setMessageSearchResults] = useState<MessageView[]>([])
   const [messageSearchLoading, setMessageSearchLoading] = useState(false)
   const [messageSearchError, setMessageSearchError] = useState<string>()
+  const [messageDatePickerOpen, setMessageDatePickerOpen] = useState(false)
+  const [messageDateMonth, setMessageDateMonth] = useState(startOfLocalMonth)
+  const [selectedMessageDate, setSelectedMessageDate] = useState<Date>()
+  const [messageDateLoading, setMessageDateLoading] = useState(false)
   const [messageJumpBusyId, setMessageJumpBusyId] = useState<string>()
   const [messageJumpError, setMessageJumpError] = useState<string>()
   const [highlightedMessageId, setHighlightedMessageId] = useState<string>()
@@ -275,6 +280,7 @@ export function ChatsPage() {
   const chatSearchRef = useRef<HTMLInputElement>(null)
   const assistantPanelBeforeSearchRef = useRef<boolean | undefined>(undefined)
   const messageSearchRequestSeqRef = useRef(0)
+  const messageDateRequestSeqRef = useRef(0)
   const messageJumpRequestSeqRef = useRef(0)
   const pendingJumpMessageIdRef = useRef<string | undefined>(undefined)
   const messageHighlightTimerRef = useRef<number | undefined>(undefined)
@@ -302,6 +308,7 @@ export function ChatsPage() {
   const statusCardBusy = selectedChatId ? Boolean(statusCardBusyByChatId[selectedChatId]) : false
   const favoriteList = chatLabels.find((label) => label.name.trim() === favoriteListName)
   const customLists = chatLabels.filter((label) => label.id !== favoriteList?.id)
+  const messageCalendarDays = buildCalendarDays(messageDateMonth)
 
   const openMessageSearch = useCallback(() => {
     if (!messageSearchOpen) {
@@ -313,12 +320,16 @@ export function ChatsPage() {
 
   const closeMessageSearch = useCallback(() => {
     messageSearchRequestSeqRef.current += 1
+    messageDateRequestSeqRef.current += 1
     messageJumpRequestSeqRef.current += 1
     setMessageSearchOpen(false)
     setMessageSearch('')
     setMessageSearchResults([])
     setMessageSearchError(undefined)
     setMessageSearchLoading(false)
+    setMessageDatePickerOpen(false)
+    setMessageDateLoading(false)
+    setSelectedMessageDate(undefined)
     setMessageJumpBusyId(undefined)
     setMessageJumpError(undefined)
     const previousCollapsed = assistantPanelBeforeSearchRef.current
@@ -870,12 +881,16 @@ export function ChatsPage() {
 
   useEffect(() => {
     messageSearchRequestSeqRef.current += 1
+    messageDateRequestSeqRef.current += 1
     messageJumpRequestSeqRef.current += 1
     pendingJumpMessageIdRef.current = undefined
     setMessageSearchResults([])
     setMessageSearchError(undefined)
     setMessageSearchLoading(false)
     setMessageSearch('')
+    setMessageDatePickerOpen(false)
+    setMessageDateLoading(false)
+    setSelectedMessageDate(undefined)
     setMessageJumpBusyId(undefined)
     setMessageJumpError(undefined)
     setHighlightedMessageId(undefined)
@@ -941,13 +956,15 @@ export function ChatsPage() {
     }
 
     const handleSearchKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && messageDatePickerOpen) {
+        setMessageDatePickerOpen(false)
+      } else if (event.key === 'Escape') {
         closeMessageSearch()
       }
     }
     document.addEventListener('keydown', handleSearchKeyDown)
     return () => document.removeEventListener('keydown', handleSearchKeyDown)
-  }, [closeMessageSearch, messageSearchOpen])
+  }, [closeMessageSearch, messageDatePickerOpen, messageSearchOpen])
 
   useEffect(() => {
     const currentChat = chats.find((chat) => chat.id === selectedChatId)
@@ -1259,6 +1276,41 @@ export function ChatsPage() {
     } finally {
       if (messageJumpRequestSeqRef.current === requestSeq) {
         setMessageJumpBusyId(undefined)
+      }
+    }
+  }
+
+  async function handleJumpToDate(date: Date) {
+    if (!selectedChatId || isFutureLocalDate(date)) {
+      return
+    }
+
+    const requestSeq = messageDateRequestSeqRef.current + 1
+    messageDateRequestSeqRef.current = requestSeq
+    const requestChatId = selectedChatId
+    const { from, to } = getLocalDayRange(date)
+    setSelectedMessageDate(date)
+    setMessageDateLoading(true)
+    setMessageJumpError(undefined)
+
+    try {
+      const response = await getFirstChatMessageByDate(requestChatId, from, to)
+      if (messageDateRequestSeqRef.current !== requestSeq || activeAssistantChatIdRef.current !== requestChatId) {
+        return
+      }
+      if (!response.message) {
+        setMessageJumpError(`${formatCalendarDate(date)}没有消息`)
+        return
+      }
+      setMessageDatePickerOpen(false)
+      await handleJumpToSearchMessage(response.message)
+    } catch (dateError) {
+      if (messageDateRequestSeqRef.current === requestSeq) {
+        setMessageJumpError(dateError instanceof Error ? dateError.message : '按日期定位消息失败')
+      }
+    } finally {
+      if (messageDateRequestSeqRef.current === requestSeq) {
+        setMessageDateLoading(false)
       }
     }
   }
@@ -2468,16 +2520,64 @@ export function ChatsPage() {
                     <strong>搜索消息</strong>
                     <button type="button" onClick={closeMessageSearch} aria-label="关闭搜索消息" title="关闭搜索消息">×</button>
                   </header>
-                  <label className="chat-message-search-field">
-                    <Icon name="search" />
-                    <input
-                      autoFocus
-                      value={messageSearch}
-                      onChange={(event) => setMessageSearch(event.target.value)}
-                      placeholder="搜索当前会话"
-                      aria-label="搜索当前会话消息"
-                    />
-                  </label>
+                  <div className="chat-message-search-controls">
+                    <button
+                      className={messageDatePickerOpen ? 'active' : ''}
+                      type="button"
+                      onClick={() => {
+                        setMessageDateMonth(startOfLocalMonth())
+                        setMessageDatePickerOpen((current) => !current)
+                      }}
+                      aria-label="按日期查找消息"
+                      title="按日期查找消息"
+                    >
+                      <Icon name="calendar" />
+                    </button>
+                    <label className="chat-message-search-field">
+                      <Icon name="search" />
+                      <input
+                        autoFocus
+                        value={messageSearch}
+                        onChange={(event) => setMessageSearch(event.target.value)}
+                        placeholder="搜索当前会话"
+                        aria-label="搜索当前会话消息"
+                      />
+                    </label>
+                  </div>
+                  {messageDatePickerOpen ? (
+                    <section className="chat-message-date-picker" aria-label="选择消息日期">
+                      <header>
+                        <strong>{formatCalendarMonth(messageDateMonth)}</strong>
+                        <div>
+                          <button className="previous" type="button" onClick={() => setMessageDateMonth((current) => addLocalMonths(current, -1))} aria-label="上个月" title="上个月"><Icon name="chevronRight" /></button>
+                          <button type="button" disabled={!canMoveToNextMonth(messageDateMonth)} onClick={() => setMessageDateMonth((current) => addLocalMonths(current, 1))} aria-label="下个月" title="下个月"><Icon name="chevronRight" /></button>
+                        </div>
+                      </header>
+                      <div className="chat-message-date-weekdays" aria-hidden="true">
+                        {['周一', '周二', '周三', '周四', '周五', '周六', '周日'].map((weekday) => <span key={weekday}>{weekday}</span>)}
+                      </div>
+                      <div className="chat-message-date-grid">
+                        {messageCalendarDays.map((date) => {
+                          const future = isFutureLocalDate(date)
+                          const outsideMonth = date.getMonth() !== messageDateMonth.getMonth()
+                          const selected = selectedMessageDate ? isSameLocalDate(date, selectedMessageDate) : false
+                          return (
+                            <button
+                              key={toLocalDateKey(date)}
+                              className={`${outsideMonth ? 'outside-month ' : ''}${selected ? 'selected' : ''}`.trim()}
+                              type="button"
+                              disabled={future || messageDateLoading}
+                              onClick={() => void handleJumpToDate(date)}
+                              aria-label={`定位到${formatCalendarDate(date)}的第一条消息`}
+                            >
+                              {date.getDate()}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {messageDateLoading ? <p>正在定位当天第一条消息...</p> : null}
+                    </section>
+                  ) : null}
                   <div className="chat-message-search-results">
                     {messageJumpError ? (
                       <p className="chat-message-search-jump-error">{messageJumpError}</p>
@@ -4027,6 +4127,57 @@ function isSameLocalDate(left: Date, right: Date) {
   return left.getFullYear() === right.getFullYear()
     && left.getMonth() === right.getMonth()
     && left.getDate() === right.getDate()
+}
+
+function startOfLocalMonth() {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), 1)
+}
+
+function addLocalMonths(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1)
+}
+
+function canMoveToNextMonth(date: Date) {
+  const now = new Date()
+  return date.getFullYear() < now.getFullYear()
+    || (date.getFullYear() === now.getFullYear() && date.getMonth() < now.getMonth())
+}
+
+function buildCalendarDays(month: Date) {
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1)
+  const mondayOffset = (firstDay.getDay() + 6) % 7
+  return Array.from({ length: 42 }, (_, index) => (
+    new Date(month.getFullYear(), month.getMonth(), index - mondayOffset + 1)
+  ))
+}
+
+function isFutureLocalDate(date: Date) {
+  const today = new Date()
+  const candidate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const currentDay = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  return candidate.getTime() > currentDay.getTime()
+}
+
+function getLocalDayRange(date: Date) {
+  const from = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const to = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1)
+  return { from: from.toISOString(), to: to.toISOString() }
+}
+
+function toLocalDateKey(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatCalendarMonth(date: Date) {
+  return `${date.getFullYear()}年${date.getMonth() + 1}月`
+}
+
+function formatCalendarDate(date: Date) {
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
 }
 
 function mergeMessagesChronologically(...messageGroups: MessageView[][]) {

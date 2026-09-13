@@ -16,7 +16,16 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.54`.
+Current packaging version: `0.1.58`.
+
+## 0.1.58 Date navigation and proxy pool layout
+
+- Adds WhatsApp-style calendar navigation to conversation search and jumps to
+  the first visible message on the selected local date.
+- Rebuilds the local IP proxy pool as a four-column, vertically scrolling card
+  list with a shared modal for creating and editing proxies.
+- Keeps all real proxy credentials and operations local to the desktop runtime;
+  browser mock data is available only in Vite development mode.
 
 ## 0.1.54 Navigation tooltip layering
 

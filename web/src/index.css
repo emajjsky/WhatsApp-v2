@@ -10357,3 +10357,425 @@ a {
     animation: none;
   }
 }
+
+/* Date navigation follows WhatsApp's search drawer and stays local to the open chat. */
+.chat-message-search-controls {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e9edef;
+}
+
+.chat-message-search-controls > button {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #54656f;
+}
+
+.chat-message-search-controls > button:hover,
+.chat-message-search-controls > button:focus-visible,
+.chat-message-search-controls > button.active {
+  background: #f0f2f5;
+  color: #008069;
+}
+
+.chat-message-search-controls > button .app-icon {
+  width: 21px;
+  height: 21px;
+}
+
+.chat-message-search-controls .chat-message-search-field {
+  margin: 0;
+}
+
+.chat-message-date-picker {
+  position: absolute;
+  z-index: 4;
+  top: 116px;
+  left: 10px;
+  right: 10px;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(17, 27, 33, 0.1);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(11, 20, 26, 0.2);
+}
+
+.chat-message-date-picker > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+}
+
+.chat-message-date-picker > header strong {
+  color: #111b21;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.chat-message-date-picker > header > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chat-message-date-picker > header button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #111b21;
+}
+
+.chat-message-date-picker > header button:hover:not(:disabled),
+.chat-message-date-picker > header button:focus-visible {
+  background: #f0f2f5;
+}
+
+.chat-message-date-picker > header button:disabled {
+  color: #c4cace;
+}
+
+.chat-message-date-picker > header button.previous .app-icon {
+  transform: rotate(180deg);
+}
+
+.chat-message-date-weekdays,
+.chat-message-date-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.chat-message-date-weekdays {
+  padding-bottom: 7px;
+  border-bottom: 1px solid #e9edef;
+}
+
+.chat-message-date-weekdays span {
+  color: #667781;
+  font-size: 10px;
+  text-align: center;
+}
+
+.chat-message-date-grid {
+  row-gap: 3px;
+}
+
+.chat-message-date-grid button {
+  justify-self: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #111b21;
+  font-size: 12px;
+}
+
+.chat-message-date-grid button:hover:not(:disabled),
+.chat-message-date-grid button:focus-visible {
+  background: #e9edef;
+}
+
+.chat-message-date-grid button.selected {
+  background: #00a884;
+  color: #fff;
+  font-weight: 700;
+}
+
+.chat-message-date-grid button.outside-month {
+  color: #9aa5ab;
+}
+
+.chat-message-date-grid button:disabled {
+  color: #c8ced1;
+  cursor: default;
+}
+
+.chat-message-date-picker > p {
+  margin: 0;
+  color: #008069;
+  font-size: 11px;
+  text-align: center;
+}
+
+/* Proxy pool: compact runtime status, modal editing, and a four-column local proxy library. */
+.page.page-proxies.proxy-pool-redesign {
+  height: 100%;
+  min-height: 0;
+  padding: 18px 18px 18px 14px;
+  overflow: hidden;
+}
+
+.proxy-pool-redesign .page-heading {
+  flex: 0 0 auto;
+}
+
+.proxy-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.proxy-page-actions .primary-button {
+  min-height: 42px;
+  padding: 9px 16px;
+}
+
+.proxy-pool-redesign .desktop-proxy-runtime-panel {
+  min-height: 0;
+  padding: 14px;
+}
+
+.proxy-pool-redesign .desktop-proxy-runtime-heading {
+  margin-bottom: 12px;
+}
+
+.proxy-pool-redesign .desktop-proxy-runtime-grid {
+  gap: 8px;
+}
+
+.proxy-pool-redesign .desktop-proxy-runtime-grid > div {
+  min-height: 62px;
+  padding: 10px 12px;
+}
+
+.proxy-pool-redesign .desktop-proxy-runtime-rules {
+  margin-top: 8px;
+}
+
+.proxy-library-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.proxy-library-panel .panel-heading {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.proxy-library-panel .proxy-list-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 5px;
+}
+
+.proxy-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-content: start;
+  gap: 10px;
+}
+
+.proxy-card {
+  min-width: 0;
+  min-height: 244px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid #dfe4e6;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(11, 20, 26, 0.04);
+}
+
+.proxy-card > header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.proxy-card > header strong,
+.proxy-card-endpoint,
+.proxy-card dd,
+.proxy-card-error {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxy-card > header strong {
+  color: #111b21;
+  font-size: 14px;
+}
+
+.proxy-card-status {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.proxy-card-status.enabled {
+  background: #e7f8f0;
+  color: #08785f;
+}
+
+.proxy-card-status.disabled {
+  background: #f0f2f5;
+  color: #667781;
+}
+
+.proxy-card-endpoint {
+  margin: 0;
+  color: #52636c;
+  font-size: 12px;
+}
+
+.proxy-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+}
+
+.proxy-card dl > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: #f5f6f6;
+}
+
+.proxy-card dt {
+  color: #667781;
+  font-size: 10px;
+}
+
+.proxy-card dd {
+  margin: 0;
+  color: #26363f;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.proxy-card-check,
+.proxy-card-error {
+  margin: 0;
+  font-size: 11px;
+}
+
+.proxy-card-check {
+  color: #667781;
+}
+
+.proxy-card-check.passed {
+  color: #08785f;
+}
+
+.proxy-card-check.failed,
+.proxy-card-error {
+  color: #b42318;
+}
+
+.proxy-card > footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: auto;
+}
+
+.proxy-card > footer button {
+  min-width: 0;
+  min-height: 34px;
+  justify-content: center;
+  padding: 7px 8px;
+  font-size: 11px;
+}
+
+.proxy-card > footer .app-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.proxy-modal-backdrop {
+  z-index: 300;
+}
+
+.proxy-modal {
+  width: min(780px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+}
+
+.proxy-modal .account-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.proxy-modal .proxy-form-grid {
+  overflow: visible;
+}
+
+.proxy-modal .success-banner,
+.proxy-modal .error-banner {
+  margin-top: 12px;
+}
+
+@media (max-width: 1050px) {
+  .proxy-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .page.page-proxies.proxy-pool-redesign {
+    height: auto;
+    min-height: 100%;
+    padding: 12px;
+    overflow-y: auto;
+  }
+
+  .proxy-page-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .proxy-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .proxy-library-panel .proxy-list-scroll {
+    overflow-y: visible;
+  }
+
+  .proxy-modal .proxy-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .proxy-modal .proxy-connection-field,
+  .proxy-modal .proxy-form-grid .button-row {
+    grid-column: auto;
+  }
+}

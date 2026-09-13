@@ -111,6 +111,29 @@ func (h *Handler) handleChatByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		httpx.WriteJSON(w, http.StatusOK, result)
+	case r.Method == http.MethodGet && action == "date":
+		from, err := parseTimeQuery(r, "from")
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		to, err := parseTimeQuery(r, "to")
+		if err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		result, err := h.service.FindMessageByDate(r.Context(), FindMessageByDateInput{
+			ChatID: chatID,
+			From:   from,
+			To:     to,
+		})
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+
+		httpx.WriteJSON(w, http.StatusOK, result)
 	case r.Method == http.MethodGet && action == "messages":
 		limit, err := parseIntQuery(r, "limit", 50)
 		if err != nil {

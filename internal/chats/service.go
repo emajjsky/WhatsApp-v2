@@ -64,6 +64,12 @@ type SearchMessagesInput struct {
 	Limit  int
 }
 
+type FindMessageByDateInput struct {
+	ChatID string
+	From   *time.Time
+	To     *time.Time
+}
+
 type MessageHistoryResult struct {
 	Chat       ChatHeader    `json:"chat"`
 	Messages   []MessageView `json:"messages"`
@@ -75,6 +81,10 @@ type MessageHistoryResult struct {
 type MessageSearchResult struct {
 	Messages []MessageView `json:"messages"`
 	Total    int           `json:"total"`
+}
+
+type MessageByDateResult struct {
+	Message *MessageView `json:"message"`
 }
 
 type ListContactsInput struct {
@@ -407,6 +417,41 @@ func (s *Service) SearchMessages(ctx context.Context, input SearchMessagesInput)
 		return MessageSearchResult{}, err
 	}
 	return MessageSearchResult{Messages: messages, Total: total}, nil
+}
+
+func (s *Service) FindMessageByDate(ctx context.Context, input FindMessageByDateInput) (MessageByDateResult, error) {
+	chatID := strings.TrimSpace(input.ChatID)
+	if chatID == "" {
+		return MessageByDateResult{}, fmt.Errorf("chat_id is required")
+	}
+	if input.From == nil || input.To == nil {
+		return MessageByDateResult{}, fmt.Errorf("from and to are required")
+	}
+	if !input.From.Before(*input.To) {
+		return MessageByDateResult{}, fmt.Errorf("from must be before to")
+	}
+	if input.To.Sub(*input.From) > 48*time.Hour {
+		return MessageByDateResult{}, fmt.Errorf("date range must not exceed 48 hours")
+	}
+
+	if _, err := s.repository.GetChatHeader(ctx, chatID); err != nil {
+		return MessageByDateResult{}, mapRepositoryError(chatID, err)
+	}
+
+	messages, _, err := s.repository.ListMessages(ctx, MessageListFilters{
+		ChatID:    chatID,
+		DateFrom:  input.From,
+		DateTo:    input.To,
+		Limit:     1,
+		Ascending: true,
+	})
+	if err != nil {
+		return MessageByDateResult{}, err
+	}
+	if len(messages) == 0 {
+		return MessageByDateResult{Message: nil}, nil
+	}
+	return MessageByDateResult{Message: &messages[0]}, nil
 }
 
 func (s *Service) SendMessage(ctx context.Context, input SendMessageInput) (SendMessageResult, error) {

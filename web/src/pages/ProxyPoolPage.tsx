@@ -28,6 +28,30 @@ const initialForm = {
   connectionString: '',
 }
 
+const mockRuntimeStatus: DesktopProxyRuntimeView = {
+  mode: 'auto',
+  status: 'detected',
+  proxy_url: 'http://127.0.0.1:7890',
+  proxy_display_url: 'http://127.0.0.1:7890',
+  proxy_rules: 'PROXY 127.0.0.1:7890',
+  endpoint_reachable: true,
+  exit_ip: '188.166.248.178',
+  route_key: 'mock-system-proxy',
+  checked_at: '2026-09-13T11:42:02+08:00',
+  message: '已检测到系统代理',
+}
+
+const mockLocalProxies: LocalProxyView[] = [
+  createMockProxy(1, '202.155.70.75', '印度尼西亚-雅加达', 'system'),
+  createMockProxy(2, '110.44.172.216', '印度尼西亚-日惹', 'auto'),
+  createMockProxy(3, '45.198.228.105', '印度尼西亚-泗水', 'auto'),
+  createMockProxy(4, '45.198.138.32', '印度尼西亚-万隆', 'direct'),
+  createMockProxy(5, '178.93.218.53', '印度尼西亚-雅加达', 'auto'),
+  createMockProxy(6, '103.28.52.86', '印度尼西亚-棉兰', 'system'),
+  createMockProxy(7, '36.95.142.18', '印度尼西亚-巴厘岛', 'auto', false),
+  createMockProxy(8, '182.253.124.77', '印度尼西亚-三宝垄', 'auto'),
+]
+
 function toDateTimeLocal(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
@@ -35,21 +59,64 @@ function toDateTimeLocal(value: string) {
   return local.toISOString().slice(0, 16)
 }
 
+function createMockProxy(
+  index: number,
+  exitIP: string,
+  country: string,
+  routeMode: RouteMode,
+  enabled = true,
+): LocalProxyView {
+  const suffix = String(index).padStart(2, '0')
+  return {
+    id: `mock-proxy-${suffix}`,
+    name: `印尼代理 ${suffix}`,
+    scheme: 'socks5',
+    host: `static-${suffix}.s5proxy.example`,
+    port: 6600 + index,
+    username: `customer_${suffix}`,
+    exit_ip: exitIP,
+    country,
+    enabled,
+    expires_at: '2026-10-13T23:59:59+08:00',
+    last_checked_at: index === 8 ? undefined : `2026-09-${String(13 - index).padStart(2, '0')}T16:20:00+08:00`,
+    last_check_error: index === 8 ? '等待首次链路检测' : undefined,
+    has_credentials: true,
+    route_mode: routeMode,
+    created_at: '2026-09-01T09:00:00+08:00',
+    updated_at: '2026-09-13T11:42:02+08:00',
+  }
+}
+
+function waitForMockAction() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, 360))
+}
+
 export function ProxyPoolPage() {
-  const [items, setItems] = useState<LocalProxyView[]>([])
+  const mockMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === '1'
+  const [items, setItems] = useState<LocalProxyView[]>(mockMode ? mockLocalProxies : [])
   const [form, setForm] = useState(initialForm)
   const [editingID, setEditingID] = useState<string>()
-  const [loading, setLoading] = useState(true)
+  const [proxyModalOpen, setProxyModalOpen] = useState(false)
+  const [loading, setLoading] = useState(!mockMode)
   const [saving, setSaving] = useState(false)
   const [busyID, setBusyID] = useState<string>()
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [runtimeStatus, setRuntimeStatus] = useState<DesktopProxyRuntimeView>()
+  const [runtimeStatus, setRuntimeStatus] = useState<DesktopProxyRuntimeView | undefined>(mockMode ? mockRuntimeStatus : undefined)
   const [runtimeLoading, setRuntimeLoading] = useState(false)
-  const isDesktopRuntime = Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
+  const isDesktopRuntime = mockMode || Boolean((window as Window & { desktopRuntime?: unknown }).desktopRuntime)
 
   const loadRuntimeStatus = useCallback(async (force = false) => {
     if (!isDesktopRuntime) return
+    if (mockMode) {
+      setRuntimeLoading(force)
+      if (force) {
+        await waitForMockAction()
+      }
+      setRuntimeStatus({ ...mockRuntimeStatus, checked_at: new Date().toISOString() })
+      setRuntimeLoading(false)
+      return
+    }
     setRuntimeLoading(true)
     setRuntimeStatus((current) => ({
       mode: current?.mode ?? 'auto',
@@ -83,9 +150,13 @@ export function ProxyPoolPage() {
     } finally {
       setRuntimeLoading(false)
     }
-  }, [isDesktopRuntime])
+  }, [isDesktopRuntime, mockMode])
 
-  async function load() {
+  const load = useCallback(async () => {
+    if (mockMode) {
+      setLoading(false)
+      return
+    }
     try {
       const response = await listLocalProxies()
       setItems(response.proxies)
@@ -95,20 +166,21 @@ export function ProxyPoolPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [mockMode])
 
   useEffect(() => {
     void load()
-  }, [])
+  }, [load])
 
   useEffect(() => {
     if (!isDesktopRuntime) return
     void loadRuntimeStatus()
+    if (mockMode) return
     const timer = window.setInterval(() => {
       void loadRuntimeStatus(true)
     }, 30_000)
     return () => window.clearInterval(timer)
-  }, [isDesktopRuntime, loadRuntimeStatus])
+  }, [isDesktopRuntime, loadRuntimeStatus, mockMode])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -127,7 +199,26 @@ export function ProxyPoolPage() {
         expires_at: form.expiresAt ? new Date(form.expiresAt).toISOString() : undefined,
         route_mode: form.routeMode,
       }
-      if (editingID) {
+      if (mockMode && editingID) {
+        setItems((current) => current.map((item) => item.id === editingID ? {
+          ...item,
+          ...payload,
+          has_credentials: Boolean(form.password.trim()) || item.has_credentials,
+          updated_at: new Date().toISOString(),
+        } : item))
+        setNotice('代理已更新，账号绑定关系保持不变')
+      } else if (mockMode) {
+        const timestamp = new Date().toISOString()
+        setItems((current) => [{
+          id: `mock-proxy-${Date.now()}`,
+          ...payload,
+          enabled: true,
+          has_credentials: Boolean(form.username.trim() || form.password.trim()),
+          created_at: timestamp,
+          updated_at: timestamp,
+        }, ...current])
+        setNotice('代理已保存到本机演示列表')
+      } else if (editingID) {
         await updateLocalProxy(editingID, { ...payload, password: form.password.trim() || undefined })
         setNotice('代理已更新，账号绑定关系保持不变')
       } else {
@@ -136,7 +227,10 @@ export function ProxyPoolPage() {
       }
       setForm(initialForm)
       setEditingID(undefined)
-      await load()
+      setProxyModalOpen(false)
+      if (!mockMode) {
+        await load()
+      }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存代理失败')
     } finally {
@@ -159,15 +253,26 @@ export function ProxyPoolPage() {
       routeMode: item.route_mode ?? 'auto',
       connectionString: '',
     })
+    setProxyModalOpen(true)
     setError('')
     setNotice('已载入代理配置，密码留空则保持原密码')
   }
 
-  function cancelEdit() {
+  function openCreateModal() {
     setEditingID(undefined)
     setForm(initialForm)
     setError('')
-    setNotice('已取消编辑')
+    setNotice('')
+    setProxyModalOpen(true)
+  }
+
+  function closeProxyModal() {
+    if (saving) return
+    setEditingID(undefined)
+    setForm(initialForm)
+    setError('')
+    setNotice('')
+    setProxyModalOpen(false)
   }
 
   function parseConnectionString() {
@@ -205,6 +310,19 @@ export function ProxyPoolPage() {
     setError('')
     setNotice('')
     try {
+      if (mockMode) {
+        await waitForMockAction()
+        const checkedAt = new Date().toISOString()
+        setItems((current) => current.map((candidate) => candidate.id === item.id ? {
+          ...candidate,
+          exit_ip: candidate.exit_ip || '202.155.70.75',
+          last_checked_at: checkedAt,
+          last_check_error: undefined,
+          updated_at: checkedAt,
+        } : candidate))
+        setNotice(`${item.name} 连接正常，出口 IP：${item.exit_ip ?? '202.155.70.75'}`)
+        return
+      }
       const response = await testLocalProxy(item.id)
       setNotice(`${item.name} 连接正常，出口 IP：${response.proxy.exit_ip ?? '未返回'}`)
       await load()
@@ -221,8 +339,13 @@ export function ProxyPoolPage() {
     setBusyID(item.id)
     setError('')
     try {
-      await deleteLocalProxy(item.id)
-      await load()
+      if (mockMode) {
+        setItems((current) => current.filter((candidate) => candidate.id !== item.id))
+        setNotice(`${item.name} 已从演示列表删除`)
+      } else {
+        await deleteLocalProxy(item.id)
+        await load()
+      }
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : '删除代理失败')
     } finally {
@@ -235,9 +358,19 @@ export function ProxyPoolPage() {
     setError('')
     setNotice('')
     try {
-      await updateLocalProxy(item.id, { enabled: !item.enabled })
+      if (mockMode) {
+        setItems((current) => current.map((candidate) => candidate.id === item.id ? {
+          ...candidate,
+          enabled: !candidate.enabled,
+          updated_at: new Date().toISOString(),
+        } : candidate))
+      } else {
+        await updateLocalProxy(item.id, { enabled: !item.enabled })
+      }
       setNotice(item.enabled ? `${item.name} 已停用` : `${item.name} 已启用`)
-      await load()
+      if (!mockMode) {
+        await load()
+      }
     } catch (toggleError) {
       setError(toggleError instanceof Error ? toggleError.message : '更新代理状态失败')
     } finally {
@@ -246,13 +379,16 @@ export function ProxyPoolPage() {
   }
 
   return (
-    <div className="page page-proxies">
+    <div className="page page-proxies proxy-pool-redesign">
       <div className="page-heading">
         <div>
           <p className="eyebrow">本机连接配置</p>
           <h1>IP 代理池</h1>
         </div>
-        <span className="subtle-text">代理账号密码只保存在当前电脑</span>
+        <div className="proxy-page-actions">
+          <span className="subtle-text">代理账号密码只保存在当前电脑</span>
+          <button className="primary-button" type="button" onClick={openCreateModal}><Icon name="plus" />添加代理</button>
+        </div>
       </div>
 
       {isDesktopRuntime ? (
@@ -261,8 +397,6 @@ export function ProxyPoolPage() {
             <div>
               <p className="eyebrow">第一层：本机网络</p>
               <h3>Clash / 系统代理状态</h3>
-              <p className="desktop-proxy-runtime-message">{runtimeStatus?.message ?? '正在准备本机代理检测...'}</p>
-              <p className="desktop-proxy-runtime-scope">这里只检测第一层 Clash 入口；不会代替下方代理的完整链路检测。</p>
             </div>
             <div className="desktop-proxy-runtime-actions">
               <span className={`proxy-runtime-badge proxy-runtime-${runtimeStatus?.status ?? 'checking'}`}>
@@ -288,52 +422,71 @@ export function ProxyPoolPage() {
         </section>
       ) : null}
 
-      <section className="proxy-workspace">
-        <article className="panel proxy-form-panel">
-          <div className="panel-heading"><div><p className="eyebrow">{editingID ? '编辑代理' : '新增代理'}</p><h3>{editingID ? '更新固定出口配置' : '添加一个固定出口'}</h3></div></div>
-          <form className="form-grid proxy-form-grid" onSubmit={handleSubmit}>
-            <label className="field"><span>名称</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="印尼代理 01" required /></label>
-            <label className="field proxy-connection-field"><span>完整连接串（可选）</span><input value={form.connectionString} onChange={(e) => setForm({ ...form, connectionString: e.target.value })} placeholder="粘贴 socks://..." /><button className="secondary-button" type="button" onClick={parseConnectionString}>解析</button></label>
-            <label className="field"><span>协议</span><select value={form.scheme} onChange={(e) => setForm({ ...form, scheme: e.target.value as Scheme })}><option value="socks5">SOCKS5</option><option value="http">HTTP</option><option value="https">HTTPS</option></select></label>
-            <label className="field"><span>代理地址</span><input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="st01.loongproxy.com" required /></label>
-            <label className="field"><span>代理端口</span><input type="number" min="1" max="65535" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} placeholder="50014" required /></label>
-            <label className="field"><span>账号</span><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></label>
-            <label className="field"><span>密码{editingID ? '（留空不修改）' : ''}</span><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingID} /></label>
-            <label className="field"><span>出口 IP</span><input value={form.exitIP} onChange={(e) => setForm({ ...form, exitIP: e.target.value })} placeholder="可选，用于展示" /></label>
-            <label className="field"><span>国家地区</span><input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="印度尼西亚-日惹" /></label>
-            <label className="field"><span>有效期</span><input type="datetime-local" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} /></label>
-            <label className="field"><span>连接方式</span><select value={form.routeMode} onChange={(e) => setForm({ ...form, routeMode: e.target.value as RouteMode })}><option value="auto">自动选择（有 Clash 就链式）</option><option value="direct">直接连接账号代理</option><option value="system">强制链式（必须经过 Clash）</option></select></label>
-            <div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name={editingID ? 'check' : 'plus'} />{saving ? '保存中...' : editingID ? '保存修改' : '保存到本机'}</button>{editingID ? <button className="secondary-button" type="button" onClick={cancelEdit}>取消编辑</button> : null}</div>
-          </form>
-        </article>
-
-        <article className="panel proxy-saved-panel">
-          <div className="panel-heading"><div><p className="eyebrow">第二层：账号网络</p><h3>账号独立代理</h3><p className="proxy-panel-caption">右侧按钮只检测当前选中的静态代理，不检测左侧新建表单。</p></div><span className="subtle-text">{loading ? '加载中...' : `${items.length} 个代理`}</span></div>
-          <div className="proxy-list-scroll">
-            {items.length === 0 && !loading ? <p className="subtle-text proxy-empty-state">还没有添加代理。</p> : <div className="proxy-list">{items.map((item) => (
-              <div className="proxy-row" key={item.id}>
-                <div><strong>{item.name}</strong><span>{item.scheme.toUpperCase()} · {item.host}:{item.port}</span><span>{routeModeLabel(item.route_mode)} · {item.country ?? '未设置地区'}</span><span>{item.has_credentials ? '账号密码已保存' : '未保存账号密码'}</span><span className={item.enabled ? 'proxy-status-enabled' : 'proxy-status-disabled'}>{item.enabled ? '已启用' : '已停用'}</span></div>
-                <div><span>{item.exit_ip ? `出口 IP ${item.exit_ip}` : '出口 IP 未检测'}</span><span className={item.last_check_error ? 'proxy-error-text' : item.last_checked_at ? 'proxy-status-enabled' : ''}>{proxyCheckLabel(item)}</span>{item.last_check_error ? <span className="proxy-error-text">{item.last_check_error}</span> : null}</div>
-                <div className="button-row"><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => handleEdit(item)}><Icon name="edit" />编辑</button><button className="secondary-button" title="检测当前静态代理到 WhatsApp 的完整连接路径" type="button" disabled={busyID === item.id} onClick={() => void handleTest(item)}><Icon name="shield" />{busyID === item.id ? '检测中...' : '检测完整链路'}</button><button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleToggle(item)}>{item.enabled ? '停用' : '启用'}</button><button className="danger-button" type="button" disabled={busyID === item.id} onClick={() => void handleDelete(item)}><Icon name="delete" />删除</button></div>
-              </div>
-            ))}</div>}
-          </div>
-        </article>
-      </section>
-
-      <section className="panel proxy-help-panel">
-        <div className="panel-heading"><div><p className="eyebrow">使用规则</p><h3>账号连接说明</h3></div></div>
-        <div className="proxy-rules-grid">
-          <div className="proxy-rule-item"><strong>自动判断</strong><p>检测到本机 Clash/系统代理时，账号通过它链式连接独立代理。</p></div>
-          <div className="proxy-rule-item"><strong>直连</strong><p>境外网络可直接连接账号绑定的独立代理。</p></div>
-          <div className="proxy-rule-item"><strong>不绑定</strong><p>账号使用本机网络或 Clash 系统代理。</p></div>
-          <div className="proxy-rule-item"><strong>代理失败</strong><p>不会自动回退到本机 IP。</p></div>
-          <div className="proxy-rule-item"><strong>切换节点</strong><p>Clash 节点变化后，已连接账号会自动重连并跟随新路径。</p></div>
+      <section className="panel proxy-library-panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">第二层：账号网络</p><h3>账号独立代理</h3></div>
+          <span className="subtle-text">{loading ? '加载中...' : `${items.length} 个代理`}</span>
+        </div>
+        <div className="proxy-list-scroll">
+          {items.length === 0 && !loading ? <p className="subtle-text proxy-empty-state">还没有添加代理，点击右上角“添加代理”开始配置。</p> : (
+            <div className="proxy-card-grid">{items.map((item) => (
+              <article className="proxy-card" key={item.id}>
+                <header>
+                  <strong>{item.name}</strong>
+                  <span className={item.enabled ? 'proxy-card-status enabled' : 'proxy-card-status disabled'}>{item.enabled ? '已启用' : '已停用'}</span>
+                </header>
+                <p className="proxy-card-endpoint">{item.scheme.toUpperCase()} · {item.host}:{item.port}</p>
+                <dl>
+                  <div><dt>出口 IP</dt><dd>{item.exit_ip || '未检测'}</dd></div>
+                  <div><dt>地区</dt><dd>{item.country || '未设置'}</dd></div>
+                  <div><dt>连接方式</dt><dd>{routeModeLabel(item.route_mode)}</dd></div>
+                  <div><dt>账号认证</dt><dd>{item.has_credentials ? '已保存' : '未配置'}</dd></div>
+                </dl>
+                <p className={`proxy-card-check ${item.last_check_error ? 'failed' : item.last_checked_at ? 'passed' : ''}`}>{proxyCheckLabel(item)}</p>
+                {item.last_check_error ? <p className="proxy-card-error" title={item.last_check_error}>{item.last_check_error}</p> : null}
+                <footer>
+                  <button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => handleEdit(item)}><Icon name="edit" />编辑</button>
+                  <button className="secondary-button" title="检测当前静态代理到 WhatsApp 的完整连接路径" type="button" disabled={busyID === item.id} onClick={() => void handleTest(item)}><Icon name="shield" />{busyID === item.id ? '检测中...' : '检测链路'}</button>
+                  <button className="secondary-button" type="button" disabled={busyID === item.id} onClick={() => void handleToggle(item)}>{item.enabled ? '停用' : '启用'}</button>
+                  <button className="danger-button" type="button" disabled={busyID === item.id} onClick={() => void handleDelete(item)}><Icon name="delete" />删除</button>
+                </footer>
+              </article>
+            ))}</div>
+          )}
         </div>
       </section>
 
       {notice ? <div className="success-banner">{notice}</div> : null}
       {error ? <div className="error-banner">{error}</div> : null}
+
+      {proxyModalOpen ? (
+        <div className="account-modal-backdrop proxy-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && closeProxyModal()}>
+          <section className="account-modal proxy-modal" role="dialog" aria-modal="true" aria-labelledby="proxy-modal-title">
+            <header className="account-modal-header">
+              <div><p className="eyebrow">{editingID ? '编辑代理' : '新增代理'}</p><h2 id="proxy-modal-title">{editingID ? '更新固定出口配置' : '添加固定出口'}</h2></div>
+              <button className="secondary-button account-modal-close" type="button" onClick={closeProxyModal}>关闭</button>
+            </header>
+            <div className="account-modal-body">
+              <form className="form-grid proxy-form-grid" onSubmit={handleSubmit}>
+                <label className="field"><span>名称</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="印尼代理 01" required /></label>
+                <label className="field proxy-connection-field"><span>完整连接串（可选）</span><input value={form.connectionString} onChange={(e) => setForm({ ...form, connectionString: e.target.value })} placeholder="粘贴 socks://..." /><button className="secondary-button" type="button" onClick={parseConnectionString}>解析</button></label>
+                <label className="field"><span>协议</span><select value={form.scheme} onChange={(e) => setForm({ ...form, scheme: e.target.value as Scheme })}><option value="socks5">SOCKS5</option><option value="http">HTTP</option><option value="https">HTTPS</option></select></label>
+                <label className="field"><span>代理地址</span><input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="st01.loongproxy.com" required /></label>
+                <label className="field"><span>代理端口</span><input type="number" min="1" max="65535" value={form.port} onChange={(e) => setForm({ ...form, port: e.target.value })} placeholder="50014" required /></label>
+                <label className="field"><span>账号</span><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></label>
+                <label className="field"><span>密码{editingID ? '（留空不修改）' : ''}</span><input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingID} /></label>
+                <label className="field"><span>出口 IP</span><input value={form.exitIP} onChange={(e) => setForm({ ...form, exitIP: e.target.value })} placeholder="可选，用于展示" /></label>
+                <label className="field"><span>国家地区</span><input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="印度尼西亚-日惹" /></label>
+                <label className="field"><span>有效期</span><input type="datetime-local" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} /></label>
+                <label className="field"><span>连接方式</span><select value={form.routeMode} onChange={(e) => setForm({ ...form, routeMode: e.target.value as RouteMode })}><option value="auto">自动选择（有 Clash 就链式）</option><option value="direct">直接连接账号代理</option><option value="system">强制链式（必须经过 Clash）</option></select></label>
+                <div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name={editingID ? 'check' : 'plus'} />{saving ? '保存中...' : editingID ? '保存修改' : '保存到本机'}</button><button className="secondary-button" type="button" onClick={closeProxyModal} disabled={saving}>取消</button></div>
+              </form>
+              {notice ? <div className="success-banner">{notice}</div> : null}
+              {error ? <div className="error-banner">{error}</div> : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }

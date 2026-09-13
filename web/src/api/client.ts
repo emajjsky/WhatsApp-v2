@@ -243,6 +243,10 @@ export interface MessageSearchResponse {
   total: number
 }
 
+export interface MessageByDateResponse {
+  message: MessageView | null
+}
+
 export interface SendChatMessagePayload {
   message_text: string
   reply_to_wa_message_id?: string
@@ -1336,6 +1340,13 @@ export async function searchChatMessages(chatId: string, query: string, limit = 
   const searchParams = new URLSearchParams({ query: query.trim(), limit: String(limit) })
   return request<MessageSearchResponse>(
     `/api/chats/${chatId}/search?${searchParams.toString()}`,
+  )
+}
+
+export async function getFirstChatMessageByDate(chatId: string, from: string, to: string) {
+  const searchParams = new URLSearchParams({ from, to })
+  return request<MessageByDateResponse>(
+    `/api/chats/${chatId}/date?${searchParams.toString()}`,
   )
 }
 
