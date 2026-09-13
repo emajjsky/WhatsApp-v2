@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react'
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   createInvitation,
   createUser,
@@ -143,6 +143,10 @@ const permissionOptions: Array<{ value: UserPermission; label: string }> = [
 
 export function AdminPage() {
   const [tab, setTab] = useState<AdminTab>('users')
+  const mockMode = import.meta.env.DEV && new URLSearchParams(window.location.search).get('mock') === '1'
+  if (mockMode) {
+    return <AdminMockPage />
+  }
 
   return (
     <div className="page page-admin">
@@ -226,8 +230,46 @@ function AdminTabButton({
   )
 }
 
+function AdminDialog({
+  title,
+  eyebrow,
+  onClose,
+  children,
+}: {
+  title: string
+  eyebrow: string
+  onClose: () => void
+  children: ReactNode
+}) {
+  return (
+    <div
+      className="admin-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose()
+        }
+      }}
+    >
+      <section className="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title">
+        <header className="admin-dialog-header">
+          <div>
+            <p className="eyebrow">{eyebrow}</p>
+            <h3 id="admin-dialog-title">{title}</h3>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭" title="关闭">
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="admin-dialog-body">{children}</div>
+      </section>
+    </div>
+  )
+}
+
 function UserAdminPanel() {
   const [users, setUsers] = useState<AuthUser[]>([])
+  const [editor, setEditor] = useState<AuthUser | 'new'>()
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
@@ -283,6 +325,7 @@ function UserAdminPanel() {
       setDesktopMaxDevices('1')
       setDesktopExpiresAt('')
       await loadUsers()
+      setEditor(undefined)
       setNotice('用户已创建')
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : '创建用户失败')
@@ -319,85 +362,72 @@ function UserAdminPanel() {
   }
 
   return (
-    <section className="admin-layout">
-      <article className="panel admin-create-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">新建用户</p>
-            <h3>创建后台账号</h3>
-          </div>
-        </div>
-
-        <form className="form-grid" onSubmit={handleCreate}>
-          <label className="field">
-            <span>邮箱</span>
-            <input value={email} onChange={(event) => setEmail(event.target.value)} required />
-          </label>
-          <label className="field">
-            <span>昵称</span>
-            <input
-              value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>初始密码</span>
-            <input
-              type="password"
-              value={password}
-              minLength={8}
-              onChange={(event) => setPassword(event.target.value)}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>角色</span>
-            <select value={role} onChange={(event) => setRole(event.target.value as UserRole)}>
-              <option value="user">普通用户</option>
-              <option value="admin">管理员</option>
-            </select>
-          </label>
-              {role === 'user' ? (
-            <PermissionPicker value={permissions} onChange={setPermissions} />
-          ) : null}
-          <DesktopGrantEditor
-            enabled={desktopEnabled}
-            maxDevices={desktopMaxDevices}
-            expiresAt={desktopExpiresAt}
-            onEnabledChange={setDesktopEnabled}
-            onMaxDevicesChange={setDesktopMaxDevices}
-            onExpiresAtChange={setDesktopExpiresAt}
-          />
-          <button className="primary-button" type="submit" disabled={submitting}>
-            <Icon name="user" />
-            {submitting ? '创建中...' : '创建用户'}
-          </button>
-        </form>
-      </article>
-
-      <article className="panel admin-users-panel">
+    <section className="panel admin-record-page">
+      <div className="admin-record-page-header">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">用户列表</p>
             <h3>{loading ? '加载中' : `${users.length} 个用户`}</h3>
           </div>
+          <button className="primary-button" type="button" onClick={() => {
+            setEmail('')
+            setDisplayName('')
+            setPassword('')
+            setRole('user')
+            setPermissions(permissionOptions.map((item) => item.value))
+            setDesktopEnabled(true)
+            setDesktopMaxDevices('1')
+            setDesktopExpiresAt('')
+            setEditor('new')
+          }}>
+            <Icon name="plus" />
+            创建用户
+          </button>
         </div>
-
-        <div className="admin-user-list">
+      </div>
+      <div className="admin-record-list">
           {users.map((user) => (
-            <UserAdminRow
-              key={user.id}
-              user={user}
-              onUpdate={handlePatchUser}
-              onResetPassword={handleResetPassword}
-            />
+            <article className="admin-record-summary" key={user.id} onDoubleClick={() => setEditor(user)}>
+              <div className="admin-record-summary-main">
+                <span className="admin-record-avatar">{user.display_name.slice(0, 1)}</span>
+                <div>
+                  <strong>{user.display_name}</strong>
+                  <span>{user.email}</span>
+                </div>
+              </div>
+              <div className="admin-record-summary-meta">
+                <span>{user.role === 'admin' ? '管理员' : '普通用户'}</span>
+                <small>{user.status === 'active' ? '正常' : '已停用'} · 桌面端 {user.desktop?.max_devices ?? 1} 台设备</small>
+              </div>
+              <button className="secondary-button" type="button" onClick={() => setEditor(user)}>
+                <Icon name="edit" />
+                编辑
+              </button>
+            </article>
           ))}
-        </div>
-      </article>
+      </div>
 
       {notice ? <div className="success-banner">{notice}</div> : null}
       {error ? <div className="error-banner">{error}</div> : null}
+
+      {editor === 'new' ? (
+        <AdminDialog title="创建后台账号" eyebrow="新建用户" onClose={() => setEditor(undefined)}>
+          <form className="form-grid" onSubmit={handleCreate}>
+            <label className="field"><span>邮箱</span><input value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+            <label className="field"><span>昵称</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label>
+            <label className="field"><span>初始密码</span><input type="password" value={password} minLength={8} onChange={(event) => setPassword(event.target.value)} required /></label>
+            <label className="field"><span>角色</span><select value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="user">普通用户</option><option value="admin">管理员</option></select></label>
+            {role === 'user' ? <PermissionPicker value={permissions} onChange={setPermissions} /> : null}
+            <DesktopGrantEditor enabled={desktopEnabled} maxDevices={desktopMaxDevices} expiresAt={desktopExpiresAt} onEnabledChange={setDesktopEnabled} onMaxDevicesChange={setDesktopMaxDevices} onExpiresAtChange={setDesktopExpiresAt} />
+            <div className="admin-dialog-actions"><button className="secondary-button" type="button" onClick={() => setEditor(undefined)}>取消</button><button className="primary-button" type="submit" disabled={submitting}><Icon name="user" />{submitting ? '创建中...' : '创建用户'}</button></div>
+          </form>
+        </AdminDialog>
+      ) : null}
+      {editor && editor !== 'new' ? (
+        <AdminDialog title={`编辑用户 · ${editor.display_name}`} eyebrow="用户管理" onClose={() => setEditor(undefined)}>
+          <UserAdminRow user={editor} onUpdate={handlePatchUser} onResetPassword={handleResetPassword} />
+        </AdminDialog>
+      ) : null}
     </section>
   )
 }
@@ -437,6 +467,184 @@ function PermissionPicker({
       ))}
     </div>
   )
+}
+
+type MockAdminTab = Exclude<AdminTab, 'usageLogs'>
+
+type MockUser = {
+  id: string
+  name: string
+  email: string
+  role: '管理员' | '普通用户'
+  status: '启用' | '停用'
+  permissions: string[]
+  devices: number
+}
+
+type MockInvitation = {
+  id: string
+  code: string
+  used: number
+  total: number
+  status: '启用' | '停用'
+  note: string
+}
+
+type MockAgent = {
+  id: string
+  name: string
+  purpose: '回复 Agent' | '翻译 Agent' | '状态卡 Agent'
+  provider: string
+  model: string
+  enabled: boolean
+  skills: string[]
+  rolePrompt: string
+}
+
+type MockSkill = {
+  id: string
+  name: string
+  slug: string
+  description: string
+  enabled: boolean
+  markdown: string
+  references: string[]
+}
+
+type MockProvider = {
+  id: string
+  name: string
+  type: string
+  baseUrl: string
+  apiKey: string
+  models: string[]
+  defaultModel: string
+  enabled: boolean
+}
+
+const mockUsers: MockUser[] = [
+  { id: 'u-1', name: 'KKT', email: 'liuchao168928@gmail.com', role: '管理员', status: '启用', permissions: ['管理员全部权限'], devices: 1 },
+  { id: 'u-2', name: '王钱', email: 'wnwygquian@gmail.com', role: '普通用户', status: '启用', permissions: ['账号接入', '对话查看', '导出中心'], devices: 1 },
+  { id: 'u-3', name: '大大', email: '84010505@qq.com', role: '普通用户', status: '启用', permissions: ['账号接入', '对话查看', '导出中心'], devices: 1 },
+  { id: 'u-4', name: '二师兄', email: '84622435@qq.com', role: '普通用户', status: '启用', permissions: ['账号接入', '对话查看', '导出中心'], devices: 1 },
+  { id: 'u-5', name: 'Administrator', email: 'admin@example.com', role: '管理员', status: '启用', permissions: ['管理员全部权限'], devices: 2 },
+]
+
+const mockInvitations: MockInvitation[] = [
+  { id: 'invite-1', code: 'HELLO-WHATSAPP', used: 4, total: 50, status: '启用', note: '客户测试批次' },
+  { id: 'invite-2', code: 'CLIENT-2026', used: 1, total: 10, status: '启用', note: '正式客户' },
+]
+
+const mockAgents: MockAgent[] = [
+  { id: 'agent-1', name: '1#智能体（入群引导）', purpose: '回复 Agent', provider: 'uini vibe', model: 'gpt-5.5', enabled: true, skills: ['入群转化话术'], rolePrompt: '你负责根据客户最新消息，生成自然、简洁的中文客服回复方案。' },
+  { id: 'agent-2', name: '3333', purpose: '回复 Agent', provider: 'siliconflow', model: 'Qwen/Qwen3-32B', enabled: true, skills: ['Brandes 投资学习社群接待话术'], rolePrompt: '你负责识别客户意图并给出下一步可执行的客服回复。' },
+  { id: 'agent-3', name: '中文翻译', purpose: '翻译 Agent', provider: 'uini vibe', model: 'gpt-5.5', enabled: true, skills: [], rolePrompt: '识别原文语言，翻译成系统指定的目标语言，保持原意和格式。' },
+  { id: 'agent-4', name: '客户状态分析', purpose: '状态卡 Agent', provider: 'siliconflow', model: 'Qwen/Qwen3-32B', enabled: false, skills: ['客户状态分析规则'], rolePrompt: '分析客户阶段、客户类型、风险和下一步建议。' },
+]
+
+const mockSkills: MockSkill[] = [
+  { id: 'skill-1', name: 'Brandes 投资学习社群接待话术', slug: 'new-skill', description: '面向投资学习社群的客户接待和转化知识。', enabled: true, markdown: '# Brandes 投资学习社群接待话术\n\n## 何时使用\n客户咨询社群、学习内容或入群流程时使用。\n\n## 使用要求\n- 优先参考 references 中的资料。\n- 回复自然、准确、适合 WhatsApp 客服场景。', references: ['references/brandes-faq.md'] },
+  { id: 'skill-2', name: '入群转化话术', slug: 'group-conversion', description: '处理客户入群咨询、资格确认和后续跟进。', enabled: true, markdown: '# 入群转化话术\n\n## 目标\n帮助客服清晰完成入群引导。', references: ['references/group-rules.md', 'references/faq.md'] },
+]
+
+const mockProviders: MockProvider[] = [
+  { id: 'provider-1', name: 'siliconflow', type: 'OpenAI-compatible', baseUrl: 'https://api.siliconflow.cn/v1', apiKey: 'sk-demo-siliconflow', models: ['Qwen/Qwen3-32B', 'deepseek-ai/DeepSeek-V3', 'THUDM/GLM-4.5'], defaultModel: 'Qwen/Qwen3-32B', enabled: true },
+  { id: 'provider-2', name: 'uini vibe', type: 'OpenAI-compatible', baseUrl: 'https://api.uini.example/v1', apiKey: 'sk-demo-uini', models: ['gpt-5.5', 'gpt-4.1-mini'], defaultModel: 'gpt-5.5', enabled: true },
+]
+
+function AdminMockPage() {
+  const [tab, setTab] = useState<MockAdminTab>('users')
+  const [users, setUsers] = useState(mockUsers)
+  const [invitations, setInvitations] = useState(mockInvitations)
+  const [agents, setAgents] = useState(mockAgents)
+  const [skills, setSkills] = useState(mockSkills)
+  const [providers, setProviders] = useState(mockProviders)
+  const [notice, setNotice] = useState('')
+
+  function notify(message: string) {
+    setNotice(message)
+    window.setTimeout(() => setNotice((current) => current === message ? '' : current), 2200)
+  }
+
+  return (
+    <div className="page page-admin admin-mock-page">
+      <header className="admin-page-header">
+        <nav className="admin-tab-list admin-mock-tabs" aria-label="后台模块">
+          <MockAdminTabButton active={tab === 'users'} title="用户管理" hint="账号、角色、权限" onClick={() => setTab('users')} />
+          <MockAdminTabButton active={tab === 'invitations'} title="邀请码" hint="注册入口控制" onClick={() => setTab('invitations')} />
+          <MockAdminTabButton active={tab === 'agents'} title="智能回复配置" hint="回复和翻译 Agent" onClick={() => setTab('agents')} />
+          <MockAdminTabButton active={tab === 'skills'} title="Skill 管理" hint="话术包和知识目录" onClick={() => setTab('skills')} />
+          <MockAdminTabButton active={tab === 'providerPresets'} title="Provider 配置" hint="密钥和可用模型" onClick={() => setTab('providerPresets')} />
+        </nav>
+      </header>
+      <main className="admin-content">
+        {tab === 'users' ? <MockUsersPanel users={users} onChange={setUsers} onNotify={notify} /> : null}
+        {tab === 'invitations' ? <MockInvitationsPanel invitations={invitations} onChange={setInvitations} onNotify={notify} /> : null}
+        {tab === 'agents' ? <MockAgentsPanel agents={agents} setAgents={setAgents} skills={skills} providers={providers} onNotify={notify} /> : null}
+        {tab === 'skills' ? <MockSkillsPanel skills={skills} setSkills={setSkills} onNotify={notify} /> : null}
+        {tab === 'providerPresets' ? <MockProvidersPanel providers={providers} setProviders={setProviders} onNotify={notify} /> : null}
+      </main>
+      {notice ? <div className="success-banner admin-mock-notice">{notice}</div> : null}
+    </div>
+  )
+}
+
+function MockAdminTabButton({ active, title, hint, onClick }: { active: boolean; title: string; hint: string; onClick: () => void }) {
+  return <button type="button" className={`admin-tab-button${active ? ' active' : ''}`} onClick={onClick}><strong>{title}</strong><span>{hint}</span></button>
+}
+
+function MockModal({ title, eyebrow, onClose, children }: { title: string; eyebrow: string; onClose: () => void; children: ReactNode }) {
+  return <div className="admin-mock-modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="admin-mock-modal" role="dialog" aria-modal="true" aria-labelledby="admin-mock-modal-title"><header><div><p className="eyebrow">{eyebrow}</p><h3 id="admin-mock-modal-title">{title}</h3></div><button className="secondary-button" type="button" onClick={onClose}>关闭</button></header><div className="admin-mock-modal-body">{children}</div></section></div>
+}
+
+function MockAdminListShell({ eyebrow, title, count, createLabel, onCreate, children }: { eyebrow: string; title: string; count: string; createLabel: string; onCreate: () => void; children: ReactNode }) {
+  return <section className="panel admin-mock-list-shell"><header className="admin-mock-list-header"><div><p className="eyebrow">{eyebrow}</p><h3>{title}</h3></div><div className="admin-mock-list-actions"><span className="subtle-text">{count}</span><button className="primary-button" type="button" onClick={onCreate}><Icon name="plus" />{createLabel}</button></div></header><div className="admin-mock-record-list">{children}</div></section>
+}
+
+function MockUsersPanel({ users, onChange, onNotify }: { users: MockUser[]; onChange: (users: MockUser[]) => void; onNotify: (message: string) => void }) {
+  const [draft, setDraft] = useState<MockUser>()
+  const [password, setPassword] = useState('')
+  const openCreate = () => { setDraft({ id: '', name: '', email: '', role: '普通用户', status: '启用', permissions: ['账号接入', '对话查看'], devices: 1 }); setPassword('') }
+  const openEdit = (user: MockUser) => { setDraft({ ...user }); setPassword('') }
+  const close = () => setDraft(undefined)
+  function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!draft) return; const next = draft.id ? users.map((user) => user.id === draft.id ? draft : user) : [{ ...draft, id: `mock-${Date.now()}`, name: draft.name || '新用户', email: draft.email || 'new@example.com' }, ...users]; onChange(next); close(); onNotify(draft.id ? '用户已更新（mock）' : '用户已创建（mock）') }
+  return <><MockAdminListShell eyebrow="用户管理" title="后台用户" count={`${users.length} 个用户`} createLabel="创建用户" onCreate={openCreate}>{users.map((user) => <article className="admin-mock-record" key={user.id} onDoubleClick={() => openEdit(user)}><div className="admin-mock-record-main"><span className="admin-mock-avatar">{user.name.slice(0, 1)}</span><div><strong>{user.name}</strong><span>{user.email}</span><em className={user.status === '启用' ? 'active' : ''}>{user.status} · {user.role}</em></div></div><div className="admin-mock-record-meta"><span>{user.permissions.join('、')}</span><small>桌面端 {user.devices} 台设备</small></div><button className="secondary-button" type="button" onClick={() => openEdit(user)}><Icon name="edit" />编辑</button></article>)}</MockAdminListShell>{draft ? <MockModal title={draft.id ? '编辑后台用户' : '创建后台账号'} eyebrow={draft.id ? '编辑用户' : '新建用户'} onClose={close}><form className="form-grid" onSubmit={save}><div className="mock-two-columns"><label className="field"><span>邮箱</span><input value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} required /></label><label className="field"><span>昵称</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} required /></label></div><label className="field"><span>{draft.id ? '新密码（可选）' : '初始密码'}</span><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} minLength={draft.id ? undefined : 8} required={!draft.id} placeholder={draft.id ? '留空保持原密码' : '至少 8 位'} /></label><div className="mock-two-columns"><label className="field"><span>角色</span><select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as MockUser['role'] })}><option>普通用户</option><option>管理员</option></select></label><label className="field"><span>账号状态</span><select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as MockUser['status'] })}><option>启用</option><option>停用</option></select></label></div><div className="mock-check-grid">{['账号接入', '对话查看', '导出中心', '允许桌面端登录'].map((permission) => <label key={permission}><input type="checkbox" checked={draft.permissions.includes(permission)} onChange={(e) => setDraft({ ...draft, permissions: e.target.checked ? [...draft.permissions, permission] : draft.permissions.filter((item) => item !== permission) })} />{permission}</label>)}</div><div className="mock-two-columns"><label className="field"><span>设备数</span><input type="number" min="1" value={draft.devices} onChange={(e) => setDraft({ ...draft, devices: Number(e.target.value) || 1 })} /></label><span /></div><footer className="admin-mock-modal-footer"><button className="secondary-button" type="button" onClick={close}>取消</button><button className="primary-button" type="submit"><Icon name="save" />保存用户</button></footer></form></MockModal> : null}</>
+}
+
+function MockInvitationsPanel({ invitations, onChange, onNotify }: { invitations: MockInvitation[]; onChange: (items: MockInvitation[]) => void; onNotify: (message: string) => void }) {
+  const [draft, setDraft] = useState<MockInvitation>()
+  const openCreate = () => setDraft({ id: '', code: '', used: 0, total: 10, status: '启用', note: '' })
+  const openEdit = (item: MockInvitation) => setDraft({ ...item })
+  function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!draft) return; const next = draft.id ? invitations.map((item) => item.id === draft.id ? draft : item) : [{ ...draft, id: `mock-${Date.now()}`, code: draft.code || 'NEW-INVITE' }, ...invitations]; onChange(next); setDraft(undefined); onNotify(draft.id ? '邀请码已更新（mock）' : '邀请码已创建（mock）') }
+  return <><MockAdminListShell eyebrow="邀请码" title="注册邀请码" count={`${invitations.length} 个邀请码`} createLabel="创建邀请码" onCreate={openCreate}>{invitations.map((item) => <article className="admin-mock-record" key={item.id} onDoubleClick={() => openEdit(item)}><div className="admin-mock-record-main"><span className="admin-mock-record-icon"><Icon name="key" /></span><div><strong>{item.code}</strong><span>{item.note || '暂无备注'}</span><em className={item.status === '启用' ? 'active' : ''}>{item.status}</em></div></div><div className="admin-mock-record-meta"><span>已用 {item.used}/{item.total}</span><small>普通用户注册入口</small></div><button className="secondary-button" type="button" onClick={() => openEdit(item)}><Icon name="edit" />编辑</button></article>)}</MockAdminListShell>{draft ? <MockModal title={draft.id ? '编辑邀请码' : '创建邀请码'} eyebrow={draft.id ? '编辑邀请码' : '新建邀请码'} onClose={() => setDraft(undefined)}><form className="form-grid" onSubmit={save}><label className="field"><span>邀请码</span><input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder="留空自动生成" /></label><div className="mock-two-columns"><label className="field"><span>可用次数</span><input type="number" min="1" value={draft.total} onChange={(e) => setDraft({ ...draft, total: Number(e.target.value) || 1 })} /></label><label className="field"><span>当前状态</span><select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as MockInvitation['status'] })}><option>启用</option><option>停用</option></select></label></div><label className="field"><span>备注</span><input value={draft.note} onChange={(e) => setDraft({ ...draft, note: e.target.value })} placeholder="例如：客户测试批次" /></label><footer className="admin-mock-modal-footer"><button className="secondary-button" type="button" onClick={() => setDraft(undefined)}>取消</button><button className="primary-button" type="submit"><Icon name="save" />保存邀请码</button></footer></form></MockModal> : null}</>
+}
+
+function MockAgentsPanel({ agents, setAgents, skills, providers, onNotify }: { agents: MockAgent[]; setAgents: (items: MockAgent[]) => void; skills: MockSkill[]; providers: MockProvider[]; onNotify: (message: string) => void }) {
+  const [draft, setDraft] = useState<MockAgent>()
+  const [agentFilter, setAgentFilter] = useState<'all' | MockAgent['purpose']>('all')
+  const openCreate = () => setDraft({ id: '', name: '', purpose: '回复 Agent', provider: providers[0]?.name ?? '', model: providers[0]?.defaultModel ?? '', enabled: true, skills: [], rolePrompt: '' })
+  const openEdit = (agent: MockAgent) => setDraft({ ...agent })
+  function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!draft) return; const next = draft.id ? agents.map((item) => item.id === draft.id ? draft : item) : [{ ...draft, id: `mock-${Date.now()}`, name: draft.name || '新智能体' }, ...agents]; setAgents(next); setDraft(undefined); onNotify(draft.id ? '智能体已更新（mock）' : '智能体已创建（mock）') }
+  const selectedProvider = providers.find((provider) => provider.name === draft?.provider)
+  const visibleAgents = agentFilter === 'all' ? agents : agents.filter((agent) => agent.purpose === agentFilter)
+  return <><MockAdminListShell eyebrow="智能体配置" title="系统智能体" count={`${visibleAgents.length} / ${agents.length} 个智能体`} createLabel="新建智能体" onCreate={openCreate}><nav className="mock-agent-filter" aria-label="智能体类型"><button className={agentFilter === 'all' ? 'active' : ''} type="button" onClick={() => setAgentFilter('all')}>全部<span>{agents.length}</span></button><button className={agentFilter === '翻译 Agent' ? 'active' : ''} type="button" onClick={() => setAgentFilter('翻译 Agent')}>翻译<span>{agents.filter((agent) => agent.purpose === '翻译 Agent').length}</span></button><button className={agentFilter === '回复 Agent' ? 'active' : ''} type="button" onClick={() => setAgentFilter('回复 Agent')}>回复<span>{agents.filter((agent) => agent.purpose === '回复 Agent').length}</span></button><button className={agentFilter === '状态卡 Agent' ? 'active' : ''} type="button" onClick={() => setAgentFilter('状态卡 Agent')}>状态卡<span>{agents.filter((agent) => agent.purpose === '状态卡 Agent').length}</span></button></nav><div className="admin-mock-record-list">{visibleAgents.map((agent) => <article className="admin-mock-record" key={agent.id} onDoubleClick={() => openEdit(agent)}><div className="admin-mock-record-main"><span className="admin-mock-record-icon"><Icon name="chat" /></span><div><strong>{agent.name}</strong><span>{agent.purpose} · {agent.provider} / {agent.model}</span><em className={agent.enabled ? 'active' : ''}>{agent.enabled ? '已启用' : '未启用'}</em></div></div><div className="admin-mock-record-meta"><span>{agent.skills.length ? `已绑定 ${agent.skills.length} 个 Skill` : '未绑定 Skill'}</span><small>角色提示词已配置</small></div><button className="secondary-button" type="button" onClick={() => openEdit(agent)}><Icon name="edit" />编辑</button></article>)}</div></MockAdminListShell>{draft ? <MockModal title={draft.id ? '编辑智能体' : '新建智能体'} eyebrow="智能回复配置" onClose={() => setDraft(undefined)}><form className="form-grid" onSubmit={save}><div className="mock-two-columns"><label className="field"><span>智能体名称</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} required /></label><label className="field"><span>智能体类型</span><select value={draft.purpose} onChange={(e) => setDraft({ ...draft, purpose: e.target.value as MockAgent['purpose'] })}><option>回复 Agent</option><option>翻译 Agent</option><option>状态卡 Agent</option></select></label></div><label className="mock-toggle"><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />启用当前智能体</label><div className="mock-two-columns"><label className="field"><span>Provider</span><select value={draft.provider} onChange={(e) => { const provider = providers.find((item) => item.name === e.target.value); setDraft({ ...draft, provider: e.target.value, model: provider?.defaultModel ?? '' }) }}>{providers.map((provider) => <option key={provider.id}>{provider.name}</option>)}</select></label><label className="field"><span>默认模型</span><select value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })}>{(selectedProvider?.models ?? [draft.model]).map((model) => <option key={model}>{model}</option>)}</select></label></div><div className="mock-skill-bindings">{skills.map((skill) => <label key={skill.id}><input type="checkbox" checked={draft.skills.includes(skill.name)} onChange={(e) => setDraft({ ...draft, skills: e.target.checked ? [...draft.skills, skill.name] : draft.skills.filter((name) => name !== skill.name) })} />{skill.name}</label>)}</div><label className="field"><span>角色与功能要求</span><textarea rows={5} value={draft.rolePrompt} onChange={(e) => setDraft({ ...draft, rolePrompt: e.target.value })} placeholder="填写角色、功能和处理边界" required /></label><footer className="admin-mock-modal-footer"><button className="secondary-button" type="button" onClick={() => setDraft(undefined)}>取消</button><button className="primary-button" type="submit"><Icon name="save" />保存智能体</button></footer></form></MockModal> : null}</>
+}
+
+function MockSkillsPanel({ skills, setSkills, onNotify }: { skills: MockSkill[]; setSkills: (items: MockSkill[]) => void; onNotify: (message: string) => void }) {
+  const [draft, setDraft] = useState<MockSkill>()
+  const openCreate = () => setDraft({ id: '', name: '', slug: '', description: '', enabled: true, markdown: '# 新建 Skill\n\n## 何时使用\n', references: ['references/new-reference.md'] })
+  const openEdit = (skill: MockSkill) => setDraft({ ...skill, references: [...skill.references] })
+  function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!draft) return; const next = draft.id ? skills.map((item) => item.id === draft.id ? draft : item) : [{ ...draft, id: `mock-${Date.now()}`, name: draft.name || '新建 Skill', slug: draft.slug || 'new-skill' }, ...skills]; setSkills(next); setDraft(undefined); onNotify(draft.id ? 'Skill 已更新（mock）' : 'Skill 已创建（mock）') }
+  return <><MockAdminListShell eyebrow="Agent Skills" title="Skill 目录" count={`${skills.length} 个 Skill`} createLabel="新建 Skill" onCreate={openCreate}>{skills.map((skill) => <article className="admin-mock-record" key={skill.id} onDoubleClick={() => openEdit(skill)}><div className="admin-mock-record-main"><span className="admin-mock-record-icon"><Icon name="fileText" /></span><div><strong>{skill.name}</strong><span>{skill.slug} · {skill.description || '暂无说明'}</span><em className={skill.enabled ? 'active' : ''}>{skill.enabled ? '已启用' : '未启用'} · {skill.references.length + 1} 个文件</em></div></div><div className="admin-mock-record-meta"><span>SKILL.md</span><small>{skill.references.length} 个 references / assets</small></div><button className="secondary-button" type="button" onClick={() => openEdit(skill)}><Icon name="edit" />编辑</button></article>)}</MockAdminListShell>{draft ? <MockModal title={draft.id ? '编辑 Skill' : '新建 Skill'} eyebrow="Skill 管理" onClose={() => setDraft(undefined)}><form className="form-grid" onSubmit={save}><div className="mock-two-columns"><label className="field"><span>名称</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} required /></label><label className="field"><span>目录名</span><input value={draft.slug} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} required /></label></div><label className="field"><span>说明</span><input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label><label className="mock-toggle"><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />启用这个 Skill</label><label className="field"><span>SKILL.md</span><textarea className="mock-markdown-editor" value={draft.markdown} onChange={(e) => setDraft({ ...draft, markdown: e.target.value })} rows={12} /></label><section className="mock-reference-editor"><header><strong>references / assets</strong><button className="secondary-button" type="button" onClick={() => setDraft({ ...draft, references: [...draft.references, `references/new-${draft.references.length + 1}.md`] })}><Icon name="plus" />新增文件</button></header>{draft.references.map((reference, index) => <div className="mock-reference-row" key={`${reference}-${index}`}><Icon name="fileText" /><input value={reference} onChange={(e) => setDraft({ ...draft, references: draft.references.map((item, itemIndex) => itemIndex === index ? e.target.value : item) })} /><select defaultValue="reference"><option>reference</option><option>asset</option></select></div>)}</section><footer className="admin-mock-modal-footer"><button className="secondary-button" type="button" onClick={() => setDraft(undefined)}>取消</button><button className="primary-button" type="submit"><Icon name="save" />保存 Skill</button></footer></form></MockModal> : null}</>
+}
+
+function MockProvidersPanel({ providers, setProviders, onNotify }: { providers: MockProvider[]; setProviders: (items: MockProvider[]) => void; onNotify: (message: string) => void }) {
+  const [draft, setDraft] = useState<MockProvider>()
+  const openCreate = () => setDraft({ id: '', name: '', type: 'OpenAI-compatible', baseUrl: '', apiKey: '', models: [], defaultModel: '', enabled: true })
+  const openEdit = (provider: MockProvider) => setDraft({ ...provider, models: [...provider.models] })
+  function detectModels() { if (!draft) return; const models = draft.models.length ? draft.models : ['gpt-5.5', 'gpt-4.1-mini']; setDraft({ ...draft, models, defaultModel: draft.defaultModel || models[0] }); onNotify('已检测到可用模型（mock）') }
+  function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!draft) return; const next = draft.id ? providers.map((item) => item.id === draft.id ? draft : item) : [{ ...draft, id: `mock-${Date.now()}`, name: draft.name || '新 Provider' }, ...providers]; setProviders(next); setDraft(undefined); onNotify(draft.id ? 'Provider 已更新（mock）' : 'Provider 已创建（mock）') }
+  return <><MockAdminListShell eyebrow="Provider / Model" title="Provider 预设" count={`${providers.length} 个 Provider`} createLabel="新建 Provider" onCreate={openCreate}>{providers.map((provider) => <article className="admin-mock-record" key={provider.id} onDoubleClick={() => openEdit(provider)}><div className="admin-mock-record-main"><span className="admin-mock-record-icon"><Icon name="key" /></span><div><strong>{provider.name}</strong><span>{provider.type} · {provider.baseUrl}</span><em className={provider.enabled ? 'active' : ''}>{provider.enabled ? '已启用' : '未启用'} · 默认 {provider.defaultModel || '未选择'}</em></div></div><div className="admin-mock-record-meta"><span>{provider.models.length} 个可用模型</span><small>API Key 已配置</small></div><button className="secondary-button" type="button" onClick={() => openEdit(provider)}><Icon name="edit" />编辑</button></article>)}</MockAdminListShell>{draft ? <MockModal title={draft.id ? '编辑 Provider' : '新建 Provider'} eyebrow="Provider 配置" onClose={() => setDraft(undefined)}><form className="form-grid" onSubmit={save}><div className="mock-two-columns"><label className="field"><span>预设名称</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} required /></label><label className="field"><span>Provider 类型</span><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}><option>OpenAI-compatible</option><option>Coze</option><option>n8n</option><option>Webhook</option></select></label></div><label className="field"><span>Base URL / API 地址</span><input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://api.example.com/v1" required /></label><label className="field"><span>API Key</span><input type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} placeholder="请输入 API Key" required /></label><div className="mock-model-detect"><div><strong>可用模型</strong><span>{draft.models.length ? `${draft.models.length} 个模型已检测` : '尚未检测模型'}</span></div><button className="secondary-button" type="button" onClick={detectModels}><Icon name="search" />检测可用模型</button></div>{draft.models.length ? <div className="mock-model-list">{draft.models.map((model) => <span key={model}>{model}</span>)}</div> : null}<div className="mock-two-columns"><label className="field"><span>默认模型</span><select value={draft.defaultModel} onChange={(e) => setDraft({ ...draft, defaultModel: e.target.value })} disabled={!draft.models.length}><option value="">请先检测模型</option>{draft.models.map((model) => <option key={model}>{model}</option>)}</select></label><label className="mock-toggle mock-toggle-box"><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />允许智能体使用</label></div><footer className="admin-mock-modal-footer"><button className="secondary-button" type="button" onClick={() => setDraft(undefined)}>取消</button><button className="primary-button" type="submit"><Icon name="save" />保存 Provider</button></footer></form></MockModal> : null}</>
 }
 
 function DesktopGrantEditor({
@@ -734,6 +942,7 @@ function DesktopUserControls({
 function SkillAdminPanel() {
   const [skills, setSkills] = useState<AgentSkillView[]>([])
   const [selectedSkillId, setSelectedSkillId] = useState('new')
+  const [editorOpen, setEditorOpen] = useState(false)
   const [skillForm, setSkillForm] = useState<SkillForm>(() => createDefaultSkillForm())
   const [fileForm, setFileForm] = useState<SkillFileForm>(() => createDefaultSkillFileForm())
   const [selectedFileId, setSelectedFileId] = useState('new')
@@ -814,6 +1023,7 @@ function SkillAdminPanel() {
         response.skill,
       ].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')))
       setSelectedSkillId(response.skill.id)
+      setEditorOpen(false)
       setNotice('Skill 已保存')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存 Skill 失败')
@@ -836,6 +1046,7 @@ function SkillAdminPanel() {
       await deleteAgentSkill(selectedSkill.id)
       setSkills((current) => current.filter((item) => item.id !== selectedSkill.id))
       setSelectedSkillId('new')
+      setEditorOpen(false)
       setNotice('Skill 已删除')
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : '删除 Skill 失败')
@@ -913,19 +1124,31 @@ function SkillAdminPanel() {
   }
 
   return (
-    <section className="panel admin-skill-panel">
-      <div className="panel-heading">
+    <section className="panel admin-record-page admin-skill-record-page">
+      <div className="admin-record-page-header">
+        <div className="panel-heading">
         <div>
           <p className="eyebrow">Agent Skills</p>
           <h3>{loading ? '加载 Skill 中' : `${skills.length} 个 Skill`}</h3>
         </div>
-        <button className="secondary-button" type="button" onClick={() => setSelectedSkillId('new')}>
+        <button className="primary-button" type="button" onClick={() => { setSelectedSkillId('new'); setEditorOpen(true) }}>
           <Icon name="plus" />
           新建 Skill
         </button>
       </div>
+      </div>
 
-      <div className="admin-skill-workbench">
+      <div className="admin-record-list">
+        {skills.length ? skills.map((skill) => (
+          <article className="admin-record-summary" key={skill.id} onDoubleClick={() => { setSelectedSkillId(skill.id); setEditorOpen(true) }}>
+            <div className="admin-record-summary-main"><span className="admin-record-avatar"><Icon name="fileText" /></span><div><strong>{skill.name}</strong><span>{skill.slug} · {skill.description || '暂无说明'}</span></div></div>
+            <div className="admin-record-summary-meta"><span>{skill.enabled ? '已启用' : '已停用'}</span><small>{skill.files?.length ?? 0} 个文件</small></div>
+            <button className="secondary-button" type="button" onClick={() => { setSelectedSkillId(skill.id); setEditorOpen(true) }}><Icon name="edit" />编辑</button>
+          </article>
+        )) : <div className="system-agent-empty">还没有 Skill</div>}
+      </div>
+
+      {editorOpen ? <AdminDialog title={selectedSkill ? `编辑 Skill · ${selectedSkill.name}` : '新建 Skill'} eyebrow="Skill 管理" onClose={() => setEditorOpen(false)}><div className="admin-skill-dialog-content"><div className="admin-skill-workbench">
         <aside className="admin-skill-list">
           {skills.length ? (
             skills.map((skill) => (
@@ -1105,7 +1328,7 @@ function SkillAdminPanel() {
             </div>
           </section>
         </div>
-      </div>
+      </div></div></AdminDialog> : null}
 
       {notice ? <div className="success-banner">{notice}</div> : null}
       {error ? <div className="error-banner">{error}</div> : null}
@@ -1132,6 +1355,7 @@ function normalizeUserDesktopGrant(value?: DesktopGrant): DesktopGrant {
 
 function InvitationAdminPanel() {
   const [items, setItems] = useState<InvitationCodeView[]>([])
+  const [editor, setEditor] = useState<InvitationCodeView | 'new'>()
   const [code, setCode] = useState('')
   const [maxUses, setMaxUses] = useState('1')
   const [expiresAt, setExpiresAt] = useState('')
@@ -1177,6 +1401,7 @@ function InvitationAdminPanel() {
       setExpiresAt('')
       setNote('')
       await loadItems()
+      setEditor(undefined)
       setNotice('邀请码已创建')
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : '创建邀请码失败')
@@ -1198,65 +1423,31 @@ function InvitationAdminPanel() {
   }
 
   return (
-    <section className="admin-layout">
-      <article className="panel admin-create-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">新建邀请码</p>
-            <h3>控制普通用户注册</h3>
-          </div>
-        </div>
-
-        <form className="form-grid" onSubmit={handleCreate}>
-          <label className="field">
-            <span>邀请码</span>
-            <input
-              value={code}
-              placeholder="留空自动生成"
-              onChange={(event) => setCode(event.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>可用次数</span>
-            <input
-              type="number"
-              min={1}
-              value={maxUses}
-              onChange={(event) => setMaxUses(event.target.value)}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>过期时间</span>
-            <input
-              type="datetime-local"
-              value={expiresAt}
-              onChange={(event) => setExpiresAt(event.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>备注</span>
-            <input value={note} onChange={(event) => setNote(event.target.value)} />
-          </label>
-          <button className="primary-button" type="submit" disabled={submitting}>
-            <Icon name="key" />
-            {submitting ? '创建中...' : '创建邀请码'}
-          </button>
-        </form>
-      </article>
-
-      <article className="panel admin-users-panel">
+    <section className="panel admin-record-page">
+      <div className="admin-record-page-header">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">邀请码列表</p>
             <h3>{loading ? '加载中' : `${items.length} 个邀请码`}</h3>
           </div>
+          <button className="primary-button" type="button" onClick={() => {
+            setCode('')
+            setMaxUses('1')
+            setExpiresAt('')
+            setNote('')
+            setEditor('new')
+          }}>
+            <Icon name="plus" />
+            创建邀请码
+          </button>
         </div>
-
-        <div className="admin-user-list">
+      </div>
+      <div className="admin-record-list">
           {items.map((item) => (
-            <div key={item.id} className="admin-user-row invitation-row">
-              <div>
+            <article key={item.id} className="admin-record-summary" onDoubleClick={() => setEditor(item)}>
+              <div className="admin-record-summary-main">
+                <span className="admin-record-avatar"><Icon name="key" /></span>
+                <div>
                 <strong>{item.code}</strong>
                 <span>
                   已用 {item.used_count}/{item.max_uses}
@@ -1264,54 +1455,47 @@ function InvitationAdminPanel() {
                 </span>
                 {item.note ? <small>{item.note}</small> : null}
               </div>
-              <select
-                value={item.status}
-                onChange={(event) =>
-                  void handlePatch(item, { status: event.target.value as InvitationStatus })
-                }
-              >
-                <option value="active">启用</option>
-                <option value="disabled">禁用</option>
-              </select>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  const nextMaxUses = window.prompt('请输入新的可用次数', String(item.max_uses))
-                  if (!nextMaxUses) {
-                    return
-                  }
-                  const parsed = Number(nextMaxUses)
-                  if (Number.isFinite(parsed)) {
-                    void handlePatch(item, { max_uses: parsed })
-                  }
-                }}
-              >
-                <Icon name="edit" />
-                修改次数
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => {
-                  const nextNote = window.prompt('请输入备注', item.note)
-                  if (nextNote !== null) {
-                    void handlePatch(item, { note: nextNote })
-                  }
-                }}
-              >
-                <Icon name="edit" />
-                备注
-              </button>
-            </div>
+              </div>
+              <div className="admin-record-summary-meta"><span>{item.status === 'active' ? '启用' : '禁用'}</span><small>注册入口控制</small></div>
+              <button className="secondary-button" type="button" onClick={() => setEditor(item)}><Icon name="edit" />编辑</button>
+            </article>
           ))}
-        </div>
-      </article>
+      </div>
 
       {notice ? <div className="success-banner">{notice}</div> : null}
       {error ? <div className="error-banner">{error}</div> : null}
+      {editor === 'new' ? (
+        <AdminDialog title="创建邀请码" eyebrow="新建邀请码" onClose={() => setEditor(undefined)}>
+          <form className="form-grid" onSubmit={handleCreate}>
+            <label className="field"><span>邀请码</span><input value={code} placeholder="留空自动生成" onChange={(event) => setCode(event.target.value)} /></label>
+            <label className="field"><span>可用次数</span><input type="number" min={1} value={maxUses} onChange={(event) => setMaxUses(event.target.value)} required /></label>
+            <label className="field"><span>过期时间</span><input type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label>
+            <label className="field"><span>备注</span><input value={note} onChange={(event) => setNote(event.target.value)} /></label>
+            <div className="admin-dialog-actions"><button className="secondary-button" type="button" onClick={() => setEditor(undefined)}>取消</button><button className="primary-button" type="submit" disabled={submitting}><Icon name="key" />{submitting ? '创建中...' : '创建邀请码'}</button></div>
+          </form>
+        </AdminDialog>
+      ) : null}
+      {editor && editor !== 'new' ? <InvitationAdminEditor item={editor} onSave={async (patch) => { await handlePatch(editor, patch); await loadItems(); setEditor(undefined) }} onClose={() => setEditor(undefined)} /> : null}
     </section>
   )
+}
+
+function InvitationAdminEditor({ item, onSave, onClose }: { item: InvitationCodeView; onSave: (patch: { status?: InvitationStatus; max_uses?: number; expires_at?: string; note?: string }) => Promise<void>; onClose: () => void }) {
+  const [status, setStatus] = useState(item.status)
+  const [maxUses, setMaxUses] = useState(String(item.max_uses))
+  const [expiresAt, setExpiresAt] = useState(toDateTimeLocal(item.expires_at))
+  const [note, setNote] = useState(item.note)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const parsed = Number(maxUses)
+    if (!Number.isFinite(parsed) || parsed < 1) { setError('可用次数必须大于 0'); return }
+    setSaving(true)
+    setError('')
+    try { await onSave({ status, max_uses: parsed, expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined, note: note.trim() }); } catch (saveError) { setError(saveError instanceof Error ? saveError.message : '保存邀请码失败') } finally { setSaving(false) }
+  }
+  return <AdminDialog title={`编辑邀请码 · ${item.code}`} eyebrow="邀请码管理" onClose={onClose}><form className="form-grid" onSubmit={submit}><label className="field"><span>邀请码</span><input value={item.code} readOnly /></label><label className="field"><span>可用次数</span><input type="number" min={1} value={maxUses} onChange={(event) => setMaxUses(event.target.value)} required /></label><label className="field"><span>状态</span><select value={status} onChange={(event) => setStatus(event.target.value as InvitationStatus)}><option value="active">启用</option><option value="disabled">禁用</option></select></label><label className="field"><span>过期时间</span><input type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label><label className="field"><span>备注</span><input value={note} onChange={(event) => setNote(event.target.value)} /></label>{error ? <div className="error-banner">{error}</div> : null}<div className="admin-dialog-actions"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" type="submit" disabled={saving}><Icon name="save" />{saving ? '保存中...' : '保存邀请码'}</button></div></form></AdminDialog>
 }
 
 function AssistantUsageLogPanel() {
@@ -1541,7 +1725,7 @@ function AssistantUsageLogPanel() {
             {loading ? '正在加载...' : '暂无采纳数据'}
           </div>
         )}
-      </div>
+       </div>
     </section>
   )
 }
@@ -1549,6 +1733,7 @@ function AssistantUsageLogPanel() {
 function ProviderPresetPanel() {
   const [presets, setPresets] = useState<ProviderPresetView[]>([])
   const [selectedId, setSelectedId] = useState('new')
+  const [editorOpen, setEditorOpen] = useState(false)
   const [form, setForm] = useState<ProviderPresetForm>(() => createDefaultProviderPresetForm())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -1605,6 +1790,7 @@ function ProviderPresetPanel() {
       })
       setPresets((current) => [...current.filter((item) => item.id !== response.preset.id), response.preset])
       setSelectedId(response.preset.id)
+      setEditorOpen(false)
       setNotice('Provider 配置已保存')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存 Provider 配置失败')
@@ -1659,6 +1845,7 @@ function ProviderPresetPanel() {
       await deleteProviderPreset(selected.id)
       setPresets((current) => current.filter((item) => item.id !== selected.id))
       setSelectedId('new')
+      setEditorOpen(false)
       setNotice('Provider 配置已删除')
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : '删除 Provider 配置失败')
@@ -1668,17 +1855,18 @@ function ProviderPresetPanel() {
   }
 
   return (
-    <section className="panel admin-agent-panel provider-preset-panel">
-      <div className="panel-heading"><div><p className="eyebrow">Provider / Model</p><h3>{loading ? '加载配置中' : 'Provider 配置'}</h3></div></div>
-      <div className="admin-agent-workbench">
-        <aside className="admin-agent-sidebar">
-          <div className="system-agent-selector-head"><strong>已保存预设</strong><button className="secondary-button" type="button" onClick={() => setSelectedId('new')} disabled={selectedId === 'new'}><Icon name="plus" />新建</button></div>
+    <section className="panel admin-record-page provider-preset-panel">
+      <div className="admin-record-page-header"><div className="panel-heading"><div><p className="eyebrow">Provider / Model</p><h3>{loading ? '加载配置中' : `${presets.length} 个 Provider`}</h3></div><button className="primary-button" type="button" onClick={() => { setSelectedId('new'); setEditorOpen(true) }}><Icon name="plus" />新建 Provider</button></div></div>
+      <div className="admin-record-list">
+        <aside className="admin-record-list-inner">
+          <div className="admin-list-caption"><strong>已保存 Provider</strong><span>点击项目编辑连接信息、模型和启用状态</span></div>
           <div className="system-agent-list">
-            {presets.map((preset) => <button key={preset.id} type="button" className={`system-agent-item${preset.id === selectedId ? ' active' : ''}`} onClick={() => setSelectedId(preset.id)}><span><strong>{preset.name}</strong><small>{preset.enabled ? '已启用' : '已停用'}</small></span><small>{preset.provider_type}</small></button>)}
+            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="admin-record-summary-main"><strong>{preset.name}</strong><span>{preset.provider_type} · {preset.base_url}</span></span><span className="admin-record-summary-meta"><span>{preset.enabled ? '已启用' : '已停用'}</span><small>{preset.models.length} 个模型 · 默认 {preset.default_model || '未选择'}</small></span><Icon name="chevronRight" /></button>)}
             {!presets.length ? <div className="system-agent-empty">还没有 Provider 配置</div> : null}
           </div>
         </aside>
-        <form className="agent-config-form admin-agent-editor" onSubmit={handleSubmit}>
+      </div>
+      {editorOpen ? <AdminDialog title={selected ? `编辑 Provider · ${selected.name}` : '新建 Provider'} eyebrow="Provider 配置" onClose={() => setEditorOpen(false)}><form className="agent-config-form" onSubmit={handleSubmit}>
           <div className="admin-agent-editor-body">
             <section className="admin-form-section">
               <div className="admin-form-section-title"><strong>连接信息</strong><span>智能体直接使用这里保存的密钥和模型</span></div>
@@ -1701,8 +1889,9 @@ function ProviderPresetPanel() {
             </section>
           </div>
           <div className="admin-agent-actions">{notice ? <div className="success-banner">{notice}</div> : null}{error ? <div className="error-banner">{error}</div> : null}<div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name="save" />{saving ? '保存中...' : '保存 Provider'}</button>{selected ? <button className="danger-button" type="button" onClick={() => void handleDelete()} disabled={saving}><Icon name="delete" />删除 Provider</button> : null}</div></div>
-        </form>
-      </div>
+        </form></AdminDialog> : null}
+      {notice ? <div className="success-banner">{notice}</div> : null}
+      {error ? <div className="error-banner">{error}</div> : null}
     </section>
   )
 }
@@ -1725,6 +1914,7 @@ function SystemAgentPanel() {
   const [providerPresets, setProviderPresets] = useState<ProviderPresetView[]>([])
   const [purpose, setPurpose] = useState<AgentPurpose>('reply')
   const [selectedConfigId, setSelectedConfigId] = useState('new')
+  const [editorOpen, setEditorOpen] = useState(false)
   const [form, setForm] = useState<AgentConfigForm>(() => createDefaultConfigForm('reply'))
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -1844,6 +2034,7 @@ function SystemAgentPanel() {
         response.config,
       ])
       setSelectedConfigId(response.config.id)
+      setEditorOpen(false)
       setNotice('智能体配置已保存')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存智能体配置失败')
@@ -1870,6 +2061,7 @@ function SystemAgentPanel() {
       await deleteSystemAgentConfig(selectedConfig.id)
       setConfigs((current) => current.filter((item) => item.id !== selectedConfig.id))
       setSelectedConfigId('new')
+      setEditorOpen(false)
       setNotice('智能体已删除')
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : '删除智能体失败')
@@ -1879,15 +2071,35 @@ function SystemAgentPanel() {
   }
 
   return (
-    <section className="panel admin-agent-panel">
-      <div className="panel-heading">
+    <section className="panel admin-record-page admin-agent-record-page">
+      <div className="admin-record-page-header">
+        <div className="panel-heading">
         <div>
           <p className="eyebrow">系统智能体</p>
-          <h3>{loading ? '加载配置中' : getPurposeTitle(purpose)}</h3>
+          <h3>{loading ? '加载配置中' : `${configs.length} 个智能体`}</h3>
         </div>
+        <button className="primary-button" type="button" onClick={() => { setSelectedConfigId('new'); setEditorOpen(true) }}>
+          <Icon name="plus" />
+          新建智能体
+        </button>
+      </div>
       </div>
 
-      <div className="admin-agent-workbench">
+      <nav className="admin-purpose-switch admin-purpose-switch-top" aria-label="智能体类型">
+        <button type="button" className={`admin-purpose-button${purpose === 'reply' ? ' active' : ''}`} onClick={() => setPurpose('reply')}><strong>回复 Agent</strong><span>{configs.filter((config) => config.purpose === 'reply').length}</span></button>
+        <button type="button" className={`admin-purpose-button${purpose === 'translation' ? ' active' : ''}`} onClick={() => setPurpose('translation')}><strong>翻译 Agent</strong><span>{configs.filter((config) => config.purpose === 'translation').length}</span></button>
+        <button type="button" className={`admin-purpose-button${purpose === 'status_card' ? ' active' : ''}`} onClick={() => setPurpose('status_card')}><strong>状态卡 Agent</strong><span>{configs.filter((config) => config.purpose === 'status_card').length}</span></button>
+      </nav>
+
+      <div className="admin-record-list">
+        {purposeConfigs.length ? purposeConfigs.map((config) => {
+          const presetID = readConfigString(config.provider_config ?? {}, 'preset_id')
+          const providerName = providerPresets.find((preset) => preset.id === presetID)?.name
+          return <article className="admin-record-summary" key={config.id} onDoubleClick={() => { setSelectedConfigId(config.id); setEditorOpen(true) }}><div className="admin-record-summary-main"><span className="admin-record-avatar"><Icon name="chat" /></span><div><strong>{config.name}</strong><span>{getPurposeTitle(config.purpose)} · {providerName || '待选择 Provider'}</span></div></div><div className="admin-record-summary-meta"><span>{config.enabled ? '已启用' : '未启用'}</span><small>{readConfigString(config.provider_config ?? {}, 'model') || '未选择模型'}</small></div><button className="secondary-button" type="button" onClick={() => { setSelectedConfigId(config.id); setEditorOpen(true) }}><Icon name="edit" />编辑</button></article>
+        }) : <div className="system-agent-empty">当前类型还没有智能体</div>}
+      </div>
+
+      {editorOpen ? <AdminDialog title={selectedConfig ? `编辑智能体 · ${selectedConfig.name}` : `新建${getPurposeTitle(purpose)}`} eyebrow="智能回复配置" onClose={() => setEditorOpen(false)}><div className="admin-agent-workbench">
         <aside className="admin-agent-sidebar">
           <div className="admin-purpose-switch">
             <button
@@ -2183,7 +2395,7 @@ function SystemAgentPanel() {
             </div>
           </div>
         </form>
-      </div>
+      </div></AdminDialog> : null}
     </section>
   )
 }
@@ -2522,6 +2734,18 @@ function formatDateTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function toDateTimeLocal(value?: string) {
+  if (!value) {
+    return ''
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 function formatByteSize(value: number) {

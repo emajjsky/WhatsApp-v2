@@ -1678,6 +1678,1205 @@ a {
   }
 }
 
+/* Admin mock workspace. This branch is development-only and intentionally
+   keeps its state in the page so the layout can be reviewed safely. */
+.page.page-admin.admin-mock-page {
+  --admin-green: #00a884;
+  --admin-soft-green: #e7f8f0;
+  --admin-ink: #111b21;
+  --admin-muted: #667781;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 18px 18px 14px;
+  overflow: hidden;
+}
+
+.admin-mock-page .admin-page-header {
+  flex: 0 0 auto;
+  min-height: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.admin-mock-page .admin-page-header h2 {
+  color: var(--admin-ink);
+  font-size: 34px;
+  letter-spacing: 0;
+}
+
+.admin-mock-page .admin-page-header .eyebrow {
+  color: var(--admin-green);
+}
+
+.admin-mock-tabs {
+  width: min(100%, 970px);
+  min-width: 0;
+  max-width: 970px;
+}
+
+.admin-mock-tabs .admin-tab-button {
+  min-width: 112px;
+}
+
+.admin-mock-page .admin-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.admin-mock-page .admin-layout,
+.admin-mock-single-layout,
+.admin-mock-agent-layout,
+.admin-mock-skill-layout,
+.admin-mock-provider-layout {
+  height: 100%;
+  min-height: 0;
+}
+
+.admin-mock-layout {
+  grid-template-columns: minmax(290px, 360px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.admin-mock-layout > .panel,
+.admin-mock-single-layout > .panel,
+.admin-mock-agent-layout > .panel,
+.admin-mock-skill-layout > .panel,
+.admin-mock-provider-layout > .panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  box-shadow: 0 8px 26px rgba(17, 27, 33, 0.06);
+}
+
+.admin-mock-form-panel {
+  overflow-y: auto !important;
+}
+
+.admin-mock-form-panel .form-grid {
+  gap: 10px;
+}
+
+.admin-mock-form-panel .field input,
+.admin-mock-form-panel .field select {
+  min-height: 38px;
+}
+
+.mock-check-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 12px;
+  padding: 10px 0;
+}
+
+.mock-check-grid label,
+.mock-skill-bindings label,
+.mock-toggle,
+.admin-mock-permissions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #3b4a54;
+  font-size: 12px;
+}
+
+.mock-check-grid input,
+.mock-skill-bindings input,
+.mock-toggle input,
+.admin-mock-permissions input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--admin-green);
+}
+
+.mock-inline-fields,
+.mock-two-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.admin-mock-list-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-mock-list-panel > .panel-heading,
+.admin-mock-wide-list > .panel-heading {
+  flex: 0 0 auto;
+}
+
+.admin-mock-user-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 5px;
+  scrollbar-gutter: stable;
+}
+
+.admin-mock-user-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.1fr) minmax(130px, .75fr) minmax(120px, .7fr) minmax(220px, 1.2fr);
+  align-items: center;
+  gap: 14px;
+  padding: 14px 2px;
+  border-bottom: 1px solid #e9edef;
+}
+
+.admin-mock-user-identity {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-mock-avatar {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #d9fdd3;
+  color: #12633f;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.admin-mock-user-identity > div,
+.admin-mock-user-actions,
+.admin-mock-permissions {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.admin-mock-user-identity strong {
+  color: var(--admin-ink);
+  font-size: 14px;
+}
+
+.admin-mock-user-identity span,
+.admin-mock-user-actions span {
+  overflow: hidden;
+  color: var(--admin-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-mock-user-identity em {
+  width: fit-content;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f0f2f5;
+  color: #667781;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.admin-mock-user-identity em.active {
+  background: var(--admin-soft-green);
+  color: #08785f;
+}
+
+.admin-mock-user-row .field {
+  gap: 4px;
+}
+
+.admin-mock-user-row .field span,
+.admin-mock-permissions > span {
+  color: var(--admin-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.admin-mock-user-row select {
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.admin-mock-permissions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.admin-mock-permissions label {
+  font-size: 11px;
+}
+
+.admin-mock-user-actions {
+  justify-items: start;
+}
+
+.admin-mock-user-actions .secondary-button {
+  width: fit-content;
+}
+
+.admin-mock-single-layout {
+  display: grid;
+  grid-template-columns: minmax(290px, 360px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.admin-mock-create-card {
+  overflow-y: auto !important;
+}
+
+.admin-mock-wide-list {
+  min-height: 0;
+  overflow-y: auto !important;
+}
+
+.admin-mock-invite-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 120px auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 2px;
+  border-bottom: 1px solid #e9edef;
+}
+
+.admin-mock-invite-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.admin-mock-invite-row strong {
+  color: var(--admin-ink);
+  font-size: 15px;
+}
+
+.admin-mock-invite-row span,
+.admin-mock-invite-row small {
+  overflow: hidden;
+  color: var(--admin-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-mock-invite-row select {
+  min-height: 34px;
+  border-radius: 6px;
+}
+
+.admin-mock-agent-layout,
+.admin-mock-skill-layout,
+.admin-mock-provider-layout {
+  display: grid;
+  grid-template-columns: minmax(290px, 360px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.admin-mock-object-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto !important;
+}
+
+.admin-mock-object-list > .panel-heading {
+  flex: 0 0 auto;
+}
+
+.admin-mock-object-item {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 13px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--admin-ink);
+  text-align: left;
+}
+
+.admin-mock-object-item:hover,
+.admin-mock-object-item.active {
+  border-color: rgba(0, 168, 132, 0.25);
+  background: #f0faf7;
+}
+
+.admin-mock-object-item strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-mock-object-item span {
+  overflow: hidden;
+  color: var(--admin-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-mock-agent-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 8px;
+  padding: 4px;
+  border-radius: 8px;
+  background: #f0f2f5;
+}
+
+.admin-mock-agent-tabs button {
+  min-width: 0;
+  min-height: 32px;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667781;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.admin-mock-agent-tabs button.active,
+.admin-mock-agent-tabs button:hover {
+  background: #fff;
+  color: var(--admin-ink);
+}
+
+.admin-mock-editor {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto !important;
+}
+
+.admin-mock-editor > .panel-heading {
+  flex: 0 0 auto;
+}
+
+.admin-mock-section {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid #e1e6e8;
+  border-radius: 8px;
+  background: #fbfcfc;
+}
+
+.admin-mock-section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid #e9edef;
+}
+
+.admin-mock-section > header strong {
+  color: var(--admin-ink);
+  font-size: 15px;
+}
+
+.admin-mock-section > header span {
+  color: var(--admin-muted);
+  font-size: 11px;
+}
+
+.mock-toggle {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #e1e6e8;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.mock-toggle-box {
+  justify-content: center;
+}
+
+.mock-skill-bindings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mock-skill-bindings label {
+  min-height: 48px;
+  padding: 0 10px;
+  border: 1px solid #e1e6e8;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.mock-markdown-editor {
+  width: 100%;
+  min-height: 245px;
+  padding: 12px;
+  resize: vertical;
+  border: 1px solid #e1e6e8;
+  border-radius: 7px;
+  background: #fff;
+  color: #26363f;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.mock-reference-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 8px;
+}
+
+.mock-reference-row input,
+.mock-reference-row select {
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid #e1e6e8;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.mock-model-detect {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dce9e5;
+  border-radius: 7px;
+  background: #f0faf7;
+}
+
+.mock-model-detect > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.mock-model-detect strong {
+  color: #08785f;
+  font-size: 13px;
+}
+
+.mock-model-detect span {
+  color: var(--admin-muted);
+  font-size: 11px;
+}
+
+.mock-model-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mock-model-list span {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 5px 8px;
+  border: 1px solid #dce9e5;
+  border-radius: 5px;
+  background: #fff;
+  color: #3b4a54;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-mock-notice {
+  position: fixed;
+  z-index: 500;
+  right: 24px;
+  bottom: 24px;
+  width: fit-content;
+  max-width: min(420px, calc(100vw - 48px));
+  margin: 0;
+  box-shadow: 0 10px 30px rgba(17, 27, 33, 0.18);
+}
+
+@media (max-width: 1200px) {
+  .admin-mock-user-row {
+    grid-template-columns: minmax(180px, 1fr) minmax(120px, .7fr) minmax(115px, .65fr);
+  }
+
+  .admin-mock-permissions,
+  .admin-mock-user-actions {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .page.page-admin.admin-mock-page {
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
+    padding: 12px;
+  }
+
+  .admin-mock-page .admin-page-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .admin-mock-page .admin-tab-list {
+    width: 100%;
+    max-width: none;
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+
+  .admin-mock-page .admin-content {
+    overflow: visible;
+  }
+
+  .admin-mock-layout,
+  .admin-mock-single-layout,
+  .admin-mock-agent-layout,
+  .admin-mock-skill-layout,
+  .admin-mock-provider-layout {
+    height: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .admin-mock-user-list,
+  .admin-mock-editor,
+  .admin-mock-object-list {
+    overflow: visible !important;
+  }
+
+  .admin-mock-user-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-mock-user-identity,
+  .admin-mock-permissions,
+  .admin-mock-user-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .mock-two-columns,
+  .mock-inline-fields,
+  .mock-check-grid,
+  .mock-skill-bindings,
+  .admin-mock-user-row,
+  .admin-mock-invite-row {
+    grid-template-columns: 1fr;
+  }
+
+  .mock-reference-row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .mock-reference-row select {
+    grid-column: 2;
+  }
+
+  .mock-model-detect {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+/* Unified CRUD layout for every admin mock module. */
+.admin-mock-list-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  border-radius: 8px;
+}
+
+.admin-mock-list-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e9edef;
+}
+
+.admin-mock-list-header h3 {
+  margin: 0;
+  color: #111b21;
+  font-size: 24px;
+}
+
+.admin-mock-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-mock-list-actions .primary-button {
+  min-height: 38px;
+  padding: 8px 14px;
+}
+
+.mock-agent-filter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e9edef;
+}
+
+.mock-agent-filter button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667781;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.mock-agent-filter button:hover {
+  background: #f0f2f5;
+  color: #111b21;
+}
+
+.mock-agent-filter button.active {
+  background: #e7f8f0;
+  color: #008069;
+  font-weight: 600;
+}
+
+.mock-agent-filter button span {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #f0f2f5;
+  color: #667781;
+  font-size: 11px;
+  text-align: center;
+}
+
+.mock-agent-filter button.active span {
+  background: #ccefe2;
+  color: #08785f;
+}
+
+.admin-mock-list-shell > .mock-agent-filter + .admin-mock-record-list {
+  padding-top: 0;
+}
+
+.admin-mock-record-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.admin-mock-record {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 88px;
+  padding: 13px 4px;
+  border-bottom: 1px solid #e9edef;
+  cursor: pointer;
+}
+
+.admin-mock-record:hover {
+  background: #f7fafa;
+}
+
+.admin-mock-record-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+}
+
+.admin-mock-record-main > div,
+.admin-mock-record-meta {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.admin-mock-record-main strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #111b21;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-mock-record-main span,
+.admin-mock-record-meta span,
+.admin-mock-record-meta small {
+  min-width: 0;
+  overflow: hidden;
+  color: #667781;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-mock-record-main em {
+  width: fit-content;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #f0f2f5;
+  color: #667781;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.admin-mock-record-main em.active {
+  background: #e7f8f0;
+  color: #08785f;
+}
+
+.admin-mock-record-icon {
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #e7f8f0;
+  color: #008069;
+}
+
+.admin-mock-record-icon .app-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.admin-mock-record > .secondary-button {
+  min-width: 82px;
+  justify-content: center;
+}
+
+.admin-mock-modal-backdrop {
+  position: fixed;
+  z-index: 500;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 27, 33, 0.45);
+}
+
+.admin-mock-modal {
+  width: min(760px, 100%);
+  max-height: min(820px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 22px 70px rgba(17, 27, 33, 0.28);
+}
+
+.admin-mock-modal > header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e9edef;
+}
+
+.admin-mock-modal > header h3 {
+  margin: 0;
+  color: #111b21;
+  font-size: 22px;
+}
+
+.admin-mock-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.admin-mock-modal-body > form {
+  gap: 12px;
+}
+
+.admin-mock-modal-body .field input,
+.admin-mock-modal-body .field select {
+  min-height: 38px;
+}
+
+.admin-mock-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.admin-mock-modal-footer .primary-button,
+.admin-mock-modal-footer .secondary-button {
+  min-height: 38px;
+}
+
+.mock-reference-editor {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #e1e6e8;
+  border-radius: 8px;
+  background: #fbfcfc;
+}
+
+.mock-reference-editor > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* Production admin CRUD pages use the same compact list and dialog pattern as the proxy pool. */
+.admin-record-page {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.admin-record-page-header {
+  flex: 0 0 auto;
+  padding: 16px 18px 0;
+}
+
+.admin-record-page-header .panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-record-page-header .panel-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+}
+
+.admin-record-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 18px 18px;
+  scrollbar-gutter: stable;
+}
+
+.admin-record-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 78px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--line);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.admin-record-summary:hover {
+  background: #f7fafa;
+}
+
+.admin-record-summary-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+}
+
+.admin-record-summary-main > div,
+.admin-record-summary-meta {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.admin-record-summary-main strong,
+.admin-record-summary-main span,
+.admin-record-summary-main small,
+.admin-record-summary-meta span,
+.admin-record-summary-meta small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-record-summary-main strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.admin-record-summary-main > div > span,
+.admin-record-summary-main > div > small,
+.admin-record-summary-meta small {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.admin-record-summary-meta span {
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+
+.admin-record-summary > .secondary-button {
+  min-width: 78px;
+  justify-content: center;
+}
+
+.admin-record-avatar {
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.admin-record-avatar .app-icon {
+  width: 19px;
+  height: 19px;
+}
+
+.admin-list-caption {
+  display: grid;
+  gap: 3px;
+  padding: 14px 4px 8px;
+}
+
+.admin-list-caption strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.admin-list-caption span {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.admin-record-list-inner {
+  padding: 0 4px 18px;
+}
+
+.admin-dialog-backdrop {
+  position: fixed;
+  z-index: 700;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(17, 27, 33, 0.48);
+}
+
+.admin-dialog {
+  width: min(760px, 100%);
+  max-height: min(860px, calc(100vh - 40px));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(17, 27, 33, 0.3);
+}
+
+.admin-dialog-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-dialog-header h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+}
+
+.admin-dialog-header .icon-button {
+  flex: 0 0 auto;
+}
+
+.admin-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.admin-dialog-body > form {
+  min-width: 0;
+}
+
+.admin-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.admin-dialog .admin-agent-workbench,
+.admin-dialog .admin-skill-workbench {
+  height: auto;
+  min-height: 0;
+}
+
+.admin-dialog .admin-agent-workbench {
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+}
+
+.admin-dialog .admin-agent-editor,
+.admin-dialog .admin-skill-editor {
+  min-height: 0;
+}
+
+.admin-dialog .admin-agent-editor-body {
+  overflow: visible;
+}
+
+.admin-dialog .admin-agent-actions {
+  position: static;
+}
+
+.admin-dialog .admin-skill-dialog-content {
+  min-width: 0;
+}
+
+.admin-agent-record-page > .admin-purpose-switch-top {
+  flex: 0 0 auto;
+  margin: 0 18px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-purpose-switch-top .admin-purpose-button {
+  min-height: 34px;
+  flex: 1 1 0;
+}
+
+@media (max-width: 720px) {
+  .admin-record-summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .admin-record-summary-meta {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding-left: 53px;
+  }
+
+  .admin-dialog-backdrop {
+    padding: 10px;
+  }
+
+  .admin-dialog {
+    max-height: calc(100vh - 20px);
+  }
+
+  .admin-dialog .admin-agent-workbench,
+  .admin-dialog .admin-skill-workbench {
+    display: block;
+  }
+
+  .admin-dialog .admin-agent-sidebar,
+  .admin-dialog .admin-skill-list {
+    margin-bottom: 12px;
+  }
+}
+
+@media (max-width: 900px) {
+  .admin-mock-list-shell {
+    height: auto;
+    min-height: 600px;
+  }
+
+  .admin-mock-record-list {
+    overflow-y: visible;
+  }
+}
+
+@media (max-width: 620px) {
+  .admin-mock-page .admin-page-header {
+    justify-content: flex-start;
+  }
+
+  .admin-mock-page .admin-tab-list {
+    width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+
+  .mock-agent-filter {
+    overflow-x: auto;
+  }
+
+  .admin-mock-list-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .admin-mock-list-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .admin-mock-record {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 9px;
+  }
+
+  .admin-mock-record-meta {
+    grid-column: 1 / -1;
+  }
+}
+
 .desktop-network-head,
 .desktop-network-actions {
   display: flex;

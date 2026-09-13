@@ -7,6 +7,7 @@ export type IconName =
   | 'camera'
   | 'calendar'
   | 'chat'
+  | 'close'
   | 'contacts'
   | 'archive'
   | 'bellOff'
@@ -76,6 +77,12 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v5A3.5 3.5 0 0 1 15.5 15H11l-4.2 3.2V15H8.5A3.5 3.5 0 0 1 5 11.5v-5z" />
       <path d="M9 8h6" />
       <path d="M9 11h4" />
+    </>
+  ),
+  close: (
+    <>
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
     </>
   ),
   calendar: (
