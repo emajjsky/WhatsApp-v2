@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -24,14 +25,28 @@ type messageSender interface {
 	SendMedia(ctx context.Context, accountID, chatJID string, input sessions.SendMediaInput) (sessions.SendResult, error)
 }
 
+type structuredMessageSender interface {
+	SendContact(ctx context.Context, accountID, chatJID string, input sessions.SendContactInput) (sessions.SendResult, error)
+	SendPoll(ctx context.Context, accountID, chatJID string, input sessions.SendPollInput) (sessions.SendResult, error)
+}
+
 type chatReadMarker interface {
 	MarkRead(ctx context.Context, accountID, chatJID string, messageIDs []string, senderJID string, timestamp time.Time) error
+}
+
+type messageOperator interface {
+	ReactToMessage(ctx context.Context, accountID, chatJID, senderJID, messageID, reaction string) error
+	EditTextMessage(ctx context.Context, accountID, chatJID, messageID, text string) error
+	RevokeMessage(ctx context.Context, accountID, chatJID, senderJID, messageID string) error
+	StarMessage(ctx context.Context, accountID, chatJID, senderJID, messageID string, fromMe, starred bool) error
 }
 
 type Service struct {
 	repository *Repository
 	sender     messageSender
+	richSender structuredMessageSender
 	readMarker chatReadMarker
+	operator   messageOperator
 }
 
 type ListChatsInput struct {
@@ -106,6 +121,55 @@ type UpdateContactInput struct {
 	Note      string `json:"note"`
 }
 
+type CreateContactInput struct {
+	ChatID      string `json:"chat_id"`
+	DisplayName string `json:"display_name"`
+}
+
+type UpdateMessageMetadataInput struct {
+	ChatID    string `json:"chat_id"`
+	MessageID string `json:"message_id"`
+	Starred   bool   `json:"starred"`
+	Pinned    bool   `json:"pinned"`
+}
+
+type MessageReactionInput struct {
+	ChatID    string `json:"chat_id"`
+	MessageID string `json:"message_id"`
+	Reaction  string `json:"reaction"`
+}
+
+type EditMessageInput struct {
+	ChatID    string `json:"chat_id"`
+	MessageID string `json:"message_id"`
+	Text      string `json:"text"`
+}
+
+type DeleteMessageInput struct {
+	ChatID      string `json:"chat_id"`
+	MessageID   string `json:"message_id"`
+	ForEveryone bool   `json:"for_everyone"`
+}
+
+type ForwardMessageInput struct {
+	ChatID       string `json:"chat_id"`
+	MessageID    string `json:"message_id"`
+	TargetChatID string `json:"target_chat_id"`
+}
+
+type SendContactInput struct {
+	ChatID      string `json:"chat_id"`
+	DisplayName string `json:"display_name"`
+	PhoneNumber string `json:"phone_number"`
+}
+
+type SendPollInput struct {
+	ChatID        string   `json:"chat_id"`
+	Question      string   `json:"question"`
+	Options       []string `json:"options"`
+	AllowMultiple bool     `json:"allow_multiple"`
+}
+
 type CreateLabelInput struct {
 	AccountID string `json:"account_id"`
 	Name      string `json:"name"`
@@ -137,12 +201,14 @@ type SendMessageResult struct {
 }
 
 type SendMediaInput struct {
-	ChatID    string
-	MediaType ingest.MediaType
-	FileName  string
-	MIMEType  string
-	Caption   string
-	Data      []byte
+	ChatID          string
+	MediaType       ingest.MediaType
+	FileName        string
+	MIMEType        string
+	Caption         string
+	Data            []byte
+	VoiceMessage    bool
+	DurationSeconds uint32
 }
 
 type SendMediaResult struct {
@@ -163,8 +229,14 @@ func NewService(repository *Repository, sender messageSender) (*Service, error) 
 	}
 
 	service := &Service{repository: repository, sender: sender}
+	if richSender, ok := sender.(structuredMessageSender); ok {
+		service.richSender = richSender
+	}
 	if marker, ok := sender.(chatReadMarker); ok {
 		service.readMarker = marker
+	}
+	if operator, ok := sender.(messageOperator); ok {
+		service.operator = operator
 	}
 	return service, nil
 }
@@ -255,6 +327,315 @@ func (s *Service) UpdateContact(ctx context.Context, input UpdateContactInput) (
 		return ContactView{}, mapRepositoryError(contactID, err)
 	}
 	return item, nil
+}
+
+func (s *Service) CreateContact(ctx context.Context, input CreateContactInput) (ContactView, error) {
+	chatID := strings.TrimSpace(input.ChatID)
+	displayName := strings.TrimSpace(input.DisplayName)
+	if chatID == "" {
+		return ContactView{}, fmt.Errorf("chat_id is required")
+	}
+	if displayName == "" {
+		return ContactView{}, fmt.Errorf("display_name is required")
+	}
+	if len([]rune(displayName)) > 120 {
+		return ContactView{}, fmt.Errorf("display_name is too long")
+	}
+	header, err := s.repository.GetChatHeader(ctx, chatID)
+	if err != nil {
+		return ContactView{}, mapRepositoryError(chatID, err)
+	}
+	if header.ChatType != ingest.ChatTypeDirect {
+		return ContactView{}, fmt.Errorf("only direct chats can be saved as contacts")
+	}
+	item, err := s.repository.CreateContactFromChat(ctx, chatID, displayName)
+	if err != nil {
+		return ContactView{}, mapRepositoryError(chatID, err)
+	}
+	return item, nil
+}
+
+func (s *Service) UpdateMessageMetadata(ctx context.Context, input UpdateMessageMetadataInput) (MessageView, error) {
+	target, err := s.requireMessageTarget(ctx, input.ChatID, input.MessageID)
+	if err != nil {
+		return MessageView{}, err
+	}
+	if target.Starred != input.Starred {
+		if s.operator == nil {
+			return MessageView{}, fmt.Errorf("session connector does not support starring messages")
+		}
+		if err := s.operator.StarMessage(ctx, target.AccountID, target.WAChatJID, target.SenderJID,
+			target.WAMessageID, target.FromMe, input.Starred); err != nil {
+			return MessageView{}, err
+		}
+	}
+	if err := s.repository.UpdateMessageMetadata(ctx, target.ChatID, target.ID, input.Starred, input.Pinned); err != nil {
+		return MessageView{}, mapRepositoryError(target.ID, err)
+	}
+	return s.messageView(ctx, target.ChatID, target.ID)
+}
+
+func (s *Service) ReactToMessage(ctx context.Context, input MessageReactionInput) (MessageView, error) {
+	target, err := s.requireMessageTarget(ctx, input.ChatID, input.MessageID)
+	if err != nil {
+		return MessageView{}, err
+	}
+	if s.operator == nil {
+		return MessageView{}, fmt.Errorf("session connector does not support message reactions")
+	}
+	reaction := strings.TrimSpace(input.Reaction)
+	if len([]rune(reaction)) > 8 {
+		return MessageView{}, fmt.Errorf("reaction is too long")
+	}
+	if err := s.operator.ReactToMessage(ctx, target.AccountID, target.WAChatJID, target.SenderJID, target.WAMessageID, reaction); err != nil {
+		return MessageView{}, err
+	}
+	if err := s.repository.UpdateMessageReaction(ctx, target.ChatID, target.ID, "self", reaction); err != nil {
+		return MessageView{}, mapRepositoryError(target.ID, err)
+	}
+	return s.messageView(ctx, target.ChatID, target.ID)
+}
+
+func (s *Service) EditMessage(ctx context.Context, input EditMessageInput) (MessageView, error) {
+	target, err := s.requireMessageTarget(ctx, input.ChatID, input.MessageID)
+	if err != nil {
+		return MessageView{}, err
+	}
+	text := strings.TrimSpace(input.Text)
+	if !target.FromMe || target.MessageType != ingest.MessageTypeText {
+		return MessageView{}, fmt.Errorf("only your text messages can be edited")
+	}
+	if text == "" {
+		return MessageView{}, fmt.Errorf("text is required")
+	}
+	if time.Since(target.SentAt) > 20*time.Minute {
+		return MessageView{}, fmt.Errorf("the WhatsApp edit window has expired")
+	}
+	if s.operator == nil {
+		return MessageView{}, fmt.Errorf("session connector does not support message editing")
+	}
+	if err := s.operator.EditTextMessage(ctx, target.AccountID, target.WAChatJID, target.WAMessageID, text); err != nil {
+		return MessageView{}, err
+	}
+	if err := s.repository.UpdateMessageText(ctx, target.ChatID, target.ID, text); err != nil {
+		return MessageView{}, err
+	}
+	return s.messageView(ctx, target.ChatID, target.ID)
+}
+
+func (s *Service) DeleteMessage(ctx context.Context, input DeleteMessageInput) error {
+	target, err := s.requireMessageTarget(ctx, input.ChatID, input.MessageID)
+	if err != nil {
+		return err
+	}
+	if input.ForEveryone {
+		if !target.FromMe {
+			return fmt.Errorf("only your messages can be deleted for everyone")
+		}
+		if s.operator == nil {
+			return fmt.Errorf("session connector does not support message deletion")
+		}
+		if err := s.operator.RevokeMessage(ctx, target.AccountID, target.WAChatJID, "", target.WAMessageID); err != nil {
+			return err
+		}
+	}
+	storageKeys, err := s.repository.DeleteMessage(ctx, target.ChatID, target.ID)
+	if err != nil {
+		return mapRepositoryError(target.ID, err)
+	}
+	removeStoredMedia(storageKeys)
+	return nil
+}
+
+func (s *Service) ForwardMessage(ctx context.Context, input ForwardMessageInput) (SendMessageResult, error) {
+	target, err := s.requireMessageTarget(ctx, input.ChatID, input.MessageID)
+	if err != nil {
+		return SendMessageResult{}, err
+	}
+	source, err := s.messageView(ctx, target.ChatID, target.ID)
+	if err != nil {
+		return SendMessageResult{}, err
+	}
+	if len(source.Media) > 0 {
+		var result SendMediaResult
+		for index, media := range source.Media {
+			if media.StorageKey == nil || strings.TrimSpace(*media.StorageKey) == "" {
+				return SendMessageResult{}, fmt.Errorf("this media is not available for forwarding")
+			}
+			path, err := ResolveStoragePath(*media.StorageKey)
+			if err != nil {
+				return SendMessageResult{}, err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return SendMessageResult{}, fmt.Errorf("read media for forwarding: %w", err)
+			}
+			caption := ""
+			if index == 0 && source.TextContent != nil {
+				caption = *source.TextContent
+			}
+			result, err = s.SendMedia(ctx, SendMediaInput{
+				ChatID:    strings.TrimSpace(input.TargetChatID),
+				MediaType: media.MediaType,
+				FileName:  valueOrEmpty(media.FileName),
+				MIMEType:  valueOrEmpty(media.MIMEType),
+				Caption:   caption,
+				Data:      data,
+			})
+			if err != nil {
+				return SendMessageResult{}, err
+			}
+		}
+		return SendMessageResult{
+			ChatID:      result.ChatID,
+			WAChatJID:   result.WAChatJID,
+			WAMessageID: result.WAMessageID,
+			MessageText: result.FileName,
+			SentAt:      result.SentAt,
+		}, nil
+	}
+	if target.TextContent == nil || strings.TrimSpace(*target.TextContent) == "" {
+		return SendMessageResult{}, fmt.Errorf("this message cannot be forwarded yet")
+	}
+	return s.SendMessage(ctx, SendMessageInput{ChatID: strings.TrimSpace(input.TargetChatID), MessageText: *target.TextContent})
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func (s *Service) ClearChat(ctx context.Context, chatID string) error {
+	chatID = strings.TrimSpace(chatID)
+	storageKeys, err := s.repository.ClearChat(ctx, chatID)
+	if err != nil {
+		return mapRepositoryError(chatID, err)
+	}
+	removeStoredMedia(storageKeys)
+	return nil
+}
+
+func (s *Service) DeleteChat(ctx context.Context, chatID string) error {
+	chatID = strings.TrimSpace(chatID)
+	storageKeys, err := s.repository.DeleteChat(ctx, chatID)
+	if err != nil {
+		return mapRepositoryError(chatID, err)
+	}
+	removeStoredMedia(storageKeys)
+	return nil
+}
+
+func (s *Service) SendContact(ctx context.Context, input SendContactInput) (SendMessageResult, error) {
+	chatID := strings.TrimSpace(input.ChatID)
+	displayName := strings.TrimSpace(input.DisplayName)
+	phoneNumber := strings.TrimSpace(input.PhoneNumber)
+	if chatID == "" || displayName == "" || phoneNumber == "" {
+		return SendMessageResult{}, fmt.Errorf("chat_id, display_name and phone_number are required")
+	}
+	if len([]rune(displayName)) > 120 || len([]rune(phoneNumber)) > 40 {
+		return SendMessageResult{}, fmt.Errorf("contact name or phone number is too long")
+	}
+	if s.richSender == nil {
+		return SendMessageResult{}, fmt.Errorf("chat service sender does not support contacts")
+	}
+	header, err := s.repository.GetChatHeader(ctx, chatID)
+	if err != nil {
+		return SendMessageResult{}, mapRepositoryError(chatID, err)
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, sendMessageTimeout)
+	defer cancel()
+	result, err := s.richSender.SendContact(sendCtx, header.AccountID, header.WAChatJID, sessions.SendContactInput{DisplayName: displayName, PhoneNumber: phoneNumber})
+	if err != nil {
+		return SendMessageResult{}, err
+	}
+	return SendMessageResult{ChatID: header.ID, WAChatJID: header.WAChatJID, WAMessageID: result.WAMessageID, MessageText: displayName, SentAt: result.SentAt}, nil
+}
+
+func (s *Service) SendPoll(ctx context.Context, input SendPollInput) (SendMessageResult, error) {
+	chatID := strings.TrimSpace(input.ChatID)
+	question := strings.TrimSpace(input.Question)
+	options := normalizePollOptions(input.Options)
+	if chatID == "" || question == "" {
+		return SendMessageResult{}, fmt.Errorf("chat_id and question are required")
+	}
+	if len([]rune(question)) > 255 {
+		return SendMessageResult{}, fmt.Errorf("poll question is too long")
+	}
+	if len(options) < 2 || len(options) > 12 {
+		return SendMessageResult{}, fmt.Errorf("poll requires 2 to 12 unique options")
+	}
+	for _, option := range options {
+		if len([]rune(option)) > 100 {
+			return SendMessageResult{}, fmt.Errorf("poll option is too long")
+		}
+	}
+	if s.richSender == nil {
+		return SendMessageResult{}, fmt.Errorf("chat service sender does not support polls")
+	}
+	header, err := s.repository.GetChatHeader(ctx, chatID)
+	if err != nil {
+		return SendMessageResult{}, mapRepositoryError(chatID, err)
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, sendMessageTimeout)
+	defer cancel()
+	result, err := s.richSender.SendPoll(sendCtx, header.AccountID, header.WAChatJID, sessions.SendPollInput{Question: question, Options: options, AllowMultiple: input.AllowMultiple})
+	if err != nil {
+		return SendMessageResult{}, err
+	}
+	return SendMessageResult{ChatID: header.ID, WAChatJID: header.WAChatJID, WAMessageID: result.WAMessageID, MessageText: question, SentAt: result.SentAt}, nil
+}
+
+func normalizePollOptions(options []string) []string {
+	result := make([]string, 0, len(options))
+	seen := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		trimmed := strings.TrimSpace(option)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func (s *Service) requireMessageTarget(ctx context.Context, chatID, messageID string) (MessageActionTarget, error) {
+	chatID = strings.TrimSpace(chatID)
+	messageID = strings.TrimSpace(messageID)
+	if chatID == "" || messageID == "" {
+		return MessageActionTarget{}, fmt.Errorf("chat_id and message_id are required")
+	}
+	target, err := s.repository.GetMessageActionTarget(ctx, chatID, messageID)
+	if err != nil {
+		return MessageActionTarget{}, mapRepositoryError(messageID, err)
+	}
+	return target, nil
+}
+
+func (s *Service) messageView(ctx context.Context, chatID, messageID string) (MessageView, error) {
+	messages, _, err := s.repository.ListMessages(ctx, MessageListFilters{ChatID: chatID, MessageID: messageID, Limit: 1})
+	if err != nil {
+		return MessageView{}, err
+	}
+	if len(messages) == 1 {
+		return messages[0], nil
+	}
+	return MessageView{}, ErrChatNotFound
+}
+
+func removeStoredMedia(storageKeys []string) {
+	for _, storageKey := range storageKeys {
+		path, err := ResolveStoragePath(storageKey)
+		if err != nil {
+			continue
+		}
+		_ = os.Remove(path)
+	}
 }
 
 func (s *Service) ListLabels(ctx context.Context, accountID string) ([]ChatLabel, error) {
@@ -507,6 +888,9 @@ func (s *Service) SendMedia(ctx context.Context, input SendMediaInput) (SendMedi
 	if len(input.Data) == 0 {
 		return SendMediaResult{}, fmt.Errorf("media file is required")
 	}
+	if input.VoiceMessage && mediaType != ingest.MediaTypeAudio {
+		return SendMediaResult{}, fmt.Errorf("voice messages must use audio media")
+	}
 	if s.sender == nil {
 		return SendMediaResult{}, fmt.Errorf("chat service sender is not configured")
 	}
@@ -521,11 +905,13 @@ func (s *Service) SendMedia(ctx context.Context, input SendMediaInput) (SendMedi
 
 	caption := strings.TrimSpace(input.Caption)
 	sendResult, err := s.sender.SendMedia(sendCtx, header.AccountID, header.WAChatJID, sessions.SendMediaInput{
-		MediaType: mediaType,
-		FileName:  strings.TrimSpace(input.FileName),
-		MIMEType:  strings.TrimSpace(input.MIMEType),
-		Caption:   caption,
-		Data:      input.Data,
+		MediaType:       mediaType,
+		FileName:        strings.TrimSpace(input.FileName),
+		MIMEType:        strings.TrimSpace(input.MIMEType),
+		Caption:         caption,
+		Data:            input.Data,
+		VoiceMessage:    input.VoiceMessage,
+		DurationSeconds: input.DurationSeconds,
 	})
 	if err != nil {
 		return SendMediaResult{}, err
@@ -577,6 +963,8 @@ func normalizeSendMediaType(value ingest.MediaType) (ingest.MediaType, ingest.Me
 		return ingest.MediaTypeVideo, ingest.MessageTypeVideo, nil
 	case ingest.MediaTypeAudio:
 		return ingest.MediaTypeAudio, ingest.MessageTypeAudio, nil
+	case ingest.MediaTypeSticker:
+		return ingest.MediaTypeSticker, ingest.MessageTypeSticker, nil
 	case ingest.MediaTypeDocument, "", ingest.MediaTypeOther:
 		return ingest.MediaTypeDocument, ingest.MessageTypeDocument, nil
 	default:

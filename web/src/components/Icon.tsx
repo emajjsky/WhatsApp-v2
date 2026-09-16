@@ -7,6 +7,7 @@ export type IconName =
   | 'camera'
   | 'calendar'
   | 'chat'
+  | 'clear'
   | 'close'
   | 'contacts'
   | 'archive'
@@ -19,9 +20,11 @@ export type IconName =
   | 'download'
   | 'edit'
   | 'export'
+  | 'forward'
   | 'fileText'
   | 'heart'
   | 'image'
+  | 'info'
   | 'key'
   | 'list'
   | 'logout'
@@ -34,7 +37,11 @@ export type IconName =
   | 'save'
   | 'search'
   | 'send'
+  | 'select'
   | 'shield'
+  | 'smile'
+  | 'star'
+  | 'stop'
   | 'upload'
   | 'user'
   | 'video'
@@ -77,6 +84,12 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M5 6.5A3.5 3.5 0 0 1 8.5 3h7A3.5 3.5 0 0 1 19 6.5v5A3.5 3.5 0 0 1 15.5 15H11l-4.2 3.2V15H8.5A3.5 3.5 0 0 1 5 11.5v-5z" />
       <path d="M9 8h6" />
       <path d="M9 11h4" />
+    </>
+  ),
+  clear: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M8.5 12h7" />
     </>
   ),
   close: (
@@ -185,11 +198,24 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M9.5 18h3" />
     </>
   ),
+  forward: (
+    <>
+      <path d="M14 7l5 5-5 5" />
+      <path d="M19 12h-7a7 7 0 0 0-7 7" />
+    </>
+  ),
   image: (
     <>
       <rect x="4" y="5" width="16" height="14" rx="2.5" />
       <circle cx="9" cy="10" r="1.4" />
       <path d="M6.5 17l4.2-4.2 2.8 2.8 1.8-1.8 2.2 3.2" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v6" />
+      <path d="M12 7h.01" />
     </>
   ),
   key: (
@@ -275,9 +301,33 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M12.1 13.8L20 4" />
     </>
   ),
+  select: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <path d="M8 12l3 3 5-6" />
+    </>
+  ),
   shield: (
     <>
       <path d="M12 3l7 3v5c0 4.3-2.8 7.6-7 9-4.2-1.4-7-4.7-7-9V6l7-3z" />
+    </>
+  ),
+  smile: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 14s1.5 2 4 2 4-2" />
+      <path d="M9 9h.01" />
+      <path d="M15 9h.01" />
+    </>
+  ),
+  star: (
+    <>
+      <path d="M12 3.5l2.7 5.4 6 .9-4.4 4.2 1 6-5.3-2.8L6.7 20l1-6-4.4-4.2 6-.9L12 3.5z" />
+    </>
+  ),
+  stop: (
+    <>
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
     </>
   ),
   upload: (

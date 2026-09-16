@@ -91,6 +91,10 @@ func (h *Handler) handleChatByID(w http.ResponseWriter, r *http.Request) {
 
 	chatID := parts[0]
 	action := parts[1]
+	if action == "messages" && len(parts) == 4 {
+		h.handleMessageAction(w, r, chatID, parts[2], parts[3])
+		return
+	}
 
 	switch {
 	case r.Method == http.MethodGet && action == "search":
@@ -178,6 +182,32 @@ func (h *Handler) handleChatByID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		httpx.WriteJSON(w, http.StatusOK, result)
+	case r.Method == http.MethodPost && action == "contact":
+		var input SendContactInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID = chatID
+		result, err := h.service.SendContact(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, result)
+	case r.Method == http.MethodPost && action == "poll":
+		var input SendPollInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID = chatID
+		result, err := h.service.SendPoll(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, result)
 	case r.Method == http.MethodPatch && action == "metadata":
 		var input UpdateChatMetadataInput
 		if err := httpx.DecodeJSON(r, &input); err != nil {
@@ -198,14 +228,40 @@ func (h *Handler) handleChatByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"chat": chat})
+	case r.Method == http.MethodDelete && action == "messages":
+		if err := h.service.ClearChat(r.Context(), chatID); err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "cleared"})
+	case r.Method == http.MethodDelete && action == "conversation":
+		if err := h.service.DeleteChat(r.Context(), chatID); err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "deleted"})
 	default:
 		http.NotFound(w, r)
 	}
 }
 
 func (h *Handler) handleContacts(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var input CreateContactInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		contact, err := h.service.CreateContact(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"contact": contact})
+		return
+	}
 	if r.Method != http.MethodGet {
-		httpx.WriteMethodNotAllowed(w, http.MethodGet)
+		httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodPost)
 		return
 	}
 	limit, err := parseIntQuery(r, "limit", 100)
@@ -226,6 +282,77 @@ func (h *Handler) handleContacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) handleMessageAction(w http.ResponseWriter, r *http.Request, chatID, messageID, action string) {
+	switch {
+	case r.Method == http.MethodPatch && action == "metadata":
+		var input UpdateMessageMetadataInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID, input.MessageID = chatID, messageID
+		message, err := h.service.UpdateMessageMetadata(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": message})
+	case r.Method == http.MethodPost && action == "reaction":
+		var input MessageReactionInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID, input.MessageID = chatID, messageID
+		message, err := h.service.ReactToMessage(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "sent", "message": message})
+	case r.Method == http.MethodPatch && action == "content":
+		var input EditMessageInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID, input.MessageID = chatID, messageID
+		message, err := h.service.EditMessage(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": message})
+	case r.Method == http.MethodDelete && action == "content":
+		var input DeleteMessageInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID, input.MessageID = chatID, messageID
+		if err := h.service.DeleteMessage(r.Context(), input); err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "deleted"})
+	case r.Method == http.MethodPost && action == "forward":
+		var input ForwardMessageInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		input.ChatID, input.MessageID = chatID, messageID
+		result, err := h.service.ForwardMessage(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, result)
+	default:
+		http.NotFound(w, r)
+	}
 }
 
 func (h *Handler) handleContactByID(w http.ResponseWriter, r *http.Request) {
@@ -341,14 +468,26 @@ func (h *Handler) handleSendMediaMessage(w http.ResponseWriter, r *http.Request,
 			fileName = filepath.Base(trimmed)
 		}
 	}
+	voiceMessage, err := parseOptionalBoolForm(r, "voice_message")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	durationSeconds, err := parseDurationSecondsForm(r)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	result, err := h.service.SendMedia(r.Context(), SendMediaInput{
-		ChatID:    chatID,
-		MediaType: inferRequestedMediaType(r.FormValue("media_type"), mimeType, fileName),
-		FileName:  fileName,
-		MIMEType:  mimeType,
-		Caption:   r.FormValue("caption"),
-		Data:      data,
+		ChatID:          chatID,
+		MediaType:       inferRequestedMediaType(r.FormValue("media_type"), mimeType, fileName),
+		FileName:        fileName,
+		MIMEType:        mimeType,
+		Caption:         r.FormValue("caption"),
+		Data:            data,
+		VoiceMessage:    voiceMessage,
+		DurationSeconds: durationSeconds,
 	})
 	if err != nil {
 		h.writeServiceError(w, err)
@@ -356,6 +495,33 @@ func (h *Handler) handleSendMediaMessage(w http.ResponseWriter, r *http.Request,
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+func parseOptionalBoolForm(r *http.Request, key string) (bool, error) {
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be true or false", key)
+	}
+	return parsed, nil
+}
+
+func parseDurationSecondsForm(r *http.Request) (uint32, error) {
+	value := strings.TrimSpace(r.FormValue("duration_seconds"))
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("duration_seconds must be a non-negative integer")
+	}
+	if parsed > 4*60*60 {
+		return 0, fmt.Errorf("duration_seconds is too large")
+	}
+	return uint32(parsed), nil
 }
 
 func (h *Handler) handleMediaByID(w http.ResponseWriter, r *http.Request) {

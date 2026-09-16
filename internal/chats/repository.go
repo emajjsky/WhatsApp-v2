@@ -3,6 +3,7 @@ package chats
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ type ChatListFilters struct {
 
 type MessageListFilters struct {
 	ChatID    string
+	MessageID string
 	Query     string
 	Limit     int
 	Before    *time.Time
@@ -129,7 +131,25 @@ type MessageView struct {
 	SentAt             time.Time          `json:"sent_at"`
 	DeliveredAt        *time.Time         `json:"delivered_at,omitempty"`
 	ReadAt             *time.Time         `json:"read_at,omitempty"`
+	Starred            bool               `json:"starred"`
+	Pinned             bool               `json:"pinned"`
+	Reactions          map[string]string  `json:"reactions"`
 	Media              []MediaAttachment  `json:"media"`
+}
+
+type MessageActionTarget struct {
+	ID          string
+	AccountID   string
+	ChatID      string
+	WAChatJID   string
+	WAMessageID string
+	SenderJID   string
+	FromMe      bool
+	MessageType ingest.MessageType
+	TextContent *string
+	SentAt      time.Time
+	Starred     bool
+	Pinned      bool
 }
 
 func NewRepository(db storage.DBTX) (*Repository, error) {
@@ -577,6 +597,10 @@ WHERE c.id IN (%s)%%s`, strings.Join(placeholders, ", "))
 func (r *Repository) ListMessages(ctx context.Context, filters MessageListFilters) ([]MessageView, bool, error) {
 	args := []any{filters.ChatID}
 	conditions := []string{"m.chat_id = $1", visibleMessageCondition("m")}
+	if messageID := strings.TrimSpace(filters.MessageID); messageID != "" {
+		args = append(args, messageID)
+		conditions = append(conditions, fmt.Sprintf("m.id = $%d", len(args)))
+	}
 	if query := strings.TrimSpace(filters.Query); query != "" {
 		args = append(args, "%"+query+"%")
 		conditions = append(conditions, fmt.Sprintf("LOWER(COALESCE(m.text_content, '')) LIKE LOWER($%d)", len(args)))
@@ -638,7 +662,10 @@ SELECT
     m.reply_to_wa_message_id,
     m.sent_at,
     m.delivered_at,
-    m.read_at
+    m.read_at,
+    m.starred,
+    m.pinned,
+    m.reactions
 FROM messages m
 LEFT JOIN contacts ct
     ON ct.account_id = m.account_id
@@ -672,6 +699,7 @@ LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, l
 			replyToWAMessageID sql.NullString
 			deliveredAt        sql.NullTime
 			readAt             sql.NullTime
+			reactions          []byte
 		)
 
 		if err := rows.Scan(
@@ -688,6 +716,9 @@ LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, l
 			&item.SentAt,
 			&deliveredAt,
 			&readAt,
+			&item.Starred,
+			&item.Pinned,
+			&reactions,
 		); err != nil {
 			return nil, false, fmt.Errorf("scan message row: %w", err)
 		}
@@ -697,6 +728,12 @@ LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, l
 		item.ReplyToWAMessageID = nullableString(replyToWAMessageID)
 		item.DeliveredAt = nullableTime(deliveredAt)
 		item.ReadAt = nullableTime(readAt)
+		item.Reactions = make(map[string]string)
+		if len(reactions) > 0 {
+			if err := json.Unmarshal(reactions, &item.Reactions); err != nil {
+				return nil, false, fmt.Errorf("decode message reactions: %w", err)
+			}
+		}
 		item.Media = make([]MediaAttachment, 0)
 
 		items = append(items, item)
@@ -1106,6 +1143,200 @@ func (r *Repository) ClearChatUnread(ctx context.Context, chatID string) (ChatHe
 		return ChatHeader{}, fmt.Errorf("clear chat unread marker: %w", err)
 	}
 	return r.GetChatHeader(ctx, chatID)
+}
+
+func (r *Repository) GetMessageActionTarget(ctx context.Context, chatID, messageID string) (MessageActionTarget, error) {
+	query := `SELECT m.id, m.account_id, m.chat_id, c.wa_chat_jid, m.wa_message_id,
+m.sender_jid, m.from_me, m.message_type, m.text_content, m.sent_at, m.starred, m.pinned
+FROM messages m JOIN chats c ON c.id = m.chat_id
+WHERE m.chat_id = $1 AND m.id = $2`
+	args := []any{chatID, messageID}
+	if scopeCondition, scopeArgs := accountScopeCondition(ctx, "m.account_id", 3); scopeCondition != "" {
+		query += scopeCondition
+		args = append(args, scopeArgs...)
+	}
+
+	var target MessageActionTarget
+	var textContent sql.NullString
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&target.ID,
+		&target.AccountID,
+		&target.ChatID,
+		&target.WAChatJID,
+		&target.WAMessageID,
+		&target.SenderJID,
+		&target.FromMe,
+		&target.MessageType,
+		&textContent,
+		&target.SentAt,
+		&target.Starred,
+		&target.Pinned,
+	); err != nil {
+		return MessageActionTarget{}, fmt.Errorf("get message %q: %w", messageID, err)
+	}
+	target.TextContent = nullableString(textContent)
+	return target, nil
+}
+
+func (r *Repository) UpdateMessageMetadata(ctx context.Context, chatID, messageID string, starred, pinned bool) error {
+	if _, err := r.GetMessageActionTarget(ctx, chatID, messageID); err != nil {
+		return err
+	}
+	if _, err := r.db.ExecContext(ctx, `UPDATE messages SET starred = $3, pinned = $4, updated_at = NOW()
+WHERE chat_id = $1 AND id = $2`, chatID, messageID, starred, pinned); err != nil {
+		return fmt.Errorf("update message metadata: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) UpdateMessageReaction(ctx context.Context, chatID, messageID, actor, reaction string) error {
+	if _, err := r.GetMessageActionTarget(ctx, chatID, messageID); err != nil {
+		return err
+	}
+	var query string
+	if reaction == "" {
+		query = `UPDATE messages SET reactions = reactions - $3, updated_at = NOW() WHERE chat_id = $1 AND id = $2`
+	} else {
+		query = `UPDATE messages SET reactions = jsonb_set(reactions, ARRAY[$3], to_jsonb($4::text), TRUE), updated_at = NOW() WHERE chat_id = $1 AND id = $2`
+	}
+	args := []any{chatID, messageID, actor}
+	if reaction != "" {
+		args = append(args, reaction)
+	}
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("update message reaction: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) UpdateMessageText(ctx context.Context, chatID, messageID, text string) error {
+	if _, err := r.GetMessageActionTarget(ctx, chatID, messageID); err != nil {
+		return err
+	}
+	if _, err := r.db.ExecContext(ctx, `UPDATE messages SET text_content = $3, updated_at = NOW()
+WHERE chat_id = $1 AND id = $2`, chatID, messageID, text); err != nil {
+		return fmt.Errorf("update message text: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) CreateContactFromChat(ctx context.Context, chatID, displayName string) (ContactView, error) {
+	if _, err := r.GetChatHeader(ctx, chatID); err != nil {
+		return ContactView{}, err
+	}
+	var contactID string
+	err := r.db.QueryRowContext(ctx, `INSERT INTO contacts (
+id, account_id, wa_jid, display_name, phone_number, created_at, updated_at
+)
+SELECT $2, c.account_id, c.wa_chat_jid, $3,
+CASE WHEN c.wa_chat_jid LIKE '%@s.whatsapp.net' THEN split_part(c.wa_chat_jid, '@', 1) ELSE NULL END,
+NOW(), NOW()
+FROM chats c WHERE c.id = $1
+ON CONFLICT (account_id, wa_jid) DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = NOW()
+RETURNING id`, chatID, ids.NewUUID(), displayName).Scan(&contactID)
+	if err != nil {
+		return ContactView{}, fmt.Errorf("create contact from chat: %w", err)
+	}
+	return r.getContactByID(ctx, contactID)
+}
+
+func (r *Repository) DeleteMessage(ctx context.Context, chatID, messageID string) ([]string, error) {
+	if _, err := r.GetMessageActionTarget(ctx, chatID, messageID); err != nil {
+		return nil, err
+	}
+	storageKeys, err := r.listMediaStorageKeys(ctx, chatID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM messages WHERE chat_id = $1 AND id = $2`, chatID, messageID); err != nil {
+		return nil, fmt.Errorf("delete message: %w", err)
+	}
+	if err := r.refreshChatLastMessage(ctx, chatID); err != nil {
+		return nil, err
+	}
+	return storageKeys, nil
+}
+
+func (r *Repository) ClearChat(ctx context.Context, chatID string) ([]string, error) {
+	if _, err := r.GetChatHeader(ctx, chatID); err != nil {
+		return nil, err
+	}
+	storageKeys, err := r.listMediaStorageKeys(ctx, chatID, "")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM messages WHERE chat_id = $1`, chatID); err != nil {
+		return nil, fmt.Errorf("clear chat messages: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `UPDATE chats SET last_message_id = NULL, last_message_at = NULL,
+marked_unread = FALSE, updated_at = NOW() WHERE id = $1`, chatID); err != nil {
+		return nil, fmt.Errorf("reset cleared chat: %w", err)
+	}
+	return storageKeys, nil
+}
+
+func (r *Repository) DeleteChat(ctx context.Context, chatID string) ([]string, error) {
+	if _, err := r.GetChatHeader(ctx, chatID); err != nil {
+		return nil, err
+	}
+	storageKeys, err := r.listMediaStorageKeys(ctx, chatID, "")
+	if err != nil {
+		return nil, err
+	}
+	result, err := r.db.ExecContext(ctx, `DELETE FROM chats WHERE id = $1`, chatID)
+	if err != nil {
+		return nil, fmt.Errorf("delete chat: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return storageKeys, nil
+}
+
+func (r *Repository) listMediaStorageKeys(ctx context.Context, chatID, messageID string) ([]string, error) {
+	query := `SELECT ma.storage_key FROM media_assets ma JOIN messages m ON m.id = ma.message_id
+WHERE m.chat_id = $1 AND ma.storage_key IS NOT NULL AND ma.storage_key <> ''`
+	args := []any{chatID}
+	if messageID != "" {
+		query += " AND m.id = $2"
+		args = append(args, messageID)
+	}
+	if scopeCondition, scopeArgs := messageAccountScopeCondition(ctx, len(args)+1); scopeCondition != "" {
+		query += " AND " + scopeCondition
+		args = append(args, scopeArgs...)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list media files for deletion: %w", err)
+	}
+	defer rows.Close()
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan media file for deletion: %w", err)
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (r *Repository) refreshChatLastMessage(ctx context.Context, chatID string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE chats c SET
+last_message_id = latest.id,
+last_message_at = latest.sent_at,
+updated_at = NOW()
+FROM (SELECT id, sent_at FROM messages WHERE chat_id = $1 ORDER BY sent_at DESC, id DESC LIMIT 1) latest
+WHERE c.id = $1`, chatID)
+	if err != nil {
+		return fmt.Errorf("refresh chat last message: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `UPDATE chats SET last_message_id = NULL, last_message_at = NULL, updated_at = NOW()
+WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM messages WHERE chat_id = $1)`, chatID)
+	if err != nil {
+		return fmt.Errorf("reset empty chat: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) listLabelsByChatIDs(ctx context.Context, chatIDs []string) (map[string][]ChatLabel, error) {

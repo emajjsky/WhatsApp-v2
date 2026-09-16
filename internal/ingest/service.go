@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -42,9 +44,28 @@ func (s *Service) PersistEvent(ctx context.Context, event RawEvent) (PersistResu
 		return PersistResult{}, err
 	}
 
+	if normalized.Message.MessageType == MessageTypeReaction {
+		normalized.Chat.LastMessageAt = nil
+	}
 	chatID, err := s.repository.UpsertChat(ctx, normalized.Chat)
 	if err != nil {
 		return PersistResult{}, err
+	}
+
+	if normalized.Message.MessageType == MessageTypeReaction && normalized.Message.ReplyToWAMessageID != nil {
+		actor := normalized.Message.SenderJID
+		if normalized.Message.FromMe {
+			actor = "self"
+		}
+		reaction := ""
+		if normalized.Message.TextContent != nil {
+			reaction = strings.TrimSpace(*normalized.Message.TextContent)
+		}
+		messageID, err := s.repository.SetMessageReaction(ctx, normalized.Message.AccountID, chatID, *normalized.Message.ReplyToWAMessageID, actor, reaction)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return PersistResult{}, fmt.Errorf("persist message reaction: %w", err)
+		}
+		return PersistResult{ChatID: chatID, MessageID: messageID}, nil
 	}
 
 	var contactID *string

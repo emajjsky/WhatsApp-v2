@@ -1,0 +1,7 @@
+ALTER TABLE messages
+    ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS reactions JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE INDEX IF NOT EXISTS messages_chat_pinned_idx
+    ON messages (chat_id, pinned DESC, sent_at DESC);

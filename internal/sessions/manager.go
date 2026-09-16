@@ -57,11 +57,24 @@ type SendResult struct {
 }
 
 type SendMediaInput struct {
-	MediaType ingest.MediaType
-	FileName  string
-	MIMEType  string
-	Caption   string
-	Data      []byte
+	MediaType       ingest.MediaType
+	FileName        string
+	MIMEType        string
+	Caption         string
+	Data            []byte
+	VoiceMessage    bool
+	DurationSeconds uint32
+}
+
+type SendContactInput struct {
+	DisplayName string
+	PhoneNumber string
+}
+
+type SendPollInput struct {
+	Question      string
+	Options       []string
+	AllowMultiple bool
 }
 
 type textSender interface {
@@ -72,8 +85,20 @@ type mediaSender interface {
 	SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error)
 }
 
+type structuredMessageSender interface {
+	SendContact(ctx context.Context, accountID, chatJID string, input SendContactInput) (SendResult, error)
+	SendPoll(ctx context.Context, accountID, chatJID string, input SendPollInput) (SendResult, error)
+}
+
 type readMarker interface {
 	MarkRead(ctx context.Context, accountID, chatJID string, messageIDs []string, senderJID string, timestamp time.Time) error
+}
+
+type messageOperator interface {
+	ReactToMessage(ctx context.Context, accountID, chatJID, senderJID, messageID, reaction string) error
+	EditTextMessage(ctx context.Context, accountID, chatJID, messageID, text string) error
+	RevokeMessage(ctx context.Context, accountID, chatJID, senderJID, messageID string) error
+	StarMessage(ctx context.Context, accountID, chatJID, senderJID, messageID string, fromMe, starred bool) error
 }
 
 type Manager struct {
@@ -518,12 +543,112 @@ func (m *Manager) SendMedia(ctx context.Context, accountID, chatJID string, inpu
 	return sender.SendMedia(ctx, accountID, chatJID, input)
 }
 
+func (m *Manager) SendContact(ctx context.Context, accountID, chatJID string, input SendContactInput) (SendResult, error) {
+	sender, ok := m.connector.(structuredMessageSender)
+	if !ok {
+		return SendResult{}, fmt.Errorf("session connector does not support sending contacts")
+	}
+	return sender.SendContact(ctx, accountID, chatJID, input)
+}
+
+func (m *Manager) SendPoll(ctx context.Context, accountID, chatJID string, input SendPollInput) (SendResult, error) {
+	sender, ok := m.connector.(structuredMessageSender)
+	if !ok {
+		return SendResult{}, fmt.Errorf("session connector does not support sending polls")
+	}
+	return sender.SendPoll(ctx, accountID, chatJID, input)
+}
+
 func (m *Manager) MarkRead(ctx context.Context, accountID, chatJID string, messageIDs []string, senderJID string, timestamp time.Time) error {
 	marker, ok := m.connector.(readMarker)
 	if !ok {
 		return fmt.Errorf("session connector does not support read receipts")
 	}
 	return marker.MarkRead(ctx, accountID, chatJID, messageIDs, senderJID, timestamp)
+}
+
+func (m *Manager) ReactToMessage(ctx context.Context, accountID, chatJID, senderJID, messageID, reaction string) error {
+	operator, ok := m.connector.(messageOperator)
+	if !ok {
+		return fmt.Errorf("session connector does not support message reactions")
+	}
+	return operator.ReactToMessage(ctx, accountID, chatJID, senderJID, messageID, reaction)
+}
+
+func (m *Manager) EditTextMessage(ctx context.Context, accountID, chatJID, messageID, text string) error {
+	operator, ok := m.connector.(messageOperator)
+	if !ok {
+		return fmt.Errorf("session connector does not support message editing")
+	}
+	return operator.EditTextMessage(ctx, accountID, chatJID, messageID, text)
+}
+
+func (m *Manager) RevokeMessage(ctx context.Context, accountID, chatJID, senderJID, messageID string) error {
+	operator, ok := m.connector.(messageOperator)
+	if !ok {
+		return fmt.Errorf("session connector does not support message deletion")
+	}
+	return operator.RevokeMessage(ctx, accountID, chatJID, senderJID, messageID)
+}
+
+func (m *Manager) StarMessage(ctx context.Context, accountID, chatJID, senderJID, messageID string, fromMe, starred bool) error {
+	operator, ok := m.connector.(messageOperator)
+	if !ok {
+		return fmt.Errorf("session connector does not support starring messages")
+	}
+	return operator.StarMessage(ctx, accountID, chatJID, senderJID, messageID, fromMe, starred)
+}
+
+func (c *PlaceholderConnector) ReactToMessage(_ context.Context, accountID, _, _, _, _ string) error {
+	c.mu.RLock()
+	snapshot, ok := c.sessions[accountID]
+	c.mu.RUnlock()
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if snapshot.Status != "connected" {
+		return fmt.Errorf("session is not connected")
+	}
+	return nil
+}
+
+func (c *PlaceholderConnector) EditTextMessage(ctx context.Context, accountID, chatJID, _, text string) error {
+	_, err := c.SendText(ctx, accountID, chatJID, text)
+	return err
+}
+
+func (c *PlaceholderConnector) RevokeMessage(_ context.Context, accountID, _, _, _ string) error {
+	c.mu.RLock()
+	snapshot, ok := c.sessions[accountID]
+	c.mu.RUnlock()
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if snapshot.Status != "connected" {
+		return fmt.Errorf("session is not connected")
+	}
+	return nil
+}
+
+func (c *PlaceholderConnector) StarMessage(_ context.Context, accountID, _, _, _ string, _, _ bool) error {
+	c.mu.RLock()
+	snapshot, ok := c.sessions[accountID]
+	c.mu.RUnlock()
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if snapshot.Status != "connected" {
+		return fmt.Errorf("session is not connected")
+	}
+	return nil
+}
+
+func (c *PlaceholderConnector) SendContact(ctx context.Context, accountID, chatJID string, input SendContactInput) (SendResult, error) {
+	return c.SendText(ctx, accountID, chatJID, fmt.Sprintf("联系人：%s %s", input.DisplayName, input.PhoneNumber))
+}
+
+func (c *PlaceholderConnector) SendPoll(ctx context.Context, accountID, chatJID string, input SendPollInput) (SendResult, error) {
+	return c.SendText(ctx, accountID, chatJID, fmt.Sprintf("投票：%s\n%s", input.Question, strings.Join(input.Options, " / ")))
 }
 
 func (c *PlaceholderConnector) SetEventHandler(handler func(Event)) {

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, ipcMain, session, shell, net: electronNet } = require('electron')
+const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, Notification, ipcMain, session, shell, net: electronNet } = require('electron')
 const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const http = require('node:http')
@@ -636,6 +636,20 @@ function registerDesktopIPC() {
     writeDesktopConfig(patch && typeof patch === 'object' ? patch : {})
     await restartAPI()
     return desktopRuntimeConfigView()
+  })
+  ipcMain.handle('desktop-notify:incoming-call', (_event, payload) => {
+    const callType = payload && payload.callType === 'video' ? '视频' : '语音'
+    const caller = payload && typeof payload.caller === 'string' && payload.caller.trim()
+      ? payload.caller.trim()
+      : '未知联系人'
+    const notification = new Notification({
+      title: `WhatsApp ${callType}来电`,
+      body: `来自 ${caller}，请使用手机或官方 WhatsApp 接听。`,
+      silent: false,
+    })
+    notification.on('click', showMainWindow)
+    notification.show()
+    return true
   })
 }
 

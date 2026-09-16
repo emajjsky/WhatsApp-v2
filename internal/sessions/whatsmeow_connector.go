@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"go.mau.fi/whatsmeow/appstate"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/store"
@@ -90,6 +92,7 @@ type WhatsmeowConnector struct {
 	waVersionMu          sync.Mutex
 	waVersionRefreshedAt time.Time
 	routeFingerprints    map[string]string
+	incomingCallSeen     map[string]time.Time
 	proxyMonitorOnce     sync.Once
 }
 
@@ -103,6 +106,7 @@ const (
 	logoutRequestTimeout    = 8 * time.Second
 	waVersionRefreshTimeout = 12 * time.Second
 	waVersionRefreshWindow  = 6 * time.Hour
+	incomingCallDedupWindow = 2 * time.Minute
 )
 
 func NewWhatsmeowConnector(
@@ -156,6 +160,7 @@ func newWhatsmeowConnector(
 		now:               func() time.Time { return time.Now().UTC() },
 		sessions:          make(map[string]*whatsmeowSession),
 		routeFingerprints: make(map[string]string),
+		incomingCallSeen:  make(map[string]time.Time),
 		handler:           nil,
 	}
 	connector.startProxyMonitor()
@@ -541,6 +546,147 @@ func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, t
 	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
 }
 
+func (c *WhatsmeowConnector) SendContact(ctx context.Context, accountID, chatJID string, input SendContactInput) (SendResult, error) {
+	displayName := sanitizeVCardText(input.DisplayName)
+	phoneNumber := normalizeContactPhone(input.PhoneNumber)
+	if displayName == "" || phoneNumber == "" {
+		return SendResult{}, fmt.Errorf("contact name and phone number are required")
+	}
+	vcard := fmt.Sprintf(
+		"BEGIN:VCARD\r\nVERSION:3.0\r\nFN:%s\r\nTEL;TYPE=CELL;TYPE=VOICE;waid=%s:%s\r\nEND:VCARD",
+		displayName,
+		strings.TrimPrefix(phoneNumber, "+"),
+		phoneNumber,
+	)
+	return c.sendStructuredMessage(ctx, accountID, chatJID, func(_ *whatsmeow.Client) *waProto.Message {
+		return &waProto.Message{ContactMessage: &waProto.ContactMessage{
+			DisplayName: proto.String(displayName),
+			Vcard:       proto.String(vcard),
+		}}
+	}, ingest.MessageTypeContact, stringPointer(fmt.Sprintf("%s\n%s", displayName, phoneNumber)), map[string]any{
+		"contact_name":  displayName,
+		"contact_phone": phoneNumber,
+	})
+}
+
+func (c *WhatsmeowConnector) SendPoll(ctx context.Context, accountID, chatJID string, input SendPollInput) (SendResult, error) {
+	question := strings.TrimSpace(input.Question)
+	options := normalizePollOptions(input.Options)
+	if question == "" || len(options) < 2 {
+		return SendResult{}, fmt.Errorf("poll question and at least two options are required")
+	}
+	selectableCount := 1
+	if input.AllowMultiple {
+		selectableCount = 0
+	}
+	text := question + "\n- " + strings.Join(options, "\n- ")
+	return c.sendStructuredMessage(
+		ctx,
+		accountID,
+		chatJID,
+		func(client *whatsmeow.Client) *waProto.Message {
+			return client.BuildPollCreation(question, options, selectableCount)
+		},
+		ingest.MessageTypePoll,
+		stringPointer(text),
+		map[string]any{"poll_question": question, "poll_options": options, "allow_multiple": input.AllowMultiple},
+	)
+}
+
+func (c *WhatsmeowConnector) sendStructuredMessage(
+	ctx context.Context,
+	accountID, chatJID string,
+	messageBuilder func(*whatsmeow.Client) *waProto.Message,
+	messageType ingest.MessageType,
+	textContent *string,
+	payload map[string]any,
+) (SendResult, error) {
+	trimmedChat := strings.TrimSpace(chatJID)
+	if trimmedChat == "" {
+		return SendResult{}, fmt.Errorf("chat_jid is required")
+	}
+	session, err := c.ensureSession(ctx, accountID)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if !session.client.IsConnected() || !session.client.IsLoggedIn() {
+		return SendResult{}, fmt.Errorf("whatsapp session is not connected")
+	}
+	if messageBuilder == nil {
+		return SendResult{}, fmt.Errorf("outbound message builder is required")
+	}
+	outboundMessage := messageBuilder(session.client)
+	targetJID, err := waTypes.ParseJID(trimmedChat)
+	if err != nil {
+		return SendResult{}, fmt.Errorf("parse chat jid %q: %w", trimmedChat, err)
+	}
+	targetJID = targetJID.ToNonAD()
+	resp, err := session.client.SendMessage(ctx, targetJID, outboundMessage)
+	if err != nil {
+		return SendResult{}, fmt.Errorf("send whatsapp %s message: %w", messageType, err)
+	}
+	sentAt := resp.Timestamp
+	if sentAt.IsZero() {
+		sentAt = c.now()
+	}
+	senderJID := resp.Sender.ToNonAD()
+	if senderJID.IsEmpty() && session.client.Store != nil && session.client.Store.ID != nil {
+		senderJID = session.client.Store.ID.ToNonAD()
+	}
+	messageID := string(resp.ID)
+	payload["source"] = "whatsmeow"
+	payload["direction"] = "outbound"
+	payload["chat_jid"] = targetJID.String()
+	payload["message_id"] = messageID
+	payload["sent_at_utc"] = sentAt
+	c.emit(Event{
+		Type:      EventTypeMessageReceived,
+		AccountID: accountID,
+		EmittedAt: sentAt,
+		Message: &MessageEnvelope{
+			Chat:    ingest.ChatSnapshot{AccountID: accountID, WAChatJID: targetJID.String(), ChatType: mapChatType(targetJID), LastMessageAt: &sentAt},
+			Message: ingest.MessageInput{AccountID: accountID, WAMessageID: messageID, SenderJID: senderJID.String(), FromMe: true, MessageType: messageType, TextContent: textContent, SentAt: sentAt},
+			Payload: payload,
+		},
+	})
+	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
+}
+
+func sanitizeVCardText(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	replacer := strings.NewReplacer("\\", "\\\\", ";", "\\;", ",", "\\,")
+	return replacer.Replace(value)
+}
+
+func normalizeContactPhone(value string) string {
+	var normalized strings.Builder
+	for index, char := range strings.TrimSpace(value) {
+		if char >= '0' && char <= '9' {
+			normalized.WriteRune(char)
+		} else if char == '+' && index == 0 {
+			normalized.WriteRune(char)
+		}
+	}
+	return normalized.String()
+}
+
+func normalizePollOptions(options []string) []string {
+	result := make([]string, 0, len(options))
+	seen := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		trimmed := strings.TrimSpace(option)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
 func (c *WhatsmeowConnector) MarkRead(ctx context.Context, accountID, chatJID string, messageIDs []string, senderJID string, timestamp time.Time) error {
 	if len(messageIDs) == 0 {
 		return fmt.Errorf("message_ids are required")
@@ -581,6 +727,106 @@ func (c *WhatsmeowConnector) MarkRead(ctx context.Context, accountID, chatJID st
 	return nil
 }
 
+func (c *WhatsmeowConnector) ReactToMessage(ctx context.Context, accountID, chatJID, senderJID, messageID, reaction string) error {
+	session, targetJID, sender, err := c.messageActionTarget(ctx, accountID, chatJID, senderJID, messageID)
+	if err != nil {
+		return err
+	}
+	if _, err := session.client.SendMessage(ctx, targetJID, session.client.BuildReaction(
+		targetJID,
+		sender,
+		waTypes.MessageID(strings.TrimSpace(messageID)),
+		strings.TrimSpace(reaction),
+	)); err != nil {
+		return fmt.Errorf("send whatsapp reaction: %w", err)
+	}
+	return nil
+}
+
+func (c *WhatsmeowConnector) EditTextMessage(ctx context.Context, accountID, chatJID, messageID, text string) error {
+	trimmedText := strings.TrimSpace(text)
+	if trimmedText == "" {
+		return fmt.Errorf("text must not be empty")
+	}
+	session, targetJID, _, err := c.messageActionTarget(ctx, accountID, chatJID, "", messageID)
+	if err != nil {
+		return err
+	}
+	message := session.client.BuildEdit(targetJID, waTypes.MessageID(strings.TrimSpace(messageID)), &waProto.Message{
+		Conversation: proto.String(trimmedText),
+	})
+	if _, err := session.client.SendMessage(ctx, targetJID, message); err != nil {
+		return fmt.Errorf("edit whatsapp message: %w", err)
+	}
+	return nil
+}
+
+func (c *WhatsmeowConnector) RevokeMessage(ctx context.Context, accountID, chatJID, senderJID, messageID string) error {
+	session, targetJID, sender, err := c.messageActionTarget(ctx, accountID, chatJID, senderJID, messageID)
+	if err != nil {
+		return err
+	}
+	if _, err := session.client.SendMessage(ctx, targetJID, session.client.BuildRevoke(
+		targetJID,
+		sender,
+		waTypes.MessageID(strings.TrimSpace(messageID)),
+	)); err != nil {
+		return fmt.Errorf("delete whatsapp message: %w", err)
+	}
+	return nil
+}
+
+func (c *WhatsmeowConnector) StarMessage(
+	ctx context.Context,
+	accountID, chatJID, senderJID, messageID string,
+	fromMe, starred bool,
+) error {
+	session, targetJID, sender, err := c.messageActionTarget(ctx, accountID, chatJID, senderJID, messageID)
+	if err != nil {
+		return err
+	}
+	if err := session.client.SendAppState(ctx, appstate.BuildStar(
+		targetJID,
+		sender,
+		waTypes.MessageID(strings.TrimSpace(messageID)),
+		fromMe,
+		starred,
+	)); err != nil {
+		return fmt.Errorf("update whatsapp message star: %w", err)
+	}
+	return nil
+}
+
+func (c *WhatsmeowConnector) messageActionTarget(
+	ctx context.Context,
+	accountID, chatJID, senderJID, messageID string,
+) (*whatsmeowSession, waTypes.JID, waTypes.JID, error) {
+	if strings.TrimSpace(messageID) == "" {
+		return nil, waTypes.EmptyJID, waTypes.EmptyJID, fmt.Errorf("message_id is required")
+	}
+	session, err := c.ensureSession(ctx, accountID)
+	if err != nil {
+		return nil, waTypes.EmptyJID, waTypes.EmptyJID, err
+	}
+	if !session.client.IsConnected() || !session.client.IsLoggedIn() {
+		return nil, waTypes.EmptyJID, waTypes.EmptyJID, fmt.Errorf("whatsapp session is not connected")
+	}
+	targetJID, err := waTypes.ParseJID(strings.TrimSpace(chatJID))
+	if err != nil {
+		return nil, waTypes.EmptyJID, waTypes.EmptyJID, fmt.Errorf("parse chat jid %q: %w", chatJID, err)
+	}
+	targetJID = targetJID.ToNonAD()
+	var sender waTypes.JID
+	if strings.TrimSpace(senderJID) != "" {
+		sender, err = waTypes.ParseJID(strings.TrimSpace(senderJID))
+		if err != nil {
+			return nil, waTypes.EmptyJID, waTypes.EmptyJID, fmt.Errorf("parse sender jid %q: %w", senderJID, err)
+		}
+		sender = sender.ToNonAD()
+	}
+	return session, targetJID, sender, nil
+}
+
 func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error) {
 	trimmedChat := strings.TrimSpace(chatJID)
 	if trimmedChat == "" {
@@ -614,6 +860,9 @@ func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID s
 	}
 
 	mimeType := normalizedMIMEType(input.MIMEType, input.Data)
+	if mediaType == ingest.MediaTypeSticker && mimeType != "image/webp" {
+		return SendResult{}, fmt.Errorf("stickers must use image/webp")
+	}
 	fileName := strings.TrimSpace(input.FileName)
 	caption := strings.TrimSpace(input.Caption)
 
@@ -622,7 +871,10 @@ func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID s
 		return SendResult{}, fmt.Errorf("upload whatsapp media: %w", err)
 	}
 
-	outboundMessage := buildMediaMessage(mediaType, mimeType, fileName, caption, upload)
+	if input.VoiceMessage && mediaType != ingest.MediaTypeAudio {
+		return SendResult{}, fmt.Errorf("voice messages must use audio media")
+	}
+	outboundMessage := buildMediaMessage(mediaType, mimeType, fileName, caption, input.VoiceMessage, input.DurationSeconds, upload)
 	resp, err := session.client.SendMessage(ctx, targetJID, outboundMessage)
 	if err != nil {
 		return SendResult{}, fmt.Errorf("send whatsapp media message: %w", err)
@@ -683,14 +935,16 @@ func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID s
 		},
 		Media: []ingest.MediaInput{media},
 		Payload: map[string]any{
-			"source":      "whatsmeow",
-			"direction":   "outbound",
-			"chat_jid":    targetJID.String(),
-			"message_id":  messageID,
-			"media_type":  mediaType,
-			"mime_type":   mimeType,
-			"file_name":   media.FileName,
-			"sent_at_utc": sentAt,
+			"source":           "whatsmeow",
+			"direction":        "outbound",
+			"chat_jid":         targetJID.String(),
+			"message_id":       messageID,
+			"media_type":       mediaType,
+			"mime_type":        mimeType,
+			"file_name":        media.FileName,
+			"voice_message":    input.VoiceMessage,
+			"duration_seconds": input.DurationSeconds,
+			"sent_at_utc":      sentAt,
 		},
 	}
 
@@ -1153,6 +1407,10 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 		if event.SourceWebMsg == nil && event.UnavailableRequestID == "" {
 			c.maybeRequestCatchUpHistory(accountID, session.client, &event.Info)
 		}
+	case *waEvents.CallOffer:
+		c.emitIncomingCall(accountID, preferredCallJID(event.CallCreatorAlt, event.CallCreator, event.From), event.CallID, callMediaType(event.Data), !event.GroupJID.IsEmpty())
+	case *waEvents.CallOfferNotice:
+		c.emitIncomingCall(accountID, preferredCallJID(event.CallCreatorAlt, event.CallCreator, event.From), event.CallID, event.Media, !event.GroupJID.IsEmpty() || strings.EqualFold(event.Type, "group"))
 	case *waEvents.HistorySync:
 		if err := c.handleHistorySync(accountID, event); err != nil {
 			c.logger.Warn("failed to process history sync", "account_id", accountID, "error", err)
@@ -1166,6 +1424,105 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 			"is_unavailable", event.IsUnavailable,
 		)
 	}
+}
+
+func (c *WhatsmeowConnector) emitIncomingCall(accountID string, caller waTypes.JID, callID, mediaType string, isGroup bool) {
+	caller = caller.ToNonAD()
+	if caller.IsEmpty() {
+		c.logger.Warn("ignored incoming call without caller", "account_id", accountID, "call_id", callID)
+		return
+	}
+	mediaType = callMediaType(nil, mediaType)
+	if c.isDuplicateIncomingCall(accountID, caller.String(), callID, mediaType, isGroup) {
+		return
+	}
+	c.emit(Event{
+		Type:      EventTypeIncomingCall,
+		AccountID: accountID,
+		EmittedAt: c.now(),
+		Call: &IncomingCall{
+			CallerJID: caller.String(),
+			CallID:    strings.TrimSpace(callID),
+			MediaType: mediaType,
+			IsGroup:   isGroup,
+		},
+	})
+}
+
+func (c *WhatsmeowConnector) isDuplicateIncomingCall(accountID, callerJID, callID, mediaType string, isGroup bool) bool {
+	now := c.now()
+	key := strings.TrimSpace(callID)
+	if key == "" {
+		key = fmt.Sprintf("%s|%s|%t", callerJID, mediaType, isGroup)
+	}
+	key = accountID + "|" + key
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.incomingCallSeen == nil {
+		c.incomingCallSeen = make(map[string]time.Time)
+	}
+	for seenKey, seenAt := range c.incomingCallSeen {
+		if now.Sub(seenAt) >= incomingCallDedupWindow {
+			delete(c.incomingCallSeen, seenKey)
+		}
+	}
+	if seenAt, found := c.incomingCallSeen[key]; found && now.Sub(seenAt) < incomingCallDedupWindow {
+		return true
+	}
+	c.incomingCallSeen[key] = now
+	return false
+}
+
+func callMediaType(data *waBinary.Node, fallback ...string) string {
+	mediaType := ""
+	if data != nil {
+		mediaType = data.AttrGetter().OptionalString("media")
+	}
+	if strings.TrimSpace(mediaType) == "" && len(fallback) > 0 {
+		mediaType = fallback[0]
+	}
+	switch strings.ToLower(strings.TrimSpace(mediaType)) {
+	case "audio":
+		return "audio"
+	case "video":
+		return "video"
+	default:
+		if callNodeContainsVideo(data) {
+			return "video"
+		}
+		return "audio"
+	}
+}
+
+func callNodeContainsVideo(node *waBinary.Node) bool {
+	if node == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(node.Tag), "video") {
+		return true
+	}
+	for key, value := range node.Attrs {
+		if strings.Contains(strings.ToLower(key+fmt.Sprint(value)), "video") {
+			return true
+		}
+	}
+	for index := range node.GetChildren() {
+		children := node.GetChildren()
+		if callNodeContainsVideo(&children[index]) {
+			return true
+		}
+	}
+	return false
+}
+
+func preferredCallJID(candidates ...waTypes.JID) waTypes.JID {
+	for _, candidate := range candidates {
+		if !candidate.IsEmpty() {
+			return candidate.ToNonAD()
+		}
+	}
+	return waTypes.EmptyJID
 }
 
 func (c *WhatsmeowConnector) refreshKnownMetadataAsync(accountID string) {
@@ -1517,6 +1874,10 @@ func (c *WhatsmeowConnector) mapIncomingMessage(accountID string, client *whatsm
 	if event.Info.IsFromMe {
 		envelope.Contact = nil
 	}
+	if audio := event.Message.GetAudioMessage(); audio != nil {
+		envelope.Payload["voice_message"] = audio.GetPTT()
+		envelope.Payload["duration_seconds"] = audio.GetSeconds()
+	}
 
 	return envelope, nil
 }
@@ -1559,6 +1920,33 @@ func (c *WhatsmeowConnector) extractIncomingMessageContent(accountID, messageID 
 			return client.Download(ctx, sticker)
 		})
 		return ingest.MessageTypeSticker, nil, []ingest.MediaInput{media}
+	case message.GetContactMessage() != nil:
+		return ingest.MessageTypeContact, stringPointer(contactMessageText(message.GetContactMessage())), nil
+	case message.GetContactsArrayMessage() != nil:
+		contacts := message.GetContactsArrayMessage().GetContacts()
+		items := make([]string, 0, len(contacts))
+		for _, contact := range contacts {
+			if contact != nil {
+				items = append(items, contactMessageText(contact))
+			}
+		}
+		if len(items) == 0 {
+			items = append(items, "联系人名片")
+		}
+		return ingest.MessageTypeContact, stringPointer(strings.Join(items, "\n\n")), nil
+	case message.GetPollCreationMessage() != nil:
+		poll := message.GetPollCreationMessage()
+		options := make([]string, 0, len(poll.GetOptions()))
+		for _, option := range poll.GetOptions() {
+			if name := strings.TrimSpace(option.GetOptionName()); name != "" {
+				options = append(options, name)
+			}
+		}
+		text := strings.TrimSpace(poll.GetName())
+		if len(options) > 0 {
+			text += "\n- " + strings.Join(options, "\n- ")
+		}
+		return ingest.MessageTypePoll, stringPointer(text), nil
 	case message.GetReactionMessage() != nil:
 		reaction := strings.TrimSpace(message.GetReactionMessage().GetText())
 		return ingest.MessageTypeReaction, stringPointer(reaction), nil
@@ -1568,6 +1956,57 @@ func (c *WhatsmeowConnector) extractIncomingMessageContent(accountID, messageID 
 	default:
 		return ingest.MessageTypeUnknown, nil, nil
 	}
+}
+
+func contactMessageText(contact *waProto.ContactMessage) string {
+	if contact == nil {
+		return "联系人名片"
+	}
+	displayName := strings.TrimSpace(contact.GetDisplayName())
+	if displayName == "" {
+		displayName = parseVCardProperty(contact.GetVcard(), "FN")
+	}
+	phoneNumber := parseVCardProperty(contact.GetVcard(), "TEL")
+	parts := make([]string, 0, 2)
+	if displayName != "" {
+		parts = append(parts, displayName)
+	}
+	if phoneNumber != "" {
+		parts = append(parts, phoneNumber)
+	}
+	if len(parts) == 0 {
+		return "联系人名片"
+	}
+	return strings.Join(parts, "\n")
+}
+
+func parseVCardProperty(vcard, property string) string {
+	normalized := strings.ReplaceAll(vcard, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	lines := strings.Split(normalized, "\n")
+	unfolded := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if len(unfolded) > 0 && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			unfolded[len(unfolded)-1] += strings.TrimLeft(line, " \t")
+			continue
+		}
+		unfolded = append(unfolded, line)
+	}
+
+	for _, line := range unfolded {
+		keyValue := strings.SplitN(line, ":", 2)
+		if len(keyValue) != 2 {
+			continue
+		}
+		key := strings.SplitN(keyValue[0], ";", 2)[0]
+		if !strings.EqualFold(strings.TrimSpace(key), property) {
+			continue
+		}
+		value := strings.TrimSpace(keyValue[1])
+		value = strings.NewReplacer("\\n", "\n", "\\,", ",", "\\;", ";", "\\\\", "\\").Replace(value)
+		return strings.TrimSpace(value)
+	}
+	return ""
 }
 
 func shouldIgnoreInboundMessage(messageType ingest.MessageType, text *string) bool {
@@ -1632,6 +2071,8 @@ func normalizeOutgoingMediaType(mediaType ingest.MediaType) (ingest.MediaType, i
 		return ingest.MediaTypeVideo, ingest.MessageTypeVideo, nil
 	case ingest.MediaTypeAudio:
 		return ingest.MediaTypeAudio, ingest.MessageTypeAudio, nil
+	case ingest.MediaTypeSticker:
+		return ingest.MediaTypeSticker, ingest.MessageTypeSticker, nil
 	case ingest.MediaTypeDocument, "", ingest.MediaTypeOther:
 		return ingest.MediaTypeDocument, ingest.MessageTypeDocument, nil
 	default:
@@ -1647,6 +2088,8 @@ func whatsmeowMediaType(mediaType ingest.MediaType) (whatsmeow.MediaType, error)
 		return whatsmeow.MediaVideo, nil
 	case ingest.MediaTypeAudio:
 		return whatsmeow.MediaAudio, nil
+	case ingest.MediaTypeSticker:
+		return whatsmeow.MediaImage, nil
 	case ingest.MediaTypeDocument:
 		return whatsmeow.MediaDocument, nil
 	default:
@@ -1654,7 +2097,7 @@ func whatsmeowMediaType(mediaType ingest.MediaType) (whatsmeow.MediaType, error)
 	}
 }
 
-func buildMediaMessage(mediaType ingest.MediaType, mimeType, fileName, caption string, upload whatsmeow.UploadResponse) *waProto.Message {
+func buildMediaMessage(mediaType ingest.MediaType, mimeType, fileName, caption string, voiceMessage bool, durationSeconds uint32, upload whatsmeow.UploadResponse) *waProto.Message {
 	fileLength := upload.FileLength
 	baseURL := upload.URL
 	directPath := upload.DirectPath
@@ -1689,6 +2132,7 @@ func buildMediaMessage(mediaType ingest.MediaType, mimeType, fileName, caption s
 		}
 		return &waProto.Message{VideoMessage: video}
 	case ingest.MediaTypeAudio:
+		seconds := durationSeconds
 		return &waProto.Message{
 			AudioMessage: &waProto.AudioMessage{
 				URL:           &baseURL,
@@ -1698,7 +2142,21 @@ func buildMediaMessage(mediaType ingest.MediaType, mimeType, fileName, caption s
 				FileSHA256:    upload.FileSHA256,
 				FileEncSHA256: upload.FileEncSHA256,
 				FileLength:    &fileLength,
-				PTT:           proto.Bool(false),
+				PTT:           proto.Bool(voiceMessage),
+				Seconds:       &seconds,
+			},
+		}
+	case ingest.MediaTypeSticker:
+		return &waProto.Message{
+			StickerMessage: &waProto.StickerMessage{
+				URL:           &baseURL,
+				DirectPath:    &directPath,
+				MediaKey:      upload.MediaKey,
+				Mimetype:      proto.String(mimeType),
+				FileSHA256:    upload.FileSHA256,
+				FileEncSHA256: upload.FileEncSHA256,
+				FileLength:    &fileLength,
+				IsAnimated:    proto.Bool(false),
 			},
 		}
 	default:
@@ -1749,6 +2207,8 @@ func extractReplyToMessageID(message *waProto.Message) *string {
 		return stringPointer(strings.TrimSpace(message.GetAudioMessage().GetContextInfo().GetStanzaID()))
 	case message.GetStickerMessage() != nil:
 		return stringPointer(strings.TrimSpace(message.GetStickerMessage().GetContextInfo().GetStanzaID()))
+	case message.GetReactionMessage() != nil:
+		return stringPointer(strings.TrimSpace(message.GetReactionMessage().GetKey().GetID()))
 	default:
 		return nil
 	}

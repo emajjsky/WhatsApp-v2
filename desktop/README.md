@@ -16,7 +16,22 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.61`.
+Current packaging version: `0.1.62`.
+
+## 0.1.62 WhatsApp message actions and voice messages
+
+- Add WhatsApp protocol-backed reactions, replies, forwarding, editing,
+  starring, delete-for-everyone, polls, contact cards, GIF files, and WebP
+  stickers, alongside clearly separated local-only message actions.
+- Add browser microphone recording and send recordings with WhatsApp PTT
+  semantics; received audio and voice messages remain directly playable.
+- Display received single and multi-contact vCards as structured contact cards.
+- Notify Windows users about incoming voice and video calls while leaving call
+  answering to the phone or official WhatsApp client; duplicate offer events
+  are suppressed for two minutes.
+- Bundle the authorized WhatsApp color Emoji font and document its local source
+  and checksum. The official package does not include an offline GIF or sticker
+  catalog that can be copied into this application.
 
 ## 0.1.61 Conversation navigation persistence
 
@@ -212,3 +227,15 @@ password twice, and save it. Passwords must contain at least 8 characters.
 - 自动模式在境内有 Clash 时走“Clash → 账号独立代理”，境外没有系统代理时直接走账号代理。
 - Clash 节点变化后，已连接账号会自动重连以使用新路径。
 - 每个账号仍必须绑定不同的独立代理，单个 Clash 节点不能提供多个独立出口 IP。
+
+## 未发布：会话与消息操作
+
+- 会话菜单补齐归档、静音、置顶、未读、特别关注、自定义列表、备注、清空和删除。
+- 消息菜单补齐详情、回复、复制、转发、本地置顶、WhatsApp 星标、编辑、批量选择和删除。
+- “为所有人删除”只对自己发送的消息开放，并调用 WhatsApp 撤回协议；“从我这端删除”只删除本软件本地记录。
+- 附件入口支持文档、照片/视频、相机、音频、联系人 vCard、WhatsApp 原生投票和自定义 WebP 贴图。
+- Emoji 选择器使用经用户授权从本机 WhatsApp Desktop 2.2635.100.0 提取的 `WhatsAppColorEmoji.ttf`，来源与 SHA-256 记录在 `web/public/fonts/README.md`。
+- 输入区空消息状态显示麦克风按钮，可录制并发送 WhatsApp PTT 语音消息；收到语音可播放。来电事件会显示桌面通知，但本客户端不接管通话媒体，需使用手机或官方 WhatsApp 接听。
+- 同一通来电的 `CallOffer` / `CallOfferNotice` 在两分钟窗口内去重，避免 Windows 连续弹出重复通知。
+- Windows Chromium 通常录制为 WebM Opus；协议发送链路和普通音频播放已通过自动测试，仍需用真实 WhatsApp 对端确认各版本对 WebM PTT 的兼容性。若对端不兼容，发布前必须补 WebM 到 OGG Opus 转码。
+- 输入区提供 Emoji / GIF / 贴图三栏；GIF 从本地文件发送，自有图片可转换为 WebP 贴图。官方安装包中没有可离线复制的贴图库或 GIF 内容源。

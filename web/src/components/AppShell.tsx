@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { type UserPermission } from '../api/client'
+import { subscribeLiveUpdates, type LiveUpdate, type UserPermission } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from './Icon'
 
@@ -68,6 +68,47 @@ export function AppShell() {
     return () => {
       cancelled = true
     }
+  }, [])
+
+  useEffect(() => {
+    function notifyIncomingCall(update: LiveUpdate) {
+      if (update.type !== 'incoming_call') {
+        return
+      }
+
+      const callType = update.call_type === 'video' ? '视频' : '语音'
+      const caller = update.caller_jid?.split('@')[0] || '未知联系人'
+      const desktopRuntime = (
+        window as Window & {
+          desktopRuntime?: {
+            notifyIncomingCall?: (payload: { callType: string; caller: string }) => Promise<unknown>
+          }
+        }
+      ).desktopRuntime
+      if (desktopRuntime?.notifyIncomingCall) {
+        void desktopRuntime.notifyIncomingCall({ callType: update.call_type ?? 'audio', caller })
+        return
+      }
+
+      if (!('Notification' in window)) {
+        return
+      }
+      const showNotification = () => new Notification(
+        `WhatsApp ${callType}来电`,
+        { body: `来自 ${caller}，请使用手机或官方 WhatsApp 接听。` },
+      )
+      if (Notification.permission === 'granted') {
+        showNotification()
+      } else if (Notification.permission === 'default') {
+        void Notification.requestPermission().then((permission) => {
+          if (permission === 'granted') {
+            showNotification()
+          }
+        })
+      }
+    }
+
+    return subscribeLiveUpdates(notifyIncomingCall)
   }, [])
 
   return (

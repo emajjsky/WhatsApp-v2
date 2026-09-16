@@ -17,6 +17,7 @@ const (
 	EventTypeSessionSnapshot EventType = "session.snapshot"
 	EventTypeChatSnapshot    EventType = "chat.snapshot"
 	EventTypeMessageReceived EventType = "message.received"
+	EventTypeIncomingCall    EventType = "call.incoming"
 )
 
 type Event struct {
@@ -25,7 +26,17 @@ type Event struct {
 	Snapshot  *SessionSnapshot     `json:"snapshot,omitempty"`
 	Chat      *ingest.ChatSnapshot `json:"chat,omitempty"`
 	Message   *MessageEnvelope     `json:"message,omitempty"`
+	Call      *IncomingCall        `json:"call,omitempty"`
 	EmittedAt time.Time            `json:"emitted_at"`
+}
+
+// IncomingCall intentionally carries notification metadata only. This client
+// does not implement WhatsApp's encrypted voice or video call media stack.
+type IncomingCall struct {
+	CallerJID string `json:"caller_jid"`
+	CallID    string `json:"call_id"`
+	MediaType string `json:"media_type"`
+	IsGroup   bool   `json:"is_group"`
 }
 
 type MessageEnvelope struct {
@@ -42,16 +53,21 @@ const (
 	LiveUpdateSessionChanged LiveUpdateType = "session_changed"
 	LiveUpdateChatStored     LiveUpdateType = "chat_stored"
 	LiveUpdateMessageStored  LiveUpdateType = "message_stored"
+	LiveUpdateIncomingCall   LiveUpdateType = "incoming_call"
 )
 
 type LiveUpdate struct {
-	Type       LiveUpdateType `json:"type"`
-	AccountID  string         `json:"account_id"`
-	Status     string         `json:"status,omitempty"`
-	ChatID     string         `json:"chat_id,omitempty"`
-	MessageID  string         `json:"message_id,omitempty"`
-	OccurredAt time.Time      `json:"occurred_at"`
-	Summary    string         `json:"summary"`
+	Type        LiveUpdateType `json:"type"`
+	AccountID   string         `json:"account_id"`
+	Status      string         `json:"status,omitempty"`
+	ChatID      string         `json:"chat_id,omitempty"`
+	MessageID   string         `json:"message_id,omitempty"`
+	CallerJID   string         `json:"caller_jid,omitempty"`
+	CallID      string         `json:"call_id,omitempty"`
+	CallType    string         `json:"call_type,omitempty"`
+	CallIsGroup bool           `json:"call_is_group,omitempty"`
+	OccurredAt  time.Time      `json:"occurred_at"`
+	Summary     string         `json:"summary"`
 }
 
 type IngestSink interface {
@@ -97,9 +113,43 @@ func (b *EventBridge) Handle(ctx context.Context, event Event) error {
 		return b.handleChatSnapshot(ctx, event)
 	case EventTypeMessageReceived:
 		return b.handleMessageReceived(ctx, event)
+	case EventTypeIncomingCall:
+		return b.handleIncomingCall(event)
 	default:
 		return fmt.Errorf("unsupported session event type %q", event.Type)
 	}
+}
+
+func (b *EventBridge) handleIncomingCall(event Event) error {
+	if event.Call == nil || strings.TrimSpace(event.Call.CallerJID) == "" {
+		return fmt.Errorf("incoming call event requires caller metadata")
+	}
+
+	callType := strings.ToLower(strings.TrimSpace(event.Call.MediaType))
+	if callType != "audio" && callType != "video" {
+		callType = "unknown"
+	}
+	label := "WhatsApp 来电"
+	if callType == "video" {
+		label = "WhatsApp 视频来电"
+	} else if callType == "audio" {
+		label = "WhatsApp 语音来电"
+	}
+	if event.Call.IsGroup {
+		label = "WhatsApp 群组" + strings.TrimPrefix(label, "WhatsApp")
+	}
+
+	b.publish(LiveUpdate{
+		Type:        LiveUpdateIncomingCall,
+		AccountID:   event.AccountID,
+		CallerJID:   event.Call.CallerJID,
+		CallID:      event.Call.CallID,
+		CallType:    callType,
+		CallIsGroup: event.Call.IsGroup,
+		OccurredAt:  event.EmittedAt,
+		Summary:     label,
+	})
+	return nil
 }
 
 func (b *EventBridge) Subscribe(buffer int) (<-chan LiveUpdate, func()) {

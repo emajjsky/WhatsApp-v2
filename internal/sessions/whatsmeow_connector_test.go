@@ -9,6 +9,7 @@ import (
 	"whatsapp-agent-platform/internal/ingest"
 
 	"go.mau.fi/whatsmeow"
+	waBinary "go.mau.fi/whatsmeow/binary"
 	waProto "go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/store"
@@ -142,14 +143,105 @@ func TestInternalProtocolPayloadIsDetectedBeforeChatCreation(t *testing.T) {
 	}
 }
 
+func TestContactAndPollPayloadNormalization(t *testing.T) {
+	if got := sanitizeVCardText("Alice\r\nTEL:123,Sales"); got != "Alice TEL:123\\,Sales" {
+		t.Fatalf("sanitizeVCardText() = %q", got)
+	}
+	if got := normalizeContactPhone("+62 (812) 345-678"); got != "+62812345678" {
+		t.Fatalf("normalizeContactPhone() = %q", got)
+	}
+	options := normalizePollOptions([]string{"Yes", " ", "No", "Yes"})
+	if len(options) != 2 || options[0] != "Yes" || options[1] != "No" {
+		t.Fatalf("normalizePollOptions() = %#v", options)
+	}
+	contactText := contactMessageText(&waProto.ContactMessage{
+		DisplayName: proto.String("Alice"),
+		Vcard:       proto.String("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Alice\r\nTEL;TYPE=CELL;waid=62812:+62812\r\nEND:VCARD"),
+	})
+	if contactText != "Alice\n+62812" {
+		t.Fatalf("contactMessageText() = %q", contactText)
+	}
+}
+
+func TestStickerOutgoingMediaType(t *testing.T) {
+	mediaType, messageType, err := normalizeOutgoingMediaType(ingest.MediaTypeSticker)
+	if err != nil {
+		t.Fatalf("normalizeOutgoingMediaType() returned error: %v", err)
+	}
+	if mediaType != ingest.MediaTypeSticker || messageType != ingest.MessageTypeSticker {
+		t.Fatalf("normalizeOutgoingMediaType() = %q, %q", mediaType, messageType)
+	}
+}
+
+func TestVoiceMessageBuildsPTTAudioPayload(t *testing.T) {
+	message := buildMediaMessage(
+		ingest.MediaTypeAudio,
+		"audio/ogg; codecs=opus",
+		"voice.ogg",
+		"",
+		true,
+		7,
+		whatsmeow.UploadResponse{URL: "https://example.invalid/audio", DirectPath: "/audio", FileLength: 12},
+	)
+	if message.GetAudioMessage() == nil {
+		t.Fatal("audio message is nil")
+	}
+	if !message.GetAudioMessage().GetPTT() {
+		t.Fatal("PTT = false, want true")
+	}
+	if message.GetAudioMessage().GetSeconds() != 7 {
+		t.Fatalf("seconds = %d, want 7", message.GetAudioMessage().GetSeconds())
+	}
+}
+
+func TestIncomingVideoCallOfferEmitsNotificationEvent(t *testing.T) {
+	accountID := "account-1"
+	connector := newTestWhatsmeowConnector(accountID, "connected")
+	events := make([]Event, 0, 1)
+	connector.SetEventHandler(func(event Event) { events = append(events, event) })
+	caller := waTypes.NewJID("628123456789", waTypes.DefaultUserServer)
+
+	connector.handleWhatsmeowEvent(accountID, &waEvents.CallOffer{
+		BasicCallMeta: waTypes.BasicCallMeta{From: caller, CallCreator: caller, CallID: "call-1"},
+		Data:          &waBinary.Node{Tag: "offer", Content: []waBinary.Node{{Tag: "video", Attrs: waBinary.Attrs{"type": "video"}}}},
+	})
+
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	if events[0].Type != EventTypeIncomingCall || events[0].Call == nil {
+		t.Fatalf("event = %#v, want incoming call", events[0])
+	}
+	if events[0].Call.MediaType != "video" || events[0].Call.CallerJID != caller.String() {
+		t.Fatalf("call = %#v, want video from %s", events[0].Call, caller.String())
+	}
+}
+
+func TestIncomingCallOfferAndNoticeAreDeduplicated(t *testing.T) {
+	accountID := "account-1"
+	connector := newTestWhatsmeowConnector(accountID, "connected")
+	events := make([]Event, 0, 2)
+	connector.SetEventHandler(func(event Event) { events = append(events, event) })
+	caller := waTypes.NewJID("628123456789", waTypes.DefaultUserServer)
+	meta := waTypes.BasicCallMeta{From: caller, CallCreator: caller, CallID: "call-1"}
+
+	connector.handleWhatsmeowEvent(accountID, &waEvents.CallOffer{BasicCallMeta: meta})
+	connector.handleWhatsmeowEvent(accountID, &waEvents.CallOfferNotice{BasicCallMeta: meta, Media: "audio"})
+
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+}
+
 func newTestWhatsmeowConnector(accountID, status string) *WhatsmeowConnector {
 	jid := waTypes.NewJID("15551234567", waTypes.DefaultUserServer)
 	client := whatsmeow.NewClient(&store.Device{ID: &jid}, nil)
 	now := time.Unix(1700000000, 0).UTC()
 
 	return &WhatsmeowConnector{
-		logger: slog.Default(),
-		now:    func() time.Time { return now },
+		logger:           slog.Default(),
+		now:              func() time.Time { return now },
+		incomingCallSeen: make(map[string]time.Time),
 		sessions: map[string]*whatsmeowSession{
 			accountID: {
 				accountID: accountID,

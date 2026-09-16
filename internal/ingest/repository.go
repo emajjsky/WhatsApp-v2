@@ -168,6 +168,26 @@ RETURNING id`
 	return storedID, nil
 }
 
+func (r *Repository) SetMessageReaction(ctx context.Context, accountID, chatID, waMessageID, actor, reaction string) (string, error) {
+	var query string
+	if reaction == "" {
+		query = `UPDATE messages SET reactions = reactions - $4, updated_at = NOW()
+WHERE account_id = $1 AND chat_id = $2 AND wa_message_id = $3 RETURNING id`
+	} else {
+		query = `UPDATE messages SET reactions = jsonb_set(reactions, ARRAY[$4], to_jsonb($5::text), TRUE), updated_at = NOW()
+WHERE account_id = $1 AND chat_id = $2 AND wa_message_id = $3 RETURNING id`
+	}
+	args := []any{accountID, chatID, waMessageID, actor}
+	if reaction != "" {
+		args = append(args, reaction)
+	}
+	var messageID string
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&messageID); err != nil {
+		return "", err
+	}
+	return messageID, nil
+}
+
 func (r *Repository) ReplaceMedia(ctx context.Context, messageID string, media []MediaInput) error {
 	if _, err := r.db.ExecContext(ctx, `DELETE FROM media_assets WHERE message_id = $1`, messageID); err != nil {
 		return fmt.Errorf("clear media for message %q: %w", messageID, err)

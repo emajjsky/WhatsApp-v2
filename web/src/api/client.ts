@@ -227,6 +227,9 @@ export interface MessageView {
   sent_at: string
   delivered_at?: string
   read_at?: string
+  starred: boolean
+  pinned: boolean
+  reactions: Record<string, string>
   media: MediaAttachment[]
 }
 
@@ -317,12 +320,14 @@ export interface RegisterPayload {
   invite_code: string
 }
 
-export type SendChatMediaType = 'image' | 'video' | 'audio' | 'document'
+export type SendChatMediaType = 'image' | 'video' | 'audio' | 'document' | 'sticker'
 
 export interface SendChatMediaPayload {
   file: File
   mediaType: SendChatMediaType
   caption?: string
+  voiceMessage?: boolean
+  durationSeconds?: number
 }
 
 export interface SendChatMediaResponse {
@@ -360,7 +365,7 @@ export interface ExportJobView {
   completed_at?: string
 }
 
-export type LiveUpdateType = 'session_changed' | 'chat_stored' | 'message_stored'
+export type LiveUpdateType = 'session_changed' | 'chat_stored' | 'message_stored' | 'incoming_call'
 
 export interface LiveUpdate {
   type: LiveUpdateType
@@ -368,6 +373,10 @@ export interface LiveUpdate {
   status?: string
   chat_id?: string
   message_id?: string
+  caller_jid?: string
+  call_id?: string
+  call_type?: 'audio' | 'video' | 'unknown'
+  call_is_group?: boolean
   occurred_at: string
   summary: string
 }
@@ -1177,6 +1186,12 @@ export async function sendChatMedia(chatId: string, payload: SendChatMediaPayloa
   if (payload.caption?.trim()) {
     formData.set('caption', payload.caption.trim())
   }
+  if (payload.voiceMessage) {
+    formData.set('voice_message', 'true')
+  }
+  if (payload.durationSeconds !== undefined) {
+    formData.set('duration_seconds', String(Math.max(0, Math.round(payload.durationSeconds))))
+  }
 
   try {
     const response = await fetch(`${baseUrl}/api/chats/${chatId}/messages`, {
@@ -1417,12 +1432,76 @@ export async function markChatRead(chatId: string) {
   return request<{ chat: ChatHeader }>(`/api/chats/${chatId}/read`, { method: 'POST' })
 }
 
+export async function clearChat(chatId: string) {
+  return request<{ status: string }>(`/api/chats/${chatId}/messages`, { method: 'DELETE' })
+}
+
+export async function deleteChat(chatId: string) {
+  return request<{ status: string }>(`/api/chats/${chatId}/conversation`, { method: 'DELETE' })
+}
+
+export async function sendChatContact(chatId: string, displayName: string, phoneNumber: string) {
+  return request<SendChatMessageResponse>(`/api/chats/${chatId}/contact`, {
+    method: 'POST',
+    jsonBody: { display_name: displayName, phone_number: phoneNumber },
+  })
+}
+
+export async function sendChatPoll(chatId: string, question: string, options: string[], allowMultiple: boolean) {
+  return request<SendChatMessageResponse>(`/api/chats/${chatId}/poll`, {
+    method: 'POST',
+    jsonBody: { question, options, allow_multiple: allowMultiple },
+  })
+}
+
+export async function updateMessageMetadata(chatId: string, messageId: string, starred: boolean, pinned: boolean) {
+  return request<{ message: MessageView }>(`/api/chats/${chatId}/messages/${messageId}/metadata`, {
+    method: 'PATCH',
+    jsonBody: { starred, pinned },
+  })
+}
+
+export async function reactToMessage(chatId: string, messageId: string, reaction: string) {
+  return request<{ status: string; message: MessageView }>(`/api/chats/${chatId}/messages/${messageId}/reaction`, {
+    method: 'POST',
+    jsonBody: { reaction },
+  })
+}
+
+export async function editChatMessage(chatId: string, messageId: string, text: string) {
+  return request<{ message: MessageView }>(`/api/chats/${chatId}/messages/${messageId}/content`, {
+    method: 'PATCH',
+    jsonBody: { text },
+  })
+}
+
+export async function deleteChatMessage(chatId: string, messageId: string, forEveryone: boolean) {
+  return request<{ status: string }>(`/api/chats/${chatId}/messages/${messageId}/content`, {
+    method: 'DELETE',
+    jsonBody: { for_everyone: forEveryone },
+  })
+}
+
+export async function forwardChatMessage(chatId: string, messageId: string, targetChatId: string) {
+  return request<SendChatMessageResponse>(`/api/chats/${chatId}/messages/${messageId}/forward`, {
+    method: 'POST',
+    jsonBody: { target_chat_id: targetChatId },
+  })
+}
+
 export async function listContacts(params: { accountId: string; query?: string; limit?: number; offset?: number }) {
   const searchParams = new URLSearchParams({ account_id: params.accountId })
   if (params.query) searchParams.set('query', params.query)
   if (params.limit) searchParams.set('limit', String(params.limit))
   if (params.offset) searchParams.set('offset', String(params.offset))
   return request<ContactListResponse>(`/api/contacts?${searchParams.toString()}`)
+}
+
+export async function createContact(chatId: string, displayName: string) {
+  return request<{ contact: ContactView }>('/api/contacts', {
+    method: 'POST',
+    jsonBody: { chat_id: chatId, display_name: displayName },
+  })
 }
 
 export async function updateContactNote(contactId: string, note: string) {

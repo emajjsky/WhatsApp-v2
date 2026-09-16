@@ -79,6 +79,35 @@ func TestManagerPersistsBeforePublishingAndKeepsOrder(t *testing.T) {
 	}
 }
 
+func TestEventBridgePublishesIncomingCallWithoutPersistence(t *testing.T) {
+	bridge := NewEventBridge(nil, nil, slog.Default())
+	updates, cancel := bridge.Subscribe(1)
+	defer cancel()
+
+	err := bridge.Handle(context.Background(), Event{
+		Type:      EventTypeIncomingCall,
+		AccountID: "account-1",
+		Call: &IncomingCall{
+			CallerJID: "628123456789@s.whatsapp.net",
+			CallID:    "call-1",
+			MediaType: "video",
+		},
+		EmittedAt: time.Unix(1700000000, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("Handle() returned error: %v", err)
+	}
+
+	select {
+	case update := <-updates:
+		if update.Type != LiveUpdateIncomingCall || update.CallType != "video" {
+			t.Fatalf("update = %#v, want incoming video call", update)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("incoming call update was not published")
+	}
+}
+
 func testMessageEvent(messageID string) Event {
 	return Event{
 		Type:      EventTypeMessageReceived,
