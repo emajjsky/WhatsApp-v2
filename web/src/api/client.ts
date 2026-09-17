@@ -232,6 +232,13 @@ export interface MessageView {
   pinned: boolean
   reactions: Record<string, string>
   media: MediaAttachment[]
+  poll?: PollDetailsView
+}
+
+export interface PollDetailsView {
+  question: string
+  options: string[]
+  allow_multiple: boolean
 }
 
 export interface MessageHistoryResponse {

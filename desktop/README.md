@@ -17,7 +17,19 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.63`.
+Current packaging version: `0.1.64`.
+
+## 0.1.64 Conversation interaction and OpenRouter fixes
+
+- Keep contact list assignment inside a dedicated dialog instead of moving the
+  user into the conversation toolbar menu.
+- Support OpenRouter provider presets in upgraded server databases and report a
+  clear error when the server migration is missing.
+- Render sent and received WhatsApp polls as structured poll cards.
+- Present session disconnects as temporary non-blocking notices and refresh the
+  affected account state.
+- Keep message reaction and forwarding controls reachable while moving the
+  pointer from a message bubble to its action buttons.
 
 ## 0.1.63 WhatsApp message actions, voice messages, and ASR
 

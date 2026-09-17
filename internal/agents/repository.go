@@ -783,6 +783,9 @@ ON CONFLICT (id) DO UPDATE SET
 		preset.IsDefaultASR,
 		preset.Enabled,
 	); err != nil {
+		if strings.Contains(err.Error(), "agent_provider_presets_provider_type_check") {
+			return fmt.Errorf("服务器数据库版本过旧，尚不支持当前 Provider 类型，请更新并重启服务后重试")
+		}
 		return fmt.Errorf("upsert provider preset %q: %w", preset.ID, err)
 	}
 	if tx != nil {

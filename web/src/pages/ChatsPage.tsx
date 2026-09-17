@@ -317,6 +317,8 @@ export function ChatsPage() {
   const [noteEditorDraft, setNoteEditorDraft] = useState('')
   const [listMenuOpen, setListMenuOpen] = useState(false)
   const [listCreatorOpen, setListCreatorOpen] = useState(false)
+  const [listPickerChat, setListPickerChat] = useState<ChatSummary>()
+  const [listPickerLabelIds, setListPickerLabelIds] = useState<string[]>([])
   const [listNameDraft, setListNameDraft] = useState('')
   const [listChatIds, setListChatIds] = useState<string[]>([])
   const [listCandidates, setListCandidates] = useState<ChatSummary[]>([])
@@ -1488,6 +1490,15 @@ export function ChatsPage() {
 
     return () => window.clearInterval(timer)
   }, [loadChatsList, loadHistory, selectedChatId])
+
+  useEffect(() => {
+    if (!error) return
+    if (isSessionDisconnectedError(error)) {
+      void loadAccountsList()
+    }
+    const timer = window.setTimeout(() => setError(undefined), 6000)
+    return () => window.clearTimeout(timer)
+  }, [error, loadAccountsList])
 
   useEffect(() => {
     function handleLiveUpdate(update: LiveUpdate) {
@@ -2962,6 +2973,26 @@ export function ChatsPage() {
     })
   }
 
+  function openChatListPicker(chat: ChatSummary) {
+    const customListIDs = new Set(customLists.map((label) => label.id))
+    setChatContextMenu(undefined)
+    setListPickerChat(chat)
+    setListPickerLabelIds(chat.labels.filter((label) => customListIDs.has(label.id)).map((label) => label.id))
+  }
+
+  async function saveChatListPicker() {
+    if (!listPickerChat || chatMetadataBusy) return
+    const customListIDs = new Set(customLists.map((label) => label.id))
+    const preservedLabelIDs = listPickerChat.labels
+      .filter((label) => !customListIDs.has(label.id))
+      .map((label) => label.id)
+    if (await saveChatMetadataFor(listPickerChat, {
+      label_ids: [...preservedLabelIDs, ...listPickerLabelIds],
+    })) {
+      setListPickerChat(undefined)
+    }
+  }
+
   async function muteChat(chat: ChatSummary, duration: 'eight-hours' | 'one-week' | 'always' | 'off') {
     setChatContextMenu(undefined)
     const mutedUntil = duration === 'off' ? null : createMutedUntil(duration)
@@ -3478,7 +3509,7 @@ export function ChatsPage() {
                     }} disabled={!activeHistory.messages.some((message) => message.starred)}><Icon name="star" /><span>已加星标消息</span><small>{activeHistory.messages.filter((message) => message.starred).length || ''}</small><Icon name="chevronRight" /></button>
                     <button type="button" onClick={() => void muteChat(selectedChat, isChatMuted(selectedChat) ? 'off' : 'always')}><Icon name="bellOff" /><span><strong>通知设置</strong><small>{isChatMuted(selectedChat) ? '已静音' : '已开启'}</small></span></button>
                     <button type="button" onClick={() => void toggleFavorite(selectedChat)}><Icon name="heart" /><span>{favoriteList && selectedChat.labels.some((label) => label.id === favoriteList.id) ? '从“特别关注”移除' : '添加到“特别关注”'}</span></button>
-                    <button type="button" onClick={() => { setChatInfoOpen(false); setChatContextMenu({ chatId: selectedChat.id, x: Math.max(8, window.innerWidth - 320), y: 160, source: 'toolbar', submenu: 'lists' }) }}><Icon name="list" /><span>添加到列表</span><Icon name="chevronRight" /></button>
+                    <button type="button" onClick={() => openChatListPicker(selectedChat)}><Icon name="list" /><span>添加到列表</span><Icon name="chevronRight" /></button>
                   </section>
                   <section className="chat-info-section chat-info-note-section">
                     <label className="field chat-customer-note"><span>会话备注</span><textarea rows={4} value={chatNote} onChange={(event) => setChatNote(event.target.value)} placeholder="客户身份、偏好和跟进事项" /></label>
@@ -3619,7 +3650,9 @@ export function ChatsPage() {
                         </div>
                       ) : null}
 
-                      {textContent ? (
+                      {message.message_type === 'poll' && message.poll ? (
+                        <PollMessageCard poll={message.poll} />
+                      ) : textContent ? (
                         message.message_type === 'contact'
                           ? <ContactMessageCards value={textContent} onMessage={handleOpenContactChat} />
                           : <p className={hasMedia ? 'message-caption' : undefined}>{textContent}</p>
@@ -4122,7 +4155,12 @@ export function ChatsPage() {
         </aside>
       </section>
 
-      {error ? <div className="error-banner">{error}</div> : null}
+      {error ? (
+        <div className="chat-error-toast" role="status">
+          <span>{getFriendlyChatError(error)}</span>
+          <button type="button" onClick={() => setError(undefined)} aria-label="关闭提示" title="关闭"><Icon name="close" /></button>
+        </div>
+      ) : null}
 
       {attachmentDialog?.type === 'contact' ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !structuredMessageBusy) setAttachmentDialog(undefined) }}>
@@ -4423,6 +4461,36 @@ export function ChatsPage() {
         </div>
       ) : null}
 
+      {listPickerChat ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !chatMetadataBusy) setListPickerChat(undefined)
+        }}>
+          <section className="chat-list-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-list-picker-title">
+            <header>
+              <div><span>管理列表</span><strong id="chat-list-picker-title">{getChatDisplayName(listPickerChat)}</strong></div>
+              <button type="button" className="icon-button" onClick={() => setListPickerChat(undefined)} aria-label="关闭"><Icon name="close" /></button>
+            </header>
+            <div className="chat-list-picker-options">
+              {customLists.length ? customLists.map((label) => {
+                const checked = listPickerLabelIds.includes(label.id)
+                return (
+                  <label key={label.id} className={checked ? 'selected' : ''}>
+                    <span className="chat-list-color" style={{ backgroundColor: label.color }} />
+                    <span>{label.name}</span>
+                    <input type="checkbox" checked={checked} onChange={() => setListPickerLabelIds((current) => checked ? current.filter((id) => id !== label.id) : [...current, label.id])} />
+                  </label>
+                )
+              }) : <p>还没有自定义列表</p>}
+              <button type="button" className="chat-list-picker-create" onClick={() => { const chatId = listPickerChat.id; setListPickerChat(undefined); void openListCreator(chatId) }}><Icon name="plus" /><span>创建新列表</span></button>
+            </div>
+            <footer>
+              <button type="button" className="secondary-button" onClick={() => setListPickerChat(undefined)}>取消</button>
+              <button type="button" className="primary-button" disabled={chatMetadataBusy} onClick={() => void saveChatListPicker()}>{chatMetadataBusy ? '保存中...' : '保存'}</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+
       {noteEditorChatId ? (() => {
         const chat = chats.find((item) => item.id === noteEditorChatId)
         if (!chat) return null
@@ -4581,6 +4649,23 @@ function ContactMessageCards({ value, onMessage }: { value: string; onMessage: (
           {contact.phone ? <button type="button" onClick={() => onMessage(contact.name, contact.phone)}><Icon name="chat" />发消息</button> : null}
         </div>
       ))}
+    </div>
+  )
+}
+
+function PollMessageCard({ poll }: { poll: NonNullable<MessageView['poll']> }) {
+  return (
+    <div className="message-poll-card">
+      <strong>{poll.question}</strong>
+      <div className="message-poll-options">
+        {poll.options.map((option, index) => (
+          <div key={`${option}-${index}`}>
+            <span aria-hidden="true" />
+            <p>{option}</p>
+          </div>
+        ))}
+      </div>
+      <small>{poll.allow_multiple ? '可选择多个选项' : '请选择一个选项'}</small>
     </div>
   )
 }
@@ -4976,6 +5061,19 @@ function getChatSendBlockedReason(chatJID: string, chatType: ChatType) {
   }
 
   return '当前会话不支持发送消息，请切换到真实联系人或群聊。'
+}
+
+function isSessionDisconnectedError(message: string) {
+  const normalized = message.trim().toLowerCase()
+  return normalized.includes('whatsapp session is not connected')
+    || normalized.includes('session is not connected')
+}
+
+function getFriendlyChatError(message: string) {
+  if (isSessionDisconnectedError(message)) {
+    return '当前账号连接已断开，正在刷新连接状态，请稍后重试或重新登录。'
+  }
+  return message
 }
 
 function isNearBottom(element: HTMLDivElement | null) {

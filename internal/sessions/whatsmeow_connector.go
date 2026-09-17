@@ -2081,6 +2081,15 @@ func (c *WhatsmeowConnector) mapIncomingMessage(accountID string, client *whatsm
 		envelope.Payload["voice_message"] = audio.GetPTT()
 		envelope.Payload["duration_seconds"] = audio.GetSeconds()
 	}
+	if poll := event.Message.GetPollCreationMessage(); poll != nil {
+		options := make([]string, 0, len(poll.GetOptions()))
+		for _, option := range poll.GetOptions() {
+			options = append(options, option.GetOptionName())
+		}
+		envelope.Payload["poll_question"] = strings.TrimSpace(poll.GetName())
+		envelope.Payload["poll_options"] = normalizePollOptions(options)
+		envelope.Payload["allow_multiple"] = poll.GetSelectableOptionsCount() == 0
+	}
 
 	return envelope, nil
 }

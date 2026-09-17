@@ -137,6 +137,13 @@ type MessageView struct {
 	Pinned             bool               `json:"pinned"`
 	Reactions          map[string]string  `json:"reactions"`
 	Media              []MediaAttachment  `json:"media"`
+	Poll               *PollDetailsView   `json:"poll,omitempty"`
+}
+
+type PollDetailsView struct {
+	Question      string   `json:"question"`
+	Options       []string `json:"options"`
+	AllowMultiple bool     `json:"allow_multiple"`
 }
 
 type QuotedMessageView struct {
@@ -727,7 +734,8 @@ SELECT
     m.read_at,
     m.starred,
     m.pinned,
-    m.reactions
+    m.reactions,
+    m.raw_payload
 FROM messages m
 LEFT JOIN contacts ct
     ON ct.account_id = m.account_id
@@ -762,6 +770,7 @@ LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, l
 			deliveredAt        sql.NullTime
 			readAt             sql.NullTime
 			reactions          []byte
+			rawPayload         []byte
 		)
 
 		if err := rows.Scan(
@@ -781,6 +790,7 @@ LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, l
 			&item.Starred,
 			&item.Pinned,
 			&reactions,
+			&rawPayload,
 		); err != nil {
 			return nil, false, fmt.Errorf("scan message row: %w", err)
 		}
@@ -797,6 +807,9 @@ LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, l
 			}
 		}
 		item.Media = make([]MediaAttachment, 0)
+		if item.MessageType == ingest.MessageTypePoll {
+			item.Poll = parsePollDetails(rawPayload, item.TextContent)
+		}
 
 		items = append(items, item)
 	}
@@ -836,6 +849,99 @@ LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, l
 	}
 
 	return items, hasMore, nil
+}
+
+func parsePollDetails(rawPayload []byte, textContent *string) *PollDetailsView {
+	type pollOption struct {
+		OptionName string `json:"optionName"`
+	}
+	type pollPayload struct {
+		PollQuestion  string   `json:"poll_question"`
+		PollOptions   []string `json:"poll_options"`
+		AllowMultiple *bool    `json:"allow_multiple"`
+		RawProto      struct {
+			PollCreationMessage struct {
+				Name                   string       `json:"name"`
+				Options                []pollOption `json:"options"`
+				SelectableOptionsCount int          `json:"selectableOptionsCount"`
+			} `json:"pollCreationMessage"`
+		} `json:"raw_proto"`
+	}
+
+	details := PollDetailsView{}
+	var payload pollPayload
+	if len(rawPayload) > 0 && json.Unmarshal(rawPayload, &payload) == nil {
+		details.Question = strings.TrimSpace(payload.PollQuestion)
+		details.Options = normalizePollDetailOptions(payload.PollOptions)
+		if payload.AllowMultiple != nil {
+			details.AllowMultiple = *payload.AllowMultiple
+		}
+		if details.Question == "" {
+			details.Question = strings.TrimSpace(payload.RawProto.PollCreationMessage.Name)
+		}
+		if len(details.Options) == 0 {
+			options := make([]string, 0, len(payload.RawProto.PollCreationMessage.Options))
+			for _, option := range payload.RawProto.PollCreationMessage.Options {
+				options = append(options, option.OptionName)
+			}
+			details.Options = normalizePollDetailOptions(options)
+		}
+		if payload.AllowMultiple == nil && details.Question != "" {
+			details.AllowMultiple = payload.RawProto.PollCreationMessage.SelectableOptionsCount == 0
+		}
+	}
+
+	if details.Question == "" || len(details.Options) == 0 {
+		question, options := parsePollText(textContent)
+		if details.Question == "" {
+			details.Question = question
+		}
+		if len(details.Options) == 0 {
+			details.Options = options
+		}
+	}
+	if details.Question == "" {
+		details.Question = "投票"
+	}
+	return &details
+}
+
+func parsePollText(textContent *string) (string, []string) {
+	if textContent == nil {
+		return "", []string{}
+	}
+	lines := strings.Split(strings.ReplaceAll(*textContent, "\r\n", "\n"), "\n")
+	question := ""
+	options := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if question == "" {
+			question = trimmed
+			continue
+		}
+		options = append(options, strings.TrimSpace(strings.TrimPrefix(trimmed, "-")))
+	}
+	return question, normalizePollDetailOptions(options)
+}
+
+func normalizePollDetailOptions(options []string) []string {
+	result := make([]string, 0, len(options))
+	seen := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		trimmed := strings.TrimSpace(option)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
 }
 
 func (r *Repository) listQuotedMessages(ctx context.Context, chatID string, messages []MessageView) (map[string]*QuotedMessageView, error) {
