@@ -1,0 +1,48 @@
+FFmpeg third-party notice
+=========================
+
+WhatsApp Agent invokes FFmpeg as a separate local process to convert browser
+voice recordings into OGG Opus. FFmpeg is not part of the proprietary
+application source code.
+
+Bundled binary
+--------------
+
+Project: FFmpeg
+Version: n8.1.2-53-g1005b294ff-20260916
+FFmpeg source commit: 1005b294ffdf1b4e75f58d7e98362f82462a6a61
+Build scripts commit: 3e6685eda92f9288c15ac320139622dcedca09a4
+Binary variant: Windows x64, LGPL, shared libraries
+Binary archive SHA-256:
+  a654407793b1caef118550de3b99e46299dcabc6649ccf9a3a325f41ff4ea414
+
+License
+-------
+
+This FFmpeg build identifies itself as licensed under the GNU Lesser General
+Public License version 3 or later. Copies of the GNU LGPL v3 and GNU GPL v3 are
+included beside the binary as COPYING.LGPLv3.txt and COPYING.GPLv3.txt.
+
+The executable and FFmpeg libraries are distributed as separate files. A user
+may replace them with an interface-compatible modified build for debugging or
+other uses permitted by the license. WhatsApp Agent does not prohibit reverse
+engineering of these LGPL components for debugging modifications.
+
+Source and build information
+----------------------------
+
+FFmpeg source for the bundled revision:
+https://github.com/FFmpeg/FFmpeg/tree/1005b294ffdf1b4e75f58d7e98362f82462a6a61
+
+BtbN/FFmpeg-Builds scripts used for the binary release:
+https://github.com/BtbN/FFmpeg-Builds/tree/3e6685eda92f9288c15ac320139622dcedca09a4
+
+Original binary release:
+https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-16-19-44
+
+The exact build configuration reported by the binary is included as
+BUILD-CONFIGURATION.txt. No local changes are applied to FFmpeg or its shared
+libraries by this project.
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+This product is not endorsed by or affiliated with the FFmpeg project.

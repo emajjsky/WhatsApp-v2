@@ -31,6 +31,7 @@ import {
   listChats,
   listContacts,
   markChatRead,
+  openDirectChat,
   reactToMessage,
   searchChatMessages,
   sendAgentRun,
@@ -40,12 +41,14 @@ import {
   sendChatPoll,
   streamGenerateAgentRun,
   subscribeLiveUpdates,
+  transcribeAudio,
   translateText,
   updateChatMetadata,
   updateMessageMetadata,
   type AssistantUsageAction,
   type CreateAssistantUsageLogPayload,
   type AccountView,
+  type AudioTranscriptionView,
   type AgentRunView,
   type ChatHeader,
   type ChatLabel,
@@ -55,6 +58,7 @@ import {
   type LiveUpdate,
   type MessageHistoryResponse,
   type MessageView,
+  type QuotedMessageView,
   type SendChatMediaType,
   type StatusCardView,
   type SystemAgentConfigView,
@@ -104,6 +108,21 @@ type StoredMessageTranslation = {
   translation: TranslationView
 }
 
+type VoiceTranscriptionState = {
+  loading?: boolean
+  error?: string
+  transcription?: AudioTranscriptionView
+  translationLoading?: boolean
+  translationError?: string
+  translation?: TranslationView
+}
+
+type StoredVoiceTranscription = {
+  cached_at: string
+  transcription: AudioTranscriptionView
+  translation?: TranslationView
+}
+
 type ChatContextMenuState = {
   chatId: string
   x: number
@@ -117,6 +136,7 @@ type MessageContextMenuState = {
   x: number
   y: number
   placement: 'own' | 'incoming'
+  reactionOnly?: boolean
 }
 
 type MessageDialogState =
@@ -210,6 +230,8 @@ const emojiCategories: EmojiCategory[] = [
 
 const messageTranslationCacheStorageKey = 'whatsapp.messageTranslations.v1'
 const messageTranslationCacheLimit = 800
+const voiceTranscriptionCacheStorageKey = 'whatsapp.voiceTranscriptions.v1'
+const voiceTranscriptionCacheLimit = 400
 const assistantWorkspaceStorageKey = 'whatsapp.assistantWorkspace.v2'
 const assistantWorkspaceCacheLimit = 160
 const favoriteListName = '特别关注'
@@ -278,9 +300,8 @@ export function ChatsPage() {
   const [chatFilterCounts, setChatFilterCounts] = useState({ unread: 0, groups: 0, favorites: 0 })
   const [chatMetadataBusy, setChatMetadataBusy] = useState(false)
   const [chatNote, setChatNote] = useState('')
-  const [labelEditorOpen, setLabelEditorOpen] = useState(false)
-  const [newLabelName, setNewLabelName] = useState('')
   const [chatInfoOpen, setChatInfoOpen] = useState(false)
+  const [contactEditorOpen, setContactEditorOpen] = useState(false)
   const [contactNameDraft, setContactNameDraft] = useState('')
   const [contactSaveBusy, setContactSaveBusy] = useState(false)
   const [chatContextMenu, setChatContextMenu] = useState<ChatContextMenuState>()
@@ -349,6 +370,8 @@ export function ChatsPage() {
   const [assistantDraft, setAssistantDraft] = useState('')
   const [messageTranslations, setMessageTranslations] =
     useState<Record<string, TranslationState>>(loadMessageTranslationCache)
+  const [voiceTranscriptions, setVoiceTranscriptions] =
+	useState<Record<string, VoiceTranscriptionState>>(loadVoiceTranscriptionCache)
   const [draftTargetLanguage, setDraftTargetLanguage] = useState(defaultDraftLanguage.code)
   const [draftTargetLanguageName, setDraftTargetLanguageName] = useState(defaultDraftLanguage.name)
   const [translatedDraft, setTranslatedDraft] = useState('')
@@ -795,12 +818,13 @@ export function ChatsPage() {
       const response = await listAccounts()
       const nextAccounts = Array.isArray(response.accounts) ? response.accounts : []
       setAccounts(nextAccounts)
+	  const availableAccounts = nextAccounts.filter(isChatAccountAvailable)
       setSelectedAccountId((current) =>
-        nextAccounts.some((account) => account.id === current)
+        availableAccounts.some((account) => account.id === current)
           ? current
-          : nextAccounts.some((account) => account.id === requestedAccountId)
+          : availableAccounts.some((account) => account.id === requestedAccountId)
             ? requestedAccountId
-            : nextAccounts[0]?.id ?? '',
+            : availableAccounts[0]?.id ?? '',
       )
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '加载账号失败')
@@ -1467,6 +1491,9 @@ export function ChatsPage() {
 
   useEffect(() => {
     function handleLiveUpdate(update: LiveUpdate) {
+      if (update.type === 'session_changed') {
+        void loadAccountsList()
+      }
       if (selectedAccountId && update.account_id !== selectedAccountId) {
         return
       }
@@ -1479,7 +1506,7 @@ export function ChatsPage() {
     }
 
     return subscribeLiveUpdates(handleLiveUpdate)
-  }, [loadChatsList, loadHistory, selectedAccountId, selectedChatId])
+  }, [loadAccountsList, loadChatsList, loadHistory, selectedAccountId, selectedChatId])
 
   async function loadMoreMessages() {
     if (!selectedChatId || !history?.next_before || history.chat.id !== selectedChatId) {
@@ -1641,7 +1668,7 @@ export function ChatsPage() {
         message_text: content,
         reply_to_wa_message_id: replyToMessage?.wa_message_id,
       })
-      appendOptimisticMessage(response, requestHistory.chat, requestSelectedChat)
+      appendOptimisticMessage(response, requestHistory.chat, requestSelectedChat, replyToMessage)
       setDraftMessageForChat(requestChatId, '')
       setReplyToMessageByChatId((current) => {
         const next = { ...current }
@@ -1714,6 +1741,22 @@ export function ChatsPage() {
       x: Math.max(8, Math.min(preferredX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(y, window.innerHeight - shellHeight - 8)),
       placement,
+      reactionOnly: false,
+    })
+  }
+
+  function openMessageReactionPicker(event: ReactMouseEvent, message: MessageView) {
+    event.preventDefault()
+    event.stopPropagation()
+    const anchor = event.currentTarget instanceof HTMLElement ? event.currentTarget.getBoundingClientRect() : undefined
+    const width = 330
+    setExpandedReactionMessageId(undefined)
+    setMessageContextMenu({
+      messageId: message.id,
+      x: Math.max(8, Math.min(anchor ? anchor.left - width / 2 : event.clientX, window.innerWidth - width - 8)),
+      y: Math.max(8, (anchor?.top ?? event.clientY) - 54),
+      placement: message.from_me ? 'own' : 'incoming',
+      reactionOnly: true,
     })
   }
 
@@ -1734,6 +1777,53 @@ export function ChatsPage() {
       link.remove()
     }
     setComposeNoticeForChat(message.chat_id, downloadableMedia.length > 1 ? `${downloadableMedia.length} 个媒体已开始下载` : '媒体已开始下载')
+  }
+
+  function openMessageMedia(message: MessageView) {
+    const media = message.media.find((item) => item.download_status === 'ready')
+    if (!media) return
+    window.open(getMediaAssetUrl(media.id), '_blank', 'noopener,noreferrer')
+    setMessageContextMenu(undefined)
+  }
+
+  async function shareMessageMedia(message: MessageView) {
+    const media = message.media.find((item) => item.download_status === 'ready')
+    if (!media) return
+    setMessageContextMenu(undefined)
+    try {
+      const response = await fetch(getMediaAssetUrl(media.id), { credentials: 'include' })
+      if (!response.ok) throw new Error('读取媒体失败')
+      const blob = await response.blob()
+      const file = new File([blob], media.file_name || `${media.media_type}-${media.id}`, { type: media.mime_type || blob.type })
+      if (!navigator.share || (navigator.canShare && !navigator.canShare({ files: [file] }))) {
+        throw new Error('当前系统不支持分享文件')
+      }
+      await navigator.share({ files: [file] })
+    } catch (shareError) {
+      setComposeNoticeForChat(message.chat_id, shareError instanceof Error ? shareError.message : '分享媒体失败')
+    }
+  }
+
+  async function copyMessageImage(message: MessageView) {
+    const media = message.media.find((item) => item.download_status === 'ready' && (item.media_type === 'image' || item.media_type === 'sticker'))
+    if (!media) return
+    setMessageContextMenu(undefined)
+    try {
+      const response = await fetch(getMediaAssetUrl(media.id), { credentials: 'include' })
+      if (!response.ok) throw new Error('读取图像失败')
+      const sourceBlob = await response.blob()
+      const bitmap = await createImageBitmap(sourceBlob)
+      const canvas = document.createElement('canvas')
+      canvas.width = bitmap.width
+      canvas.height = bitmap.height
+      canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
+      bitmap.close()
+      const pngBlob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('转换图像失败')), 'image/png'))
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+      setComposeNoticeForChat(message.chat_id, '图像已复制')
+    } catch (copyError) {
+      setComposeNoticeForChat(message.chat_id, copyError instanceof Error ? copyError.message : '复制图像失败')
+    }
   }
 
   function openForwardDialog(messageIds: string[]) {
@@ -2058,6 +2148,24 @@ export function ChatsPage() {
     }
   }
 
+  async function handleOpenContactChat(displayName: string, phoneNumber: string) {
+    if (!selectedAccountId || !phoneNumber.trim()) return
+    setError(undefined)
+    try {
+      const response = await openDirectChat(selectedAccountId, displayName, phoneNumber)
+      const opened = chatHeaderToSummary(response.chat)
+      setChatView('active')
+      setSelectedChatType('')
+      setSelectedLabelId('')
+      setSearch('')
+      setChats((current) => [opened, ...current.filter((chat) => chat.id !== opened.id)])
+      setSelectedChatId(opened.id)
+      setAttachmentDialog(undefined)
+    } catch (openError) {
+      setError(openError instanceof Error ? openError.message : '打开联系人会话失败')
+    }
+  }
+
   async function handleSendPoll() {
     if (!selectedChatId || structuredMessageBusy) return
     const question = pollQuestion.trim()
@@ -2144,6 +2252,103 @@ export function ChatsPage() {
     } finally {
       pendingMessageTranslationKeysRef.current.delete(translationKey)
     }
+  }
+
+  async function translateVoiceTranscription(
+	mediaId: string,
+	accountId: string,
+	chatId: string,
+	transcription: AudioTranscriptionView,
+  ) {
+	if (!translationAgentConfigured || voiceTranscriptions[mediaId]?.translationLoading) {
+	  return
+	}
+	setVoiceTranscriptions((current) => ({
+	  ...current,
+	  [mediaId]: {
+		...current[mediaId],
+		transcription,
+		translationLoading: true,
+		translationError: undefined,
+	  },
+	}))
+	try {
+	  const response = await translateText({
+		account_id: accountId,
+		text: transcription.text,
+		target_language: 'zh-CN',
+		target_language_name: '中文',
+	  })
+	  setVoiceTranscriptions((current) => ({
+		...current,
+		[mediaId]: {
+		  ...current[mediaId],
+		  transcription,
+		  translationLoading: false,
+		  translation: response.translation,
+		},
+	  }))
+	  persistVoiceTranscription(mediaId, transcription, response.translation)
+	  if (!isChineseLanguage(response.translation.source_language_code)) {
+		const option = resolveLanguageOption(
+		  response.translation.source_language_code,
+		  response.translation.source_language_name,
+		)
+		if (chatId) {
+		  applyAssistantWorkspacePatch(chatId, {
+			targetLanguage: option.code,
+			targetLanguageName: option.name,
+		  })
+		}
+	  }
+	} catch (translateError) {
+	  setVoiceTranscriptions((current) => ({
+		...current,
+		[mediaId]: {
+		  ...current[mediaId],
+		  transcription,
+		  translationLoading: false,
+		  translationError: translateError instanceof Error ? translateError.message : '翻译失败',
+		},
+	  }))
+	}
+  }
+
+  async function transcribeVoiceMessage(message: MessageView, media: MessageView['media'][number]) {
+	const accountId = message.account_id || history?.chat.account_id
+	if (!accountId || media.download_status !== 'ready' || voiceTranscriptions[media.id]?.loading) {
+	  return
+	}
+	setMessageContextMenu(undefined)
+	setVoiceTranscriptions((current) => ({
+	  ...current,
+	  [media.id]: { ...current[media.id], loading: true, error: undefined },
+	}))
+	try {
+	  const mediaResponse = await fetch(getMediaAssetUrl(media.id), { credentials: 'include' })
+	  if (!mediaResponse.ok) {
+		throw new Error('读取本地语音失败')
+	  }
+	  const audio = await mediaResponse.blob()
+	  const response = await transcribeAudio(audio, media.file_name || `voice-${media.id}.ogg`)
+	  setVoiceTranscriptions((current) => ({
+		...current,
+		[media.id]: { transcription: response.transcription },
+	  }))
+	  persistVoiceTranscription(media.id, response.transcription)
+	  if (translationAgentConfigured) {
+		await translateVoiceTranscription(media.id, accountId, message.chat_id, response.transcription)
+	  }
+	} catch (transcribeError) {
+	  setVoiceTranscriptions((current) => ({
+		...current,
+		[media.id]: {
+		  ...current[media.id],
+		  loading: false,
+		  error: transcribeError instanceof Error ? transcribeError.message : '语音转写失败',
+		},
+	  }))
+	}
   }
 
   async function translateDraftToTarget() {
@@ -2455,6 +2660,7 @@ export function ChatsPage() {
     },
     chatHeader: ChatHeader,
     chatSummary: ChatSummary,
+    quotedMessage?: MessageView,
   ) {
     const optimisticMessage: MessageView = {
       id: `optimistic-${response.wa_message_id}`,
@@ -2465,6 +2671,8 @@ export function ChatsPage() {
       from_me: true,
       message_type: 'text',
       text_content: response.message_text,
+      reply_to_wa_message_id: quotedMessage?.wa_message_id,
+      reply_to: quotedMessage ? messageToQuotedView(quotedMessage) : undefined,
       sent_at: response.sent_at,
       starred: false,
       pinned: false,
@@ -2518,6 +2726,8 @@ export function ChatsPage() {
   }
 
   const activeStatusCardAgent = statusCardAgents[0]
+  const chatAccounts = accounts.filter(isChatAccountAvailable)
+  const selectedAccount = accounts.find((account) => account.id === selectedAccountId)
   const selectedChat = chats.find((item) => item.id === selectedChatId)
   const activeHistory = history && selectedChatId && history.chat.id === selectedChatId ? history : undefined
   const hasSystemAssistantFallback = Boolean(activeHistory && selectedChat)
@@ -2535,7 +2745,9 @@ export function ChatsPage() {
       getOutboundDraft(assistantDraft, translatedDraft),
   )
   const canSendInCurrentChat = Boolean(
-    activeHistory && isChatSendable(activeHistory.chat.wa_chat_jid, activeHistory.chat.chat_type),
+    activeHistory
+      && selectedAccount?.status === 'connected'
+      && isChatSendable(activeHistory.chat.wa_chat_jid, activeHistory.chat.chat_type),
   )
   const canSendMessage = Boolean(canSendInCurrentChat && draftMessage.trim() && !sending)
   const canAnalyzeStatusCard = Boolean(selectedChatId && activeHistory && activeStatusCardAgent && !statusCardBusy)
@@ -2553,7 +2765,11 @@ export function ChatsPage() {
     || Boolean(selectedLabelId && selectedLabelId !== favoriteList?.id)
   const sendBlockReason =
     activeHistory && !canSendInCurrentChat
-      ? getChatSendBlockedReason(activeHistory.chat.wa_chat_jid, activeHistory.chat.chat_type)
+      ? selectedAccount?.status !== 'connected'
+        ? selectedAccount?.status === 'reconnecting'
+          ? '账号正在重新连接，连接恢复后才能发送消息'
+          : '该账号已退出 WhatsApp，请先到账号管理重新登录'
+        : getChatSendBlockedReason(activeHistory.chat.wa_chat_jid, activeHistory.chat.chat_type)
       : undefined
   const hasAdoptedAssistantReply = adoptedReplyIndex !== undefined
 
@@ -2792,18 +3008,6 @@ export function ChatsPage() {
     }
   }
 
-  async function handleCreateLabel() {
-    if (!selectedAccountId || !newLabelName.trim()) return
-    setError(undefined)
-    try {
-      const response = await createChatLabel(selectedAccountId, newLabelName.trim())
-      setChatLabels((current) => [...current, response.label].sort(compareChatLabels))
-      setNewLabelName('')
-    } catch (labelError) {
-      setError(labelError instanceof Error ? labelError.message : '创建标签失败')
-    }
-  }
-
   function handleChatSidebarResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return
     const frame = chatFrameRef.current
@@ -2966,7 +3170,7 @@ export function ChatsPage() {
                 }}
                 aria-label="WhatsApp 账号"
               >
-                {accounts.map((account) => <option key={account.id} value={account.id}>{account.display_name}</option>)}
+                {chatAccounts.map((account) => <option key={account.id} value={account.id}>{account.display_name}{account.status === 'reconnecting' ? '（重连中）' : ''}</option>)}
               </select>
             </label>
           </header>
@@ -3067,7 +3271,12 @@ export function ChatsPage() {
 
                     <div className="whatsapp-chat-row-content">
                       <div className="chat-row-header whatsapp-chat-row-header">
-                        <strong>{getChatDisplayName(chat)}</strong>
+                        <span className="whatsapp-chat-row-identity">
+                          <strong>{getChatDisplayName(chat)}</strong>
+                          {chat.chat_type === 'direct' && chat.phone_number
+                            ? <small>{formatDisplayPhone(chat.phone_number)}</small>
+                            : null}
+                        </span>
                         <small>{formatChatTimestamp(chat.last_message_at)}</small>
                       </div>
 
@@ -3116,7 +3325,7 @@ export function ChatsPage() {
               <header className="chat-contact-toolbar">
                 <button className="chat-contact-identity" type="button" onClick={() => setChatInfoOpen((current) => !current)}>
                   <ChatAvatar chat={selectedChat} />
-                  <span><strong>{getChatDisplayName(selectedChat)}</strong><small>{selectedChat.note || selectedChat.phone_number || selectedChat.wa_chat_jid}</small></span>
+                  <span><strong>{getChatDisplayName(selectedChat)}</strong><small>{selectedChat.note || formatDisplayPhone(selectedChat.phone_number || selectedChat.wa_chat_jid)}</small></span>
                 </button>
                 {statusCard ? (
                   <div className="chat-contact-status-tags" aria-label="客户状态">
@@ -3234,28 +3443,51 @@ export function ChatsPage() {
 
               {chatInfoOpen ? (
                 <aside className="chat-info-drawer">
-                  <div className="chat-info-drawer-head"><strong>{selectedChat.chat_type === 'group' ? '群组详情' : '联系人详情'}</strong><button type="button" onClick={() => setChatInfoOpen(false)} aria-label="关闭"><Icon name="close" /></button></div>
-                  <div className="chat-info-profile"><ChatAvatar chat={selectedChat} /><div><h3>{getChatDisplayName(selectedChat)}</h3><p>{selectedChat.phone_number || selectedChat.wa_chat_jid}</p>{selectedChat.chat_type === 'group' && selectedChat.participant_count ? <small>{selectedChat.participant_count} 位成员</small> : null}</div></div>
-                  {selectedChat.chat_type === 'direct' ? (
+                  <div className="chat-info-drawer-head">
+                    <button type="button" onClick={() => setChatInfoOpen(false)} aria-label="关闭"><Icon name="close" /></button>
+                    <strong>{selectedChat.chat_type === 'group' ? '群组信息' : '联系人信息'}</strong>
+                    {selectedChat.chat_type === 'direct' ? <button type="button" onClick={() => setContactEditorOpen((current) => !current)} aria-label="编辑联系人" title="编辑联系人"><Icon name="edit" /></button> : <span />}
+                  </div>
+                  <div className="chat-info-profile official">
+                    <ChatAvatar chat={selectedChat} />
+                    <h3>{getChatDisplayName(selectedChat)}</h3>
+                    <p>{formatDisplayPhone(selectedChat.phone_number || selectedChat.wa_chat_jid)}</p>
+                    {selectedChat.chat_type === 'group' && selectedChat.participant_count ? <small>{selectedChat.participant_count} 位成员</small> : null}
+                  </div>
+                  <div className="chat-info-quick-actions">
+                    <button type="button" onClick={() => { setChatInfoOpen(false); openMessageSearch() }}><span><Icon name="search" /></span><small>搜索</small></button>
+                  </div>
+                  {contactEditorOpen && selectedChat.chat_type === 'direct' ? (
                     <section className="chat-contact-save-section">
                       <label className="field"><span>联系人名称</span><input value={contactNameDraft} maxLength={120} onChange={(event) => setContactNameDraft(event.target.value)} placeholder="输入联系人名称" /></label>
                       <button className="secondary-button" type="button" onClick={() => void handleSaveContact()} disabled={!contactNameDraft.trim() || contactSaveBusy}><Icon name="contacts" />{contactSaveBusy ? '保存中...' : '保存到联系人'}</button>
-                      <small>保存在本软件联系人中，并用于会话名称与搜索。</small>
                     </section>
                   ) : null}
-                  <section className="chat-customer-section">
-                    <div className="chat-customer-section-head"><strong>标签</strong><button type="button" onClick={() => setLabelEditorOpen((current) => !current)}><Icon name="plus" />管理</button></div>
-                    <div className="chat-label-row">
-                      {selectedChat.labels.map((label) => <button key={label.id} type="button" className="chat-label-chip" style={{ '--label-color': label.color } as CSSProperties} onClick={() => void saveChatMetadata({ label_ids: selectedChat.labels.filter((item) => item.id !== label.id).map((item) => item.id) })}>{label.name} ×</button>)}
-                      {!selectedChat.labels.length ? <small>暂无标签</small> : null}
+                  <section className="chat-info-section chat-info-media-section">
+                    <button type="button" onClick={() => setComposeNoticeForChat(selectedChat.id, '完整媒体库将在媒体浏览模块中展示')}>
+                      <Icon name="image" /><span>影音内容、链接和文档</span><small>{activeHistory.messages.reduce((count, message) => count + message.media.length, 0)}</small><Icon name="chevronRight" />
+                    </button>
+                    <div className="chat-info-media-preview">
+                      {activeHistory.messages.flatMap((message) => message.media).filter((media) => media.download_status === 'ready' && (media.media_type === 'image' || media.media_type === 'sticker')).slice(-3).map((media) => <button type="button" key={media.id} onClick={() => window.open(getMediaAssetUrl(media.id), '_blank', 'noopener,noreferrer')}><img src={getMediaAssetUrl(media.id)} alt="" /></button>)}
                     </div>
-                    {labelEditorOpen ? <div className="chat-label-editor">
-                      <div className="chat-label-options">{chatLabels.map((label) => <button key={label.id} type="button" className={selectedChat.labels.some((item) => item.id === label.id) ? 'selected' : ''} onClick={() => void saveChatMetadata({ label_ids: selectedChat.labels.some((item) => item.id === label.id) ? selectedChat.labels.filter((item) => item.id !== label.id).map((item) => item.id) : [...selectedChat.labels.map((item) => item.id), label.id] })}>{label.name}</button>)}</div>
-                      <div className="chat-label-create"><input value={newLabelName} onChange={(event) => setNewLabelName(event.target.value)} placeholder="新标签名称" /><button type="button" onClick={() => void handleCreateLabel()}>新增</button></div>
-                    </div> : null}
                   </section>
-                  <label className="field chat-customer-note"><span>会话备注</span><textarea rows={6} value={chatNote} onChange={(event) => setChatNote(event.target.value)} placeholder="客户身份、偏好和跟进事项" /></label>
-                  <button className="primary-button" type="button" onClick={() => void saveChatMetadata({ note: chatNote })} disabled={chatMetadataBusy}>{chatMetadataBusy ? '保存中...' : '保存资料'}</button>
+                  <section className="chat-info-section chat-info-menu-list">
+                    <button type="button" onClick={() => {
+                      const starred = activeHistory.messages.find((message) => message.starred)
+                      if (starred) { setChatInfoOpen(false); void handleJumpToSearchMessage(starred) }
+                    }} disabled={!activeHistory.messages.some((message) => message.starred)}><Icon name="star" /><span>已加星标消息</span><small>{activeHistory.messages.filter((message) => message.starred).length || ''}</small><Icon name="chevronRight" /></button>
+                    <button type="button" onClick={() => void muteChat(selectedChat, isChatMuted(selectedChat) ? 'off' : 'always')}><Icon name="bellOff" /><span><strong>通知设置</strong><small>{isChatMuted(selectedChat) ? '已静音' : '已开启'}</small></span></button>
+                    <button type="button" onClick={() => void toggleFavorite(selectedChat)}><Icon name="heart" /><span>{favoriteList && selectedChat.labels.some((label) => label.id === favoriteList.id) ? '从“特别关注”移除' : '添加到“特别关注”'}</span></button>
+                    <button type="button" onClick={() => { setChatInfoOpen(false); setChatContextMenu({ chatId: selectedChat.id, x: Math.max(8, window.innerWidth - 320), y: 160, source: 'toolbar', submenu: 'lists' }) }}><Icon name="list" /><span>添加到列表</span><Icon name="chevronRight" /></button>
+                  </section>
+                  <section className="chat-info-section chat-info-note-section">
+                    <label className="field chat-customer-note"><span>会话备注</span><textarea rows={4} value={chatNote} onChange={(event) => setChatNote(event.target.value)} placeholder="客户身份、偏好和跟进事项" /></label>
+                    <button className="secondary-button" type="button" onClick={() => void saveChatMetadata({ note: chatNote })} disabled={chatMetadataBusy}>{chatMetadataBusy ? '保存中...' : '保存备注'}</button>
+                  </section>
+                  <section className="chat-info-section chat-info-danger-list">
+                    <button type="button" onClick={() => { setChatInfoOpen(false); setChatDestructiveDialog({ type: 'clear', chatId: selectedChat.id }) }}><Icon name="clear" /><span>清空聊天</span></button>
+                    <button type="button" onClick={() => { setChatInfoOpen(false); setChatDestructiveDialog({ type: 'delete', chatId: selectedChat.id }) }}><Icon name="delete" /><span>删除聊天</span></button>
+                  </section>
                 </aside>
               ) : null}
 
@@ -3354,15 +3586,42 @@ export function ChatsPage() {
                         </div>
                       ) : null}
 
+                      {message.reply_to ? (
+                        <button
+                          type="button"
+                          className="message-quoted-block"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            const quoted = activeHistory.messages.find((item) => item.wa_message_id === message.reply_to?.wa_message_id)
+                            if (quoted) void handleJumpToSearchMessage(quoted)
+                          }}
+                          title="查看引用消息"
+                        >
+                          <strong>{message.reply_to.from_me ? '你' : message.reply_to.sender_name || getJIDDisplayName(message.reply_to.sender_jid)}</strong>
+                          <span>{getQuotedMessageCopy(message.reply_to)}</span>
+                        </button>
+                      ) : message.reply_to_wa_message_id ? (
+                        <div className="message-quoted-block unavailable"><strong>引用消息</strong><span>原消息未加载或已删除</span></div>
+                      ) : null}
+
                       {hasMedia ? (
                         <div className="media-block-list">
-                          {message.media.map((media) => renderMediaAttachment(media, handleMediaLayoutReady))}
+                          {message.media.map((media) => renderMediaAttachment(media, handleMediaLayoutReady, {
+                            name: message.from_me ? '你' : getMessageSenderName(message),
+                            photoUrl: message.from_me ? undefined : selectedChat.profile_photo_url,
+                          }, media.media_type === 'audio' ? {
+							state: voiceTranscriptions[media.id],
+							onTranscribe: () => void transcribeVoiceMessage(message, media),
+							onTranslate: translationAgentConfigured && voiceTranscriptions[media.id]?.transcription
+							  ? () => void translateVoiceTranscription(media.id, message.account_id || activeHistory.chat.account_id, message.chat_id, voiceTranscriptions[media.id].transcription!)
+							  : undefined,
+						  } : undefined))}
                         </div>
                       ) : null}
 
                       {textContent ? (
                         message.message_type === 'contact'
-                          ? <ContactMessageCards value={textContent} />
+                          ? <ContactMessageCards value={textContent} onMessage={handleOpenContactChat} />
                           : <p className={hasMedia ? 'message-caption' : undefined}>{textContent}</p>
                       ) : !hasMedia ? (
                         <p className="message-fallback">{fallbackMessageCopy(message.message_type)}</p>
@@ -3382,13 +3641,13 @@ export function ChatsPage() {
                       ) : null}
 
                       <div className="whatsapp-message-actions">
-                        <button type="button" onClick={(event) => { event.stopPropagation(); setReplyToMessage(message) }} title="引用回复" aria-label="引用回复">
-                          <Icon name="reply" />
+                        <button type="button" onClick={(event) => openMessageReactionPicker(event, message)} title="回应" aria-label="回应">
+                          <Icon name="smile" />
                         </button>
-                        <button type="button" onClick={(event) => { event.stopPropagation(); openMessageContextMenu(event, message) }} title="更多操作" aria-label="更多操作">
-                          <Icon name="chevronDown" />
-                        </button>
+                        {message.from_me ? <button type="button" onClick={(event) => { event.stopPropagation(); openForwardDialog([message.id]) }} title="转发" aria-label="转发"><Icon name="forward" /></button> : null}
                       </div>
+
+                      <button className="message-menu-trigger" type="button" onClick={(event) => openMessageContextMenu(event, message)} title="更多操作" aria-label="更多操作"><Icon name="chevronDown" /></button>
 
                       <div className="whatsapp-message-foot">
                         {message.pinned ? <Icon name="pin" aria-label="已置顶" /> : null}
@@ -3538,7 +3797,7 @@ export function ChatsPage() {
                   <div className={`chat-compose-box whatsapp-chat-compose-box${voiceRecording ? ' voice-recording' : ''}`}>
                     {replyToMessage ? (
                       <div className="whatsapp-reply-preview">
-                        <span><Icon name="reply" />引用：{replyToMessage.text_content || fallbackMessageCopy(replyToMessage.message_type)}</span>
+                        <span><strong>{replyToMessage.from_me ? '你' : getMessageSenderName(replyToMessage)}</strong><small>{replyToMessage.text_content || fallbackMessageCopy(replyToMessage.message_type)}</small></span>
                         <button type="button" onClick={() => setReplyToMessageByChatId((current) => ({ ...current, [selectedChatId ?? '']: undefined }))} title="取消引用">×</button>
                       </div>
                     ) : null}
@@ -3907,6 +4166,10 @@ export function ChatsPage() {
       {messageContextMenu && activeHistory ? (() => {
         const message = activeHistory.messages.find((item) => item.id === messageContextMenu.messageId)
         if (!message) return null
+        const hasReadyMedia = message.media.some((media) => media.download_status === 'ready')
+		const readyAudio = message.media.find((media) => media.media_type === 'audio' && media.download_status === 'ready')
+        const isImageLike = message.message_type === 'image' || message.message_type === 'sticker'
+        const isSticker = message.message_type === 'sticker'
         const editable = message.from_me
           && message.message_type === 'text'
           && Date.now() - new Date(message.sent_at).getTime() <= 20 * 60 * 1000
@@ -3927,19 +4190,23 @@ export function ChatsPage() {
                 ))}
               </div>
             ) : null}
-            <div className="message-context-menu" role="menu">
-              <button type="button" role="menuitem" onClick={() => { setMessageContextMenu(undefined); setMessageDialog({ type: 'details', messageId: message.id }) }}><Icon name="info" /><span>消息详情</span></button>
+            {!messageContextMenu.reactionOnly ? <div className="message-context-menu" role="menu">
+              {!isSticker ? <button type="button" role="menuitem" onClick={() => { setMessageContextMenu(undefined); setMessageDialog({ type: 'details', messageId: message.id }) }}><Icon name="info" /><span>消息详情</span></button> : null}
               <button type="button" role="menuitem" onClick={() => setReplyToMessage(message)}><Icon name="reply" /><span>回复</span></button>
               {message.text_content?.trim() ? <button type="button" role="menuitem" onClick={() => { setMessageContextMenu(undefined); void copyMessage(message) }}><Icon name="copy" /><span>复制</span></button> : null}
+			  {readyAudio ? <button type="button" role="menuitem" onClick={() => void transcribeVoiceMessage(message, readyAudio)}><Icon name="fileText" /><span>{voiceTranscriptions[readyAudio.id]?.transcription ? '重新转录' : '转录语音'}</span></button> : null}
               <button type="button" role="menuitem" onClick={() => openForwardDialog([message.id])}><Icon name="forward" /><span>转发</span></button>
               <button type="button" role="menuitem" onClick={() => void handleMessageMetadata(message, { pinned: !message.pinned })}><Icon name="pin" /><span>{message.pinned ? '取消置顶' : '置顶'}</span></button>
               <button type="button" role="menuitem" onClick={() => void handleMessageMetadata(message, { starred: !message.starred })}><Icon name="star" /><span>{message.starred ? '取消星标' : '添加星标'}</span></button>
               {editable ? <button type="button" role="menuitem" onClick={() => { setMessageContextMenu(undefined); setMessageDialog({ type: 'edit', messageId: message.id, text: message.text_content ?? '' }) }}><Icon name="edit" /><span>编辑</span></button> : null}
-              {message.media.some((media) => media.download_status === 'ready') ? <button type="button" role="menuitem" onClick={() => { setMessageContextMenu(undefined); downloadMessageMedia(message) }}><Icon name="download" /><span>另存为</span></button> : null}
+              {isImageLike && hasReadyMedia ? <button type="button" role="menuitem" onClick={() => void copyMessageImage(message)}><Icon name="copy" /><span>{isSticker ? '复制贴图图像' : '复制图像'}</span></button> : null}
+              {hasReadyMedia ? <button type="button" role="menuitem" onClick={() => { setMessageContextMenu(undefined); downloadMessageMedia(message) }}><Icon name="download" /><span>另存为</span></button> : null}
+              {hasReadyMedia ? <button type="button" role="menuitem" onClick={() => void shareMessageMedia(message)}><Icon name="forward" /><span>分享</span></button> : null}
+              {hasReadyMedia ? <button type="button" role="menuitem" onClick={() => openMessageMedia(message)}><Icon name="externalLink" /><span>打开方式</span></button> : null}
               <div className="chat-context-divider" />
               <button type="button" role="menuitem" onClick={() => toggleMessageSelection(message.id)}><Icon name="select" /><span>选择</span></button>
               <button className="destructive" type="button" role="menuitem" onClick={() => { setMessageContextMenu(undefined); setMessageDialog({ type: 'delete', messageIds: [message.id] }) }}><Icon name="delete" /><span>删除</span></button>
-            </div>
+            </div> : null}
           </div>
         )
       })() : null}
@@ -4296,8 +4563,9 @@ function getRiskTone(value: string): 'low' | 'medium' | 'high' | undefined {
   return undefined
 }
 
-function ContactMessageCards({ value }: { value: string }) {
-  const contacts = value.split(/\n\s*\n/).map((block) => {
+function ContactMessageCards({ value, onMessage }: { value: string; onMessage: (name: string, phone: string) => void }) {
+  const normalizedValue = value.replace(/\\n/g, '\n')
+  const contacts = normalizedValue.split(/\n\s*\n/).map((block) => {
     const [name = '联系人', phone = ''] = block.split('\n').map((item) => item.trim()).filter(Boolean)
     return { name, phone }
   })
@@ -4306,8 +4574,11 @@ function ContactMessageCards({ value }: { value: string }) {
     <div className="message-contact-cards">
       {contacts.map((contact, index) => (
         <div className="message-contact-card" key={`${contact.name}-${contact.phone}-${index}`}>
-          <span className="message-contact-avatar" aria-hidden="true"><Icon name="user" /></span>
-          <span><strong>{contact.name}</strong>{contact.phone ? <small>{contact.phone}</small> : null}</span>
+          <div className="message-contact-card-main">
+            <span className="message-contact-avatar" aria-hidden="true"><Icon name="user" /></span>
+            <span><strong>{contact.name}</strong>{contact.phone ? <small>{formatDisplayPhone(contact.phone)}</small> : null}</span>
+          </div>
+          {contact.phone ? <button type="button" onClick={() => onMessage(contact.name, contact.phone)}><Icon name="chat" />发消息</button> : null}
         </div>
       ))}
     </div>
@@ -4359,6 +4630,12 @@ function renderMessageTranslation(state?: TranslationState, onTranslate?: () => 
 function renderMediaAttachment(
   media: MessageView['media'][number],
   onMediaLayoutReady: () => void,
+  voiceIdentity?: { name: string; photoUrl?: string },
+	voiceTools?: {
+	  state?: VoiceTranscriptionState
+	  onTranscribe: () => void
+	  onTranslate?: () => void
+	},
 ) {
   const mediaUrl = getMediaAssetUrl(media.id)
   const label = media.file_name || media.media_type
@@ -4395,17 +4672,7 @@ function renderMediaAttachment(
   }
 
   if (media.media_type === 'audio' && media.download_status === 'ready') {
-    return (
-      <figure key={media.id} className="media-preview-card audio">
-        <audio
-          className="media-preview-audio"
-          src={mediaUrl}
-          controls
-          preload="metadata"
-          onLoadedMetadata={onMediaLayoutReady}
-        />
-      </figure>
-    )
+    return <VoiceMessagePlayer key={media.id} src={mediaUrl} identity={voiceIdentity} transcription={voiceTools?.state} onTranscribe={voiceTools?.onTranscribe} onTranslate={voiceTools?.onTranslate} onMediaLayoutReady={onMediaLayoutReady} />
   }
 
   if (media.download_status === 'ready') {
@@ -4456,6 +4723,106 @@ function choosePreferredChatId(chats: ChatSummary[], current?: string) {
 
   const firstSendable = chats.find((chat) => isChatSendable(chat.wa_chat_jid, chat.chat_type))
   return firstSendable?.id ?? chats[0]?.id
+}
+
+function VoiceMessagePlayer({
+  src,
+  identity,
+	transcription,
+	onTranscribe,
+	onTranslate,
+  onMediaLayoutReady,
+}: {
+  src: string
+  identity?: { name: string; photoUrl?: string }
+	transcription?: VoiceTranscriptionState
+	onTranscribe?: () => void
+	onTranslate?: () => void
+  onMediaLayoutReady: () => void
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const [playing, setPlaying] = useState(false)
+  const [duration, setDuration] = useState(0)
+  const [currentTime, setCurrentTime] = useState(0)
+  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0
+
+  async function togglePlayback() {
+    const audio = audioRef.current
+    if (!audio) return
+    if (audio.paused) {
+      try {
+        await audio.play()
+      } catch {
+        setPlaying(false)
+      }
+    } else {
+      audio.pause()
+    }
+  }
+
+  return (
+    <figure className="media-preview-card audio whatsapp-voice-message">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={(event) => {
+          setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)
+          onMediaLayoutReady()
+        }}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setCurrentTime(0) }}
+      />
+      <button type="button" className="voice-play-button" onClick={() => void togglePlayback()} aria-label={playing ? '暂停语音' : '播放语音'}>
+        <Icon name={playing ? 'pause' : 'play'} />
+      </button>
+      <div className="voice-waveform-shell" style={{ '--voice-progress': `${progress}%` } as CSSProperties}>
+        <input
+          type="range"
+          min="0"
+          max={Math.max(duration, 1)}
+          step="0.01"
+          value={currentTime}
+          onChange={(event) => {
+            const next = Number(event.target.value)
+            setCurrentTime(next)
+            if (audioRef.current) audioRef.current.currentTime = next
+          }}
+          aria-label="语音播放进度"
+        />
+        <span className="voice-waveform" aria-hidden="true">{Array.from({ length: 34 }, (_, index) => <i key={index} style={{ height: `${7 + ((index * 13) % 18)}px` }} />)}</span>
+        <time>{formatVoiceDuration(Math.round(playing ? currentTime : duration || currentTime))}</time>
+      </div>
+      <span className="voice-avatar" aria-hidden="true">
+        {identity?.photoUrl
+          ? <img src={identity.photoUrl} alt="" />
+          : <span>{getChatAvatarLabel(identity?.name || '语音')}</span>}
+        <i><Icon name="audio" /></i>
+      </span>
+	  <figcaption className="voice-transcription-panel">
+		{transcription?.transcription ? (
+		  <div className="voice-transcription-copy">
+			<span>原文</span>
+			<p>{transcription.transcription.text}</p>
+		  </div>
+		) : null}
+		{transcription?.translation ? (
+		  <div className="voice-transcription-copy translated">
+			<span>中文</span>
+			<p>{transcription.translation.translated_text}</p>
+		  </div>
+		) : null}
+		{transcription?.loading ? <span className="voice-transcription-status">转录中...</span> : null}
+		{transcription?.translationLoading ? <span className="voice-transcription-status">翻译中...</span> : null}
+		{transcription?.error ? <div className="voice-transcription-error"><span>{transcription.error}</span>{onTranscribe ? <button type="button" onClick={onTranscribe}>重试转录</button> : null}</div> : null}
+		{transcription?.translationError ? <div className="voice-transcription-error"><span>{transcription.translationError}</span>{onTranslate ? <button type="button" onClick={onTranslate}>重新翻译</button> : null}</div> : null}
+		{!transcription?.transcription && !transcription?.loading && !transcription?.error && onTranscribe ? <button className="voice-transcription-action" type="button" onClick={onTranscribe}>转录</button> : null}
+		{transcription?.transcription && !transcription.translation && !transcription.translationLoading && !transcription.translationError && onTranslate ? <button className="voice-transcription-action" type="button" onClick={onTranslate}>翻译成中文</button> : null}
+	  </figcaption>
+    </figure>
+  )
 }
 
 function readStoredChatNavigation(): StoredChatNavigation {
@@ -4515,7 +4882,7 @@ function getChatDisplayName(chat: ChatDisplaySource) {
   }
 
   if (title && title !== '0') {
-    return title
+    return chat.chat_type === 'direct' ? formatDisplayPhone(title) : title
   }
 
   if (chat.chat_type === 'group') {
@@ -4526,7 +4893,7 @@ function getChatDisplayName(chat: ChatDisplaySource) {
     return '系统会话'
   }
 
-  return formatChatIdentifier(chat.wa_chat_jid)
+  return formatDisplayPhone(formatChatIdentifier(chat.wa_chat_jid))
 }
 
 function getChatPreviewText(chat: ChatSummary) {
@@ -4651,6 +5018,79 @@ function loadMessageTranslationCache(): Record<string, TranslationState> {
   return Object.fromEntries(
     Object.entries(stored).map(([key, value]) => [key, { translation: value.translation }]),
   )
+}
+
+function loadVoiceTranscriptionCache(): Record<string, VoiceTranscriptionState> {
+  const stored = readStoredVoiceTranscriptionCache()
+  return Object.fromEntries(
+	Object.entries(stored).map(([key, value]) => [key, {
+	  transcription: value.transcription,
+	  translation: value.translation,
+	}]),
+  )
+}
+
+function persistVoiceTranscription(
+  mediaId: string,
+  transcription: AudioTranscriptionView,
+  translation?: TranslationView,
+) {
+  if (!mediaId || !transcription.text.trim()) return
+  const stored = readStoredVoiceTranscriptionCache()
+  stored[mediaId] = {
+	cached_at: new Date().toISOString(),
+	transcription,
+	translation,
+  }
+  writeStoredVoiceTranscriptionCache(trimStoredVoiceTranscriptionCache(stored))
+}
+
+function readStoredVoiceTranscriptionCache(): Record<string, StoredVoiceTranscription> {
+  if (typeof window === 'undefined') return {}
+  try {
+	const raw = window.localStorage.getItem(voiceTranscriptionCacheStorageKey)
+	if (!raw) return {}
+	const decoded = JSON.parse(raw)
+	if (!isPlainRecord(decoded)) return {}
+	return Object.fromEntries(
+	  Object.entries(decoded).filter((entry): entry is [string, StoredVoiceTranscription] => {
+		const value = entry[1]
+		if (!isPlainRecord(value)) return false
+		const candidate = value as Partial<StoredVoiceTranscription>
+		return typeof candidate.cached_at === 'string'
+		  && isAudioTranscriptionView(candidate.transcription)
+		  && (candidate.translation === undefined || isTranslationView(candidate.translation))
+	  }),
+	)
+  } catch {
+	return {}
+  }
+}
+
+function writeStoredVoiceTranscriptionCache(cache: Record<string, StoredVoiceTranscription>) {
+  if (typeof window === 'undefined') return
+  try {
+	window.localStorage.setItem(voiceTranscriptionCacheStorageKey, JSON.stringify(cache))
+  } catch {
+	// Keep the in-memory result when local persistence is unavailable.
+  }
+}
+
+function trimStoredVoiceTranscriptionCache(cache: Record<string, StoredVoiceTranscription>) {
+  const entries = Object.entries(cache)
+  if (entries.length <= voiceTranscriptionCacheLimit) return cache
+  return Object.fromEntries(
+	entries
+	  .sort((left, right) => left[1].cached_at.localeCompare(right[1].cached_at))
+	  .slice(-voiceTranscriptionCacheLimit),
+  )
+}
+
+function isAudioTranscriptionView(value: unknown): value is AudioTranscriptionView {
+  if (!isPlainRecord(value)) return false
+  return typeof value.text === 'string'
+	&& typeof value.provider_name === 'string'
+	&& typeof value.model === 'string'
 }
 
 function readStoredAssistantWorkspaceCache(): Record<string, StoredAssistantWorkspace> {
@@ -5127,6 +5567,16 @@ function formatChatTimestamp(value?: string) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
 }
 
+function getJIDDisplayName(jid: string) {
+  return formatDisplayPhone(formatChatIdentifier(jid))
+}
+
+function formatDisplayPhone(value: string) {
+  const trimmed = value.trim()
+  const raw = trimmed.includes('@') ? formatChatIdentifier(trimmed) : trimmed
+  return /^\d{7,20}$/.test(raw) ? `+${raw}` : raw
+}
+
 function formatMessageTime(value?: string) {
   if (!value) {
     return ''
@@ -5357,6 +5807,32 @@ function getAttachmentActionLabel(action: AttachmentAction) {
   if (action === 'gif') return 'GIF'
   if (action === 'sticker') return '贴图'
   return attachmentActions.find((item) => item.key === action)?.label ?? '附件'
+}
+
+function messageToQuotedView(message: MessageView): QuotedMessageView {
+  return {
+    wa_message_id: message.wa_message_id,
+    sender_jid: message.sender_jid,
+    sender_name: message.sender_name,
+    from_me: message.from_me,
+    message_type: message.message_type,
+    text_content: message.text_content,
+  }
+}
+
+function getQuotedMessageCopy(message: QuotedMessageView) {
+  return message.text_content?.trim() || fallbackMessageCopy(message.message_type)
+}
+
+function isChatAccountAvailable(account: AccountView) {
+  return account.status === 'connected' || account.status === 'reconnecting'
+}
+
+function chatHeaderToSummary(chat: ChatHeader): ChatSummary {
+  return {
+    ...chat,
+    labels: chat.labels ?? [],
+  }
 }
 
 function formatVoiceDuration(totalSeconds: number) {

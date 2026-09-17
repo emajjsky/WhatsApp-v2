@@ -19,6 +19,7 @@ export type IconName =
   | 'document'
   | 'download'
   | 'edit'
+  | 'externalLink'
   | 'export'
   | 'forward'
   | 'fileText'
@@ -29,8 +30,10 @@ export type IconName =
   | 'list'
   | 'logout'
   | 'moreVertical'
+  | 'pause'
   | 'plus'
   | 'pin'
+  | 'play'
   | 'qr'
   | 'copy'
   | 'reply'
@@ -198,6 +201,13 @@ const iconPaths: Record<IconName, ReactElement> = {
       <path d="M9.5 18h3" />
     </>
   ),
+  externalLink: (
+    <>
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-9 9" />
+      <path d="M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6" />
+    </>
+  ),
   forward: (
     <>
       <path d="M14 7l5 5-5 5" />
@@ -261,11 +271,20 @@ const iconPaths: Record<IconName, ReactElement> = {
       <circle cx="12" cy="19" r="1.3" />
     </>
   ),
+  pause: (
+    <>
+      <path d="M8 5v14" />
+      <path d="M16 5v14" />
+    </>
+  ),
   pin: (
     <>
       <path d="M9 4h6l-1 5 3 3v2H7v-2l3-3-1-5z" />
       <path d="M12 14v7" />
     </>
+  ),
+  play: (
+    <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />
   ),
   qr: (
     <>

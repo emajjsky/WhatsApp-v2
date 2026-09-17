@@ -56,6 +56,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/admin/provider-presets", h.handleProviderPresets)
 	mux.HandleFunc("/api/admin/provider-presets/", h.handleProviderPresetByID)
 	mux.HandleFunc("/api/admin/provider-presets/discover-models", h.handleDiscoverProviderModels)
+	mux.HandleFunc("/api/admin/provider-presets/test-asr", h.handleTestASRProvider)
 	mux.HandleFunc("/api/admin/agent-skills", h.handleSkills)
 	mux.HandleFunc("/api/admin/agent-skills/", h.handleSkillByID)
 	mux.HandleFunc("/api/agent-configs", h.handleAvailableSystemConfigs)
@@ -63,6 +64,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-runs/generate", h.handleGenerateRun)
 	mux.HandleFunc("/api/agent-runs/generate/stream", h.handleGenerateRunStream)
 	mux.HandleFunc("/api/agent-translations", h.handleTranslateText)
+	mux.HandleFunc("/api/audio-transcriptions", h.handleAudioTranscription)
 	mux.HandleFunc("/api/agent-status-card", h.handleStatusCard)
 	mux.HandleFunc("/api/assistant-usage-logs", h.handleUsageLogs)
 	mux.HandleFunc("/api/admin/assistant-usage-log-filters", h.handleAdminUsageLogFilters)
@@ -70,6 +72,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/desktop/agent-runs/generate", h.handleDesktopGenerateDraft)
 	mux.HandleFunc("/api/desktop/agent-runs/generate/stream", h.handleDesktopGenerateDraftStream)
 	mux.HandleFunc("/api/desktop/agent-translations", h.handleDesktopTranslateText)
+	mux.HandleFunc("/api/desktop/audio-transcriptions", h.handleDesktopAudioTranscription)
 	mux.HandleFunc("/api/desktop/agent-status-card", h.handleDesktopStatusCard)
 	mux.HandleFunc("/api/agent-runs/", h.handleRunByID)
 }
@@ -399,6 +402,14 @@ func (h *Handler) handleDiscoverProviderModels(w http.ResponseWriter, r *http.Re
 	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) handleTestASRProvider(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAudioTranscription(w, r, true)
+		return
+	}
+	h.handleAudioTranscriptionRequest(w, r, true)
+}
+
 func (h *Handler) handleSkills(w http.ResponseWriter, r *http.Request) {
 	if h.cloudProxy != nil {
 		h.cloudProxy.HandleAdminSkills(w, r)
@@ -705,6 +716,65 @@ func (h *Handler) handleTranslateText(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"translation": translation})
+}
+
+func (h *Handler) handleAudioTranscription(w http.ResponseWriter, r *http.Request) {
+	if h.cloudProxy != nil {
+		h.cloudProxy.HandleAudioTranscription(w, r, false)
+		return
+	}
+	h.handleAudioTranscriptionRequest(w, r, false)
+}
+
+func (h *Handler) handleDesktopAudioTranscription(w http.ResponseWriter, r *http.Request) {
+	h.handleAudioTranscriptionRequest(w, r, false)
+}
+
+func (h *Handler) handleAudioTranscriptionRequest(w http.ResponseWriter, r *http.Request, adminTest bool) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 26<<20)
+	if err := r.ParseMultipartForm(26 << 20); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "语音文件无效或超过 25 MB")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "请选择语音文件")
+		return
+	}
+	defer file.Close()
+	audio, err := io.ReadAll(io.LimitReader(file, (25<<20)+1))
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "读取语音文件失败")
+		return
+	}
+	if len(audio) > 25<<20 {
+		httpx.WriteError(w, http.StatusRequestEntityTooLarge, "语音文件不能超过 25 MB")
+		return
+	}
+	providerID := ""
+	if adminTest {
+		providerID = strings.TrimSpace(r.FormValue("provider_id"))
+		if providerID == "" {
+			httpx.WriteError(w, http.StatusBadRequest, "请先保存 Provider，再测试语音转写")
+			return
+		}
+	}
+	transcription, err := h.service.TranscribeAudio(
+		r.Context(),
+		providerID,
+		header.Filename,
+		header.Header.Get("Content-Type"),
+		audio,
+	)
+	if err != nil {
+		h.writeServiceError(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"transcription": transcription})
 }
 
 func (h *Handler) handleStatusCard(w http.ResponseWriter, r *http.Request) {

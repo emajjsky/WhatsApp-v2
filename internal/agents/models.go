@@ -146,8 +146,13 @@ type ProviderPreset struct {
 	Name             string    `json:"name"`
 	ProviderType     string    `json:"provider_type"`
 	BaseURL          string    `json:"base_url"`
+	TextEnabled      bool      `json:"text_enabled"`
 	Models           []string  `json:"models"`
 	DefaultModel     string    `json:"default_model"`
+	ASREnabled       bool      `json:"asr_enabled"`
+	ASRBaseURL       string    `json:"asr_base_url"`
+	ASRModel         string    `json:"asr_model"`
+	IsDefaultASR     bool      `json:"is_default_asr"`
 	Enabled          bool      `json:"enabled"`
 	APIKey           string    `json:"-"`
 	APIKeyConfigured bool      `json:"api_key_configured"`
@@ -161,9 +166,21 @@ type UpsertProviderPresetInput struct {
 	ProviderType string   `json:"provider_type"`
 	BaseURL      string   `json:"base_url"`
 	APIKey       string   `json:"api_key,omitempty"`
+	TextEnabled  *bool    `json:"text_enabled,omitempty"`
 	Models       []string `json:"models"`
 	DefaultModel string   `json:"default_model"`
+	ASREnabled   bool     `json:"asr_enabled"`
+	ASRBaseURL   string   `json:"asr_base_url,omitempty"`
+	ASRModel     string   `json:"asr_model,omitempty"`
+	IsDefaultASR bool     `json:"is_default_asr"`
 	Enabled      bool     `json:"enabled"`
+}
+
+type AudioTranscription struct {
+	Text               string `json:"text"`
+	SourceLanguageCode string `json:"source_language_code,omitempty"`
+	ProviderName       string `json:"provider_name"`
+	Model              string `json:"model"`
 }
 
 type DiscoverProviderModelsInput struct {

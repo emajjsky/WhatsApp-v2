@@ -2,7 +2,9 @@ package sessions
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -40,6 +42,61 @@ func TestDisconnectedEventDoesNotDeadlock(t *testing.T) {
 	}
 	if snapshot.Status != "reconnecting" {
 		t.Fatalf("status = %q, want reconnecting", snapshot.Status)
+	}
+}
+
+func TestDisconnectedEventDoesNotOverrideLoggedOutState(t *testing.T) {
+	accountID := "account-1"
+	connector := newTestWhatsmeowConnector(accountID, "logged_out")
+	events := make([]Event, 0, 1)
+	connector.SetEventHandler(func(event Event) { events = append(events, event) })
+
+	connector.handleWhatsmeowEvent(accountID, &waEvents.Disconnected{})
+
+	_, snapshot, found := connector.getSessionState(accountID)
+	if !found {
+		t.Fatal("session unexpectedly removed")
+	}
+	if snapshot.Status != "logged_out" {
+		t.Fatalf("status = %q, want logged_out", snapshot.Status)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %d, want no reconnecting event", len(events))
+	}
+}
+
+func TestHandleSendFailureLogsOutUnauthorizedSession(t *testing.T) {
+	accountID := "account-1"
+	connector := newTestWhatsmeowConnector(accountID, "connected")
+	connector.sessions[accountID].client = nil
+	events := make([]Event, 0, 1)
+	connector.SetEventHandler(func(event Event) { events = append(events, event) })
+
+	err := connector.handleSendFailure(accountID, "send whatsapp message", errors.New("status 401: not-authorized"))
+
+	if err == nil || !strings.Contains(err.Error(), "WhatsApp 登录已失效") {
+		t.Fatalf("error = %v, want login expired message", err)
+	}
+	if _, found := connector.getSession(accountID); found {
+		t.Fatal("unauthorized session was not removed")
+	}
+	if len(events) != 1 || events[0].Snapshot == nil || events[0].Snapshot.Status != "logged_out" {
+		t.Fatalf("events = %#v, want one logged_out snapshot", events)
+	}
+}
+
+func TestLateSessionEventIsIgnoredAfterSessionRemoval(t *testing.T) {
+	accountID := "account-1"
+	connector := newTestWhatsmeowConnector(accountID, "connected")
+	connector.removeSession(accountID)
+	events := make([]Event, 0, 1)
+	connector.SetEventHandler(func(event Event) { events = append(events, event) })
+
+	connector.handleWhatsmeowEvent(accountID, &waEvents.Connected{})
+	connector.handleWhatsmeowEvent(accountID, &waEvents.LoggedOut{})
+
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want late events to be ignored", events)
 	}
 }
 
@@ -191,6 +248,25 @@ func TestVoiceMessageBuildsPTTAudioPayload(t *testing.T) {
 	}
 	if message.GetAudioMessage().GetSeconds() != 7 {
 		t.Fatalf("seconds = %d, want 7", message.GetAudioMessage().GetSeconds())
+	}
+}
+
+func TestBuildQuotedReplyContextPreservesMessageTypeAndParticipant(t *testing.T) {
+	contextInfo := buildQuotedReplyContext(SendReplyContext{
+		WAMessageID: "quoted-message-1",
+		SenderJID:   "628123456789:12@s.whatsapp.net",
+		MessageType: "image",
+		Text:        "产品照片",
+	})
+
+	if contextInfo.GetStanzaID() != "quoted-message-1" {
+		t.Fatalf("stanza id = %q", contextInfo.GetStanzaID())
+	}
+	if contextInfo.GetParticipant() != "628123456789@s.whatsapp.net" {
+		t.Fatalf("participant = %q", contextInfo.GetParticipant())
+	}
+	if contextInfo.GetQuotedMessage().GetImageMessage().GetCaption() != "产品照片" {
+		t.Fatalf("quoted image = %#v", contextInfo.GetQuotedMessage())
 	}
 }
 

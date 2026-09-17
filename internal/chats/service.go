@@ -200,6 +200,12 @@ type SendMessageResult struct {
 	SentAt      time.Time `json:"sent_at"`
 }
 
+type OpenDirectChatInput struct {
+	AccountID   string `json:"account_id"`
+	DisplayName string `json:"display_name"`
+	PhoneNumber string `json:"phone_number"`
+}
+
 type SendMediaInput struct {
 	ChatID          string
 	MediaType       ingest.MediaType
@@ -289,6 +295,18 @@ func (s *Service) ListChats(ctx context.Context, input ListChatsInput) (ListChat
 		Limit:  limit,
 		Offset: offset,
 	}, nil
+}
+
+func (s *Service) OpenDirectChat(ctx context.Context, input OpenDirectChatInput) (ChatHeader, error) {
+	accountID := strings.TrimSpace(input.AccountID)
+	phoneNumber := normalizeDirectPhoneNumber(input.PhoneNumber)
+	if accountID == "" || phoneNumber == "" {
+		return ChatHeader{}, fmt.Errorf("account_id and phone_number are required")
+	}
+	if len(phoneNumber) < 6 || len(phoneNumber) > 20 {
+		return ChatHeader{}, fmt.Errorf("phone_number must contain 6 to 20 digits including country code")
+	}
+	return s.repository.OpenDirectChat(ctx, accountID, strings.TrimSpace(input.DisplayName), phoneNumber)
 }
 
 func (s *Service) ListContacts(ctx context.Context, input ListContactsInput) (ListContactsResult, error) {
@@ -857,11 +875,28 @@ func (s *Service) SendMessage(ctx context.Context, input SendMessageInput) (Send
 	sendCtx, cancel := context.WithTimeout(ctx, sendMessageTimeout)
 	defer cancel()
 
-	var replyTo []string
-	if trimmedReplyTo := strings.TrimSpace(input.ReplyToMessageID); trimmedReplyTo != "" {
-		replyTo = []string{trimmedReplyTo}
+	var sendResult sessions.SendResult
+	trimmedReplyTo := strings.TrimSpace(input.ReplyToMessageID)
+	if trimmedReplyTo != "" {
+		target, targetErr := s.repository.GetMessageActionTargetByWAID(ctx, chatID, trimmedReplyTo)
+		if targetErr != nil {
+			return SendMessageResult{}, mapRepositoryError(trimmedReplyTo, targetErr)
+		}
+		if replySender, ok := s.sender.(interface {
+			SendReplyText(context.Context, string, string, string, sessions.SendReplyContext) (sessions.SendResult, error)
+		}); ok {
+			sendResult, err = replySender.SendReplyText(sendCtx, header.AccountID, header.WAChatJID, messageText, sessions.SendReplyContext{
+				WAMessageID: target.WAMessageID,
+				SenderJID:   target.SenderJID,
+				MessageType: string(target.MessageType),
+				Text:        valueOrEmpty(target.TextContent),
+			})
+		} else {
+			sendResult, err = s.sender.SendText(sendCtx, header.AccountID, header.WAChatJID, messageText, trimmedReplyTo)
+		}
+	} else {
+		sendResult, err = s.sender.SendText(sendCtx, header.AccountID, header.WAChatJID, messageText)
 	}
-	sendResult, err := s.sender.SendText(sendCtx, header.AccountID, header.WAChatJID, messageText, replyTo...)
 	if err != nil {
 		return SendMessageResult{}, err
 	}
@@ -890,6 +925,12 @@ func (s *Service) SendMedia(ctx context.Context, input SendMediaInput) (SendMedi
 	}
 	if input.VoiceMessage && mediaType != ingest.MediaTypeAudio {
 		return SendMediaResult{}, fmt.Errorf("voice messages must use audio media")
+	}
+	if input.VoiceMessage {
+		input.Data, input.MIMEType, input.FileName, err = normalizeWhatsAppVoice(input.Data, input.MIMEType, input.FileName)
+		if err != nil {
+			return SendMediaResult{}, err
+		}
 	}
 	if s.sender == nil {
 		return SendMediaResult{}, fmt.Errorf("chat service sender is not configured")
@@ -928,6 +969,16 @@ func (s *Service) SendMedia(ctx context.Context, input SendMediaInput) (SendMedi
 		Caption:     caption,
 		SentAt:      sendResult.SentAt,
 	}, nil
+}
+
+func normalizeDirectPhoneNumber(value string) string {
+	var builder strings.Builder
+	for _, character := range value {
+		if character >= '0' && character <= '9' {
+			builder.WriteRune(character)
+		}
+	}
+	return strings.TrimLeft(builder.String(), "0")
 }
 
 func (s *Service) GetMediaContentPath(ctx context.Context, mediaID string) (string, *string, error) {

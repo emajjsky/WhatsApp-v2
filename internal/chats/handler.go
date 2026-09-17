@@ -40,8 +40,22 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleChats(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var input OpenDirectChatInput
+		if err := httpx.DecodeJSON(r, &input); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		chat, err := h.service.OpenDirectChat(r.Context(), input)
+		if err != nil {
+			h.writeServiceError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"chat": chat})
+		return
+	}
 	if r.Method != http.MethodGet {
-		httpx.WriteMethodNotAllowed(w, http.MethodGet)
+		httpx.WriteMethodNotAllowed(w, http.MethodGet, http.MethodPost)
 		return
 	}
 

@@ -1,12 +1,15 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -747,7 +750,11 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 	if defaultModel != "" && !containsString(models, defaultModel) {
 		models = append(models, defaultModel)
 	}
-	if providerType == "openai_compatible" && len(models) == 0 {
+	textEnabled := true
+	if input.TextEnabled != nil {
+		textEnabled = *input.TextEnabled
+	}
+	if (providerType == "openai_compatible" || providerType == "openrouter") && textEnabled && len(models) == 0 {
 		return ProviderPreset{}, fmt.Errorf("OpenAI-compatible preset requires at least one model")
 	}
 	baseURL := strings.TrimSpace(input.BaseURL)
@@ -762,8 +769,51 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 		if strings.TrimSpace(input.APIKey) == "" {
 			input.APIKey = existing.APIKey
 		}
+		if input.TextEnabled == nil {
+			textEnabled = existing.TextEnabled
+		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return ProviderPreset{}, err
+	}
+	asrEnabled := input.ASREnabled
+	asrModel := strings.TrimSpace(input.ASRModel)
+	asrBaseURL := strings.TrimSpace(input.ASRBaseURL)
+	if textEnabled == asrEnabled {
+		return ProviderPreset{}, fmt.Errorf("Provider 必须且只能选择文本模型或语音转写能力")
+	}
+	if providerType == "openrouter" && textEnabled {
+		return ProviderPreset{}, fmt.Errorf("OpenRouter Provider 当前仅用于语音转写")
+	}
+	if asrEnabled {
+		if providerType != "openai_compatible" && providerType != "openrouter" {
+			return ProviderPreset{}, fmt.Errorf("语音转写目前仅支持 OpenAI-compatible 或 OpenRouter Provider")
+		}
+		if asrModel == "" {
+			return ProviderPreset{}, fmt.Errorf("启用语音转写时必须填写 ASR 模型")
+		}
+		if providerType == "openrouter" {
+			if _, err := openRouterChatCompletionsURL(firstNonEmpty(asrBaseURL, baseURL)); err != nil {
+				return ProviderPreset{}, err
+			}
+		} else {
+			if _, err := openAIAudioTranscriptionsURL(firstNonEmpty(asrBaseURL, baseURL)); err != nil {
+				return ProviderPreset{}, err
+			}
+		}
+	}
+	if len([]rune(asrBaseURL)) > 500 {
+		return ProviderPreset{}, fmt.Errorf("asr_base_url is too long")
+	}
+	if strings.TrimSpace(input.APIKey) == "" && (textEnabled || asrEnabled) && (providerType == "openai_compatible" || providerType == "openrouter") {
+		return ProviderPreset{}, fmt.Errorf("Provider 必须配置 API Key")
+	}
+	if !asrEnabled {
+		asrBaseURL = ""
+		asrModel = ""
+	}
+	if !textEnabled {
+		models = nil
+		defaultModel = ""
 	}
 	preset := ProviderPreset{
 		ID:           id,
@@ -771,14 +821,374 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 		ProviderType: providerType,
 		BaseURL:      baseURL,
 		APIKey:       strings.TrimSpace(input.APIKey),
+		TextEnabled:  textEnabled,
 		Models:       models,
 		DefaultModel: defaultModel,
+		ASREnabled:   asrEnabled,
+		ASRBaseURL:   asrBaseURL,
+		ASRModel:     asrModel,
+		IsDefaultASR: input.IsDefaultASR && asrEnabled && input.Enabled,
 		Enabled:      input.Enabled,
 	}
 	if err := s.repository.UpsertProviderPreset(ctx, preset); err != nil {
 		return ProviderPreset{}, err
 	}
 	return s.repository.GetProviderPresetByID(ctx, id)
+}
+
+func (s *Service) TranscribeAudio(
+	ctx context.Context,
+	providerID string,
+	fileName string,
+	mimeType string,
+	audio []byte,
+) (AudioTranscription, error) {
+	if _, err := auth.RequireUser(ctx); err != nil {
+		return AudioTranscription{}, err
+	}
+	providerID = strings.TrimSpace(providerID)
+	if providerID != "" {
+		if _, err := auth.RequireAdmin(ctx); err != nil {
+			return AudioTranscription{}, err
+		}
+	}
+	if len(audio) == 0 {
+		return AudioTranscription{}, fmt.Errorf("语音文件不能为空")
+	}
+	if len(audio) > 25<<20 {
+		return AudioTranscription{}, fmt.Errorf("语音文件不能超过 25 MB")
+	}
+
+	var (
+		preset ProviderPreset
+		err    error
+	)
+	if providerID != "" {
+		preset, err = s.repository.GetProviderPresetByID(ctx, providerID)
+	} else {
+		preset, err = s.repository.GetDefaultASRProvider(ctx)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return AudioTranscription{}, fmt.Errorf("管理员后台还没有配置默认语音转写 Provider")
+	}
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("加载语音转写 Provider 失败: %w", err)
+	}
+	if !preset.ASREnabled || (providerID == "" && !preset.Enabled) {
+		return AudioTranscription{}, fmt.Errorf("Provider %q 未启用语音转写", preset.Name)
+	}
+	if preset.ProviderType != "openai_compatible" && preset.ProviderType != "openrouter" {
+		return AudioTranscription{}, fmt.Errorf("Provider %q 不支持语音转写", preset.Name)
+	}
+	if strings.TrimSpace(preset.APIKey) == "" || strings.TrimSpace(preset.ASRModel) == "" {
+		return AudioTranscription{}, fmt.Errorf("Provider %q 的 ASR API Key 或模型未配置完整", preset.Name)
+	}
+
+	if preset.ProviderType == "openrouter" {
+		return transcribeAudioWithOpenRouter(ctx, preset, fileName, mimeType, audio)
+	}
+
+	endpoint, err := openAIAudioTranscriptionsURL(firstNonEmpty(preset.ASRBaseURL, preset.BaseURL))
+	if err != nil {
+		return AudioTranscription{}, err
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	fileName = safeAudioFileName(fileName, mimeType)
+	filePart, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("创建语音上传内容失败: %w", err)
+	}
+	if _, err := filePart.Write(audio); err != nil {
+		return AudioTranscription{}, fmt.Errorf("写入语音上传内容失败: %w", err)
+	}
+	if err := writer.WriteField("model", preset.ASRModel); err != nil {
+		return AudioTranscription{}, fmt.Errorf("写入 ASR 模型失败: %w", err)
+	}
+	if err := writer.WriteField("response_format", "json"); err != nil {
+		return AudioTranscription{}, fmt.Errorf("写入 ASR 响应格式失败: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return AudioTranscription{}, fmt.Errorf("完成语音上传内容失败: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("创建语音转写请求失败: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+preset.APIKey)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "whatsapp-agent-platform/asr")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("语音转写连接失败: %w", err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("读取语音转写结果失败: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return AudioTranscription{}, fmt.Errorf("语音转写失败: Provider 返回 HTTP %d: %s", resp.StatusCode, providerErrorMessage(responseBody))
+	}
+
+	var result struct {
+		Text     string `json:"text"`
+		Language string `json:"language"`
+	}
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return AudioTranscription{}, fmt.Errorf("解析语音转写结果失败: Provider 返回的不是有效 JSON")
+	}
+	result.Text = strings.TrimSpace(result.Text)
+	if result.Text == "" {
+		return AudioTranscription{}, fmt.Errorf("语音转写结果为空")
+	}
+	return AudioTranscription{
+		Text:               result.Text,
+		SourceLanguageCode: strings.TrimSpace(result.Language),
+		ProviderName:       preset.Name,
+		Model:              preset.ASRModel,
+	}, nil
+}
+
+func transcribeAudioWithOpenRouter(
+	ctx context.Context,
+	preset ProviderPreset,
+	fileName string,
+	mimeType string,
+	audio []byte,
+) (AudioTranscription, error) {
+	endpoint, err := openRouterChatCompletionsURL(firstNonEmpty(preset.ASRBaseURL, preset.BaseURL))
+	if err != nil {
+		return AudioTranscription{}, err
+	}
+	payload := map[string]any{
+		"model": preset.ASRModel,
+		"messages": []map[string]any{{
+			"role": "user",
+			"content": []map[string]any{
+				{
+					"type": "text",
+					"text": "Transcribe this audio verbatim in its original language. Do not translate or summarize it. Return only one compact JSON object with this schema: {\"text\":\"exact transcription\",\"language\":\"ISO 639-1 language code\"}.",
+				},
+				{
+					"type": "input_audio",
+					"input_audio": map[string]string{
+						"data":   base64.StdEncoding.EncodeToString(audio),
+						"format": openRouterAudioFormat(fileName, mimeType),
+					},
+				},
+			},
+		}},
+		"stream":      false,
+		"temperature": 0,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("创建 OpenRouter 语音转写内容失败: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("创建 OpenRouter 语音转写请求失败: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+preset.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Title", "WhatsApp Agent Platform")
+	req.Header.Set("User-Agent", "whatsapp-agent-platform/openrouter-asr")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("OpenRouter 语音转写连接失败: %w", err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return AudioTranscription{}, fmt.Errorf("读取 OpenRouter 语音转写结果失败: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return AudioTranscription{}, fmt.Errorf("OpenRouter 语音转写失败: HTTP %d: %s", resp.StatusCode, providerErrorMessage(responseBody))
+	}
+	text, language, err := parseOpenRouterTranscription(responseBody)
+	if err != nil {
+		return AudioTranscription{}, err
+	}
+	return AudioTranscription{
+		Text:               text,
+		SourceLanguageCode: language,
+		ProviderName:       preset.Name,
+		Model:              preset.ASRModel,
+	}, nil
+}
+
+func openRouterChatCompletionsURL(baseURL string) (string, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmed == "" {
+		trimmed = "https://openrouter.ai/api/v1"
+	}
+	for _, suffix := range []string{"/models", "/audio/transcriptions"} {
+		trimmed = strings.TrimSuffix(trimmed, suffix)
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Host) == "" {
+		return "", fmt.Errorf("OpenRouter Base URL 必须是有效的 HTTP 或 HTTPS 地址")
+	}
+	if strings.HasSuffix(trimmed, "/chat/completions") {
+		return trimmed, nil
+	}
+	if !strings.HasSuffix(trimmed, "/api/v1") && !strings.HasSuffix(trimmed, "/v1") {
+		trimmed += "/api/v1"
+	}
+	return trimmed + "/chat/completions", nil
+}
+
+func openRouterAudioFormat(fileName, mimeType string) string {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+	formats := map[string]string{
+		"audio/aac": "aac", "audio/aiff": "aiff", "audio/flac": "flac",
+		"audio/m4a": "m4a", "audio/mp4": "m4a", "audio/mpeg": "mp3",
+		"audio/ogg": "ogg", "audio/opus": "ogg", "audio/wav": "wav",
+		"audio/webm": "ogg", "audio/x-wav": "wav",
+	}
+	if format := formats[mediaType]; format != "" {
+		return format
+	}
+	extension := strings.TrimPrefix(strings.ToLower(filepath.Ext(fileName)), ".")
+	if extension == "webm" || extension == "opus" {
+		return "ogg"
+	}
+	if extension != "" {
+		return extension
+	}
+	return "ogg"
+}
+
+func parseOpenRouterTranscription(body []byte) (string, string, error) {
+	var response struct {
+		Choices []struct {
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil || len(response.Choices) == 0 {
+		return "", "", fmt.Errorf("解析 OpenRouter 语音转写结果失败")
+	}
+	content := openRouterMessageContent(response.Choices[0].Message.Content)
+	if content == "" {
+		return "", "", fmt.Errorf("OpenRouter 语音转写结果为空")
+	}
+	cleaned := strings.TrimSpace(content)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+	if start, end := strings.Index(cleaned, "{"), strings.LastIndex(cleaned, "}"); start >= 0 && end > start {
+		var result struct {
+			Text     string `json:"text"`
+			Language string `json:"language"`
+		}
+		if json.Unmarshal([]byte(cleaned[start:end+1]), &result) == nil && strings.TrimSpace(result.Text) != "" {
+			return strings.TrimSpace(result.Text), strings.TrimSpace(result.Language), nil
+		}
+	}
+	return cleaned, "", nil
+}
+
+func openRouterMessageContent(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) == nil {
+		values := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if value := strings.TrimSpace(part.Text); value != "" {
+				values = append(values, value)
+			}
+		}
+		return strings.Join(values, "\n")
+	}
+	return ""
+}
+
+func openAIAudioTranscriptionsURL(baseURL string) (string, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	for _, suffix := range []string{"/chat/completions", "/models"} {
+		trimmed = strings.TrimSuffix(trimmed, suffix)
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || strings.TrimSpace(parsed.Host) == "" {
+		return "", fmt.Errorf("ASR Base URL 必须是有效的 HTTP 或 HTTPS 地址")
+	}
+	if strings.HasSuffix(trimmed, "/audio/transcriptions") {
+		return trimmed, nil
+	}
+	if !strings.HasSuffix(trimmed, "/v1") {
+		trimmed += "/v1"
+	}
+	return trimmed + "/audio/transcriptions", nil
+}
+
+func safeAudioFileName(fileName, mimeType string) string {
+	fileName = strings.TrimSpace(filepath.Base(fileName))
+	if fileName != "" && fileName != "." {
+		return fileName
+	}
+	switch strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0])) {
+	case "audio/mpeg":
+		return "voice.mp3"
+	case "audio/wav", "audio/x-wav":
+		return "voice.wav"
+	case "audio/mp4", "audio/m4a":
+		return "voice.m4a"
+	case "audio/webm":
+		return "voice.webm"
+	default:
+		return "voice.ogg"
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func providerErrorMessage(body []byte) string {
+	var payload struct {
+		Error any `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) == nil {
+		switch value := payload.Error.(type) {
+		case string:
+			if strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		case map[string]any:
+			if message := strings.TrimSpace(anyString(value["message"])); message != "" {
+				return message
+			}
+		}
+	}
+	message := strings.TrimSpace(string(body))
+	if len(message) > 300 {
+		message = message[:300]
+	}
+	if message == "" {
+		return "未返回错误详情"
+	}
+	return message
 }
 
 func (s *Service) DiscoverProviderModels(ctx context.Context, input DiscoverProviderModelsInput) (DiscoverProviderModelsResult, error) {
@@ -1482,6 +1892,9 @@ func (s *Service) validateSystemProviderConfig(ctx context.Context, config map[s
 	if !preset.Enabled {
 		return fmt.Errorf("provider preset %q is disabled", preset.Name)
 	}
+	if !preset.TextEnabled {
+		return fmt.Errorf("provider preset %q 未启用文本模型能力", preset.Name)
+	}
 
 	providerType := normalizeProviderType(anyString(config["type"]))
 	if providerType != preset.ProviderType {
@@ -1518,6 +1931,8 @@ func normalizeProviderType(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "openai", "openai_compatible", "openaicompatible", "openai-compatible":
 		return "openai_compatible"
+	case "openrouter", "open_router", "open-router":
+		return "openrouter"
 	case "coze":
 		return "coze"
 	case "n8n":

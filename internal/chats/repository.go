@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -128,6 +129,7 @@ type MessageView struct {
 	MessageType        ingest.MessageType `json:"message_type"`
 	TextContent        *string            `json:"text_content,omitempty"`
 	ReplyToWAMessageID *string            `json:"reply_to_wa_message_id,omitempty"`
+	ReplyTo            *QuotedMessageView `json:"reply_to,omitempty"`
 	SentAt             time.Time          `json:"sent_at"`
 	DeliveredAt        *time.Time         `json:"delivered_at,omitempty"`
 	ReadAt             *time.Time         `json:"read_at,omitempty"`
@@ -135,6 +137,15 @@ type MessageView struct {
 	Pinned             bool               `json:"pinned"`
 	Reactions          map[string]string  `json:"reactions"`
 	Media              []MediaAttachment  `json:"media"`
+}
+
+type QuotedMessageView struct {
+	WAMessageID string             `json:"wa_message_id"`
+	SenderJID   string             `json:"sender_jid"`
+	SenderName  *string            `json:"sender_name,omitempty"`
+	FromMe      bool               `json:"from_me"`
+	MessageType ingest.MessageType `json:"message_type"`
+	TextContent *string            `json:"text_content,omitempty"`
 }
 
 type MessageActionTarget struct {
@@ -188,6 +199,45 @@ WHERE account_id = $1 AND wa_message_id = $2`
 	return messageID, nil
 }
 
+func (r *Repository) OpenDirectChat(ctx context.Context, accountID, displayName, phoneNumber string) (ChatHeader, error) {
+	if err := r.requireAccountAccess(ctx, accountID); err != nil {
+		return ChatHeader{}, fmt.Errorf("access account %q: %w", accountID, err)
+	}
+	waJID := phoneNumber + "@s.whatsapp.net"
+	chatID, err := r.ResolveChatIDByWAJID(ctx, accountID, waJID)
+	if err == nil {
+		return r.GetChatHeader(ctx, chatID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) && !strings.Contains(err.Error(), sql.ErrNoRows.Error()) {
+		return ChatHeader{}, err
+	}
+
+	newChatID := ids.NewUUID()
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO chats (id, account_id, wa_chat_jid, chat_type, title)
+VALUES ($1, $2, $3, 'direct', NULLIF($4, ''))
+ON CONFLICT (account_id, wa_chat_jid) DO UPDATE
+SET title = COALESCE(NULLIF(EXCLUDED.title, ''), chats.title), updated_at = NOW()`,
+		newChatID, accountID, waJID, displayName,
+	); err != nil {
+		return ChatHeader{}, fmt.Errorf("open direct chat for %q: %w", phoneNumber, err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO contacts (id, account_id, wa_jid, display_name, phone_number)
+VALUES ($1, $2, $3, NULLIF($4, ''), $5)
+ON CONFLICT (account_id, wa_jid) DO UPDATE
+SET display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), contacts.display_name),
+    phone_number = EXCLUDED.phone_number,
+    updated_at = NOW()`, ids.NewUUID(), accountID, waJID, displayName, phoneNumber); err != nil {
+		return ChatHeader{}, fmt.Errorf("store direct contact for %q: %w", phoneNumber, err)
+	}
+	chatID, err = r.ResolveChatIDByWAJID(ctx, accountID, waJID)
+	if err != nil {
+		return ChatHeader{}, err
+	}
+	return r.GetChatHeader(ctx, chatID)
+}
+
 func (r *Repository) ListChats(ctx context.Context, filters ChatListFilters) ([]ChatSummary, int, error) {
 	whereClause, args := buildChatListWhere(ctx, filters)
 
@@ -236,8 +286,12 @@ SELECT
     c.marked_unread,
     c.muted_until,
     c.note,
-    COALESCE(NULLIF(ct.phone_number, ''), NULLIF(lidmap.pn, '')),
-    ct.profile_photo_url,
+    COALESCE(NULLIF(ct.phone_number, ''), NULLIF(lidmap.pn, ''), NULLIF(split_part(c.wa_chat_jid, '@', 1), '')),
+    COALESCE(ct.profile_photo_url, (
+        SELECT avatar.profile_photo_url FROM contacts avatar
+        WHERE avatar.account_id = c.account_id
+          AND avatar.wa_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
+    )),
     COALESCE(latest.sent_at, c.last_message_at),
     latest.text_content,
     latest.message_type,
@@ -385,8 +439,12 @@ SELECT
     c.marked_unread,
     c.muted_until,
     c.note,
-    COALESCE(NULLIF(ct.phone_number, ''), NULLIF(lidmap.pn, '')),
-    ct.profile_photo_url,
+    COALESCE(NULLIF(ct.phone_number, ''), NULLIF(lidmap.pn, ''), NULLIF(split_part(c.wa_chat_jid, '@', 1), '')),
+    COALESCE(ct.profile_photo_url, (
+        SELECT avatar.profile_photo_url FROM contacts avatar
+        WHERE avatar.account_id = c.account_id
+          AND avatar.wa_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
+    )),
     c.last_message_at
 FROM chats c
 LEFT JOIN contacts ct
@@ -500,8 +558,12 @@ SELECT
     c.marked_unread,
     c.muted_until,
     c.note,
-    COALESCE(NULLIF(ct.phone_number, ''), NULLIF(lidmap.pn, '')),
-    ct.profile_photo_url,
+    COALESCE(NULLIF(ct.phone_number, ''), NULLIF(lidmap.pn, ''), NULLIF(split_part(c.wa_chat_jid, '@', 1), '')),
+    COALESCE(ct.profile_photo_url, (
+        SELECT avatar.profile_photo_url FROM contacts avatar
+        WHERE avatar.account_id = c.account_id
+          AND avatar.wa_jid = CONCAT(lidmap.pn, '@s.whatsapp.net')
+    )),
     c.last_message_at
 FROM chats c
 LEFT JOIN contacts ct
@@ -763,8 +825,85 @@ LIMIT $%d`, strings.Join(conditions, " AND "), orderDirection, orderDirection, l
 			items[i].Media = make([]MediaAttachment, 0)
 		}
 	}
+	quotedByWAID, err := r.listQuotedMessages(ctx, filters.ChatID, items)
+	if err != nil {
+		return nil, false, err
+	}
+	for i := range items {
+		if items[i].ReplyToWAMessageID != nil {
+			items[i].ReplyTo = quotedByWAID[*items[i].ReplyToWAMessageID]
+		}
+	}
 
 	return items, hasMore, nil
+}
+
+func (r *Repository) listQuotedMessages(ctx context.Context, chatID string, messages []MessageView) (map[string]*QuotedMessageView, error) {
+	waIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, message := range messages {
+		if message.ReplyToWAMessageID == nil {
+			continue
+		}
+		waID := strings.TrimSpace(*message.ReplyToWAMessageID)
+		if waID == "" {
+			continue
+		}
+		if _, exists := seen[waID]; exists {
+			continue
+		}
+		seen[waID] = struct{}{}
+		waIDs = append(waIDs, waID)
+	}
+	result := make(map[string]*QuotedMessageView, len(waIDs))
+	if len(waIDs) == 0 {
+		return result, nil
+	}
+
+	args := []any{chatID}
+	placeholders := make([]string, 0, len(waIDs))
+	for _, waID := range waIDs {
+		args = append(args, waID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
+	query := fmt.Sprintf(`
+SELECT
+    quoted.wa_message_id,
+    quoted.sender_jid,
+    COALESCE(
+        NULLIF(qct.display_name, ''), NULLIF(qct.push_name, ''),
+        NULLIF(qwm.full_name, ''), NULLIF(qwm.first_name, ''),
+        NULLIF(qwm.push_name, ''), NULLIF(qwm.business_name, ''),
+        NULLIF(qct.phone_number, ''), NULLIF(split_part(quoted.sender_jid, '@', 1), '')
+    ),
+    quoted.from_me,
+    quoted.message_type,
+    quoted.text_content
+FROM messages quoted
+LEFT JOIN contacts qct ON qct.account_id = quoted.account_id AND qct.wa_jid = quoted.sender_jid
+LEFT JOIN session_credentials qsc ON qsc.account_id = quoted.account_id
+LEFT JOIN whatsmeow_contacts qwm ON qwm.our_jid = qsc.device_id AND qwm.their_jid = quoted.sender_jid
+WHERE quoted.chat_id = $1 AND quoted.wa_message_id IN (%s)`, strings.Join(placeholders, ", "))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list quoted messages for chat %q: %w", chatID, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item QuotedMessageView
+		var senderName, textContent sql.NullString
+		if err := rows.Scan(&item.WAMessageID, &item.SenderJID, &senderName, &item.FromMe, &item.MessageType, &textContent); err != nil {
+			return nil, fmt.Errorf("scan quoted message: %w", err)
+		}
+		item.SenderName = nullableString(senderName)
+		item.TextContent = nullableString(textContent)
+		copy := item
+		result[item.WAMessageID] = &copy
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate quoted messages: %w", err)
+	}
+	return result, nil
 }
 
 func (r *Repository) SearchMessages(ctx context.Context, chatID, query string, limit int) ([]MessageView, int, error) {
@@ -1173,6 +1312,29 @@ WHERE m.chat_id = $1 AND m.id = $2`
 		&target.Pinned,
 	); err != nil {
 		return MessageActionTarget{}, fmt.Errorf("get message %q: %w", messageID, err)
+	}
+	target.TextContent = nullableString(textContent)
+	return target, nil
+}
+
+func (r *Repository) GetMessageActionTargetByWAID(ctx context.Context, chatID, waMessageID string) (MessageActionTarget, error) {
+	query := `SELECT m.id, m.account_id, m.chat_id, c.wa_chat_jid, m.wa_message_id,
+m.sender_jid, m.from_me, m.message_type, m.text_content, m.sent_at, m.starred, m.pinned
+FROM messages m JOIN chats c ON c.id = m.chat_id
+WHERE m.chat_id = $1 AND m.wa_message_id = $2`
+	args := []any{chatID, waMessageID}
+	if scopeCondition, scopeArgs := accountScopeCondition(ctx, "m.account_id", 3); scopeCondition != "" {
+		query += scopeCondition
+		args = append(args, scopeArgs...)
+	}
+	var target MessageActionTarget
+	var textContent sql.NullString
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&target.ID, &target.AccountID, &target.ChatID, &target.WAChatJID, &target.WAMessageID,
+		&target.SenderJID, &target.FromMe, &target.MessageType, &textContent,
+		&target.SentAt, &target.Starred, &target.Pinned,
+	); err != nil {
+		return MessageActionTarget{}, fmt.Errorf("get message by whatsapp id %q: %w", waMessageID, err)
 	}
 	target.TextContent = nullableString(textContent)
 	return target, nil

@@ -34,6 +34,7 @@ import (
 
 	"whatsapp-agent-platform/internal/ingest"
 	"whatsapp-agent-platform/internal/proxychain"
+	"whatsapp-agent-platform/internal/support/ids"
 )
 
 type AccountPhoneLookup interface {
@@ -494,7 +495,7 @@ func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, t
 	}
 	resp, err := session.client.SendMessage(ctx, targetJID, outboundMessage)
 	if err != nil {
-		return SendResult{}, fmt.Errorf("send whatsapp message: %w", err)
+		return SendResult{}, c.handleSendFailure(accountID, "send whatsapp message", err)
 	}
 
 	sentAt := resp.Timestamp
@@ -543,6 +544,56 @@ func (c *WhatsmeowConnector) SendText(ctx context.Context, accountID, chatJID, t
 		Message:   envelope,
 	})
 
+	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
+}
+
+func (c *WhatsmeowConnector) SendReplyText(ctx context.Context, accountID, chatJID, text string, reply SendReplyContext) (SendResult, error) {
+	trimmedChat := strings.TrimSpace(chatJID)
+	trimmedText := strings.TrimSpace(text)
+	if trimmedChat == "" || trimmedText == "" || strings.TrimSpace(reply.WAMessageID) == "" {
+		return SendResult{}, fmt.Errorf("chat_jid, text and quoted message id are required")
+	}
+	session, err := c.ensureSession(ctx, accountID)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if !session.client.IsConnected() || !session.client.IsLoggedIn() {
+		return SendResult{}, fmt.Errorf("whatsapp session is not connected")
+	}
+	targetJID, err := waTypes.ParseJID(trimmedChat)
+	if err != nil {
+		return SendResult{}, fmt.Errorf("parse chat jid %q: %w", trimmedChat, err)
+	}
+	targetJID = targetJID.ToNonAD()
+	outboundMessage := &waProto.Message{ExtendedTextMessage: &waProto.ExtendedTextMessage{
+		Text:        proto.String(trimmedText),
+		ContextInfo: buildQuotedReplyContext(reply),
+	}}
+	resp, err := session.client.SendMessage(ctx, targetJID, outboundMessage)
+	if err != nil {
+		return SendResult{}, c.handleSendFailure(accountID, "send whatsapp quoted reply", err)
+	}
+	sentAt := resp.Timestamp
+	if sentAt.IsZero() {
+		sentAt = c.now()
+	}
+	senderJID := resp.Sender.ToNonAD()
+	if senderJID.IsEmpty() && session.client.Store != nil && session.client.Store.ID != nil {
+		senderJID = session.client.Store.ID.ToNonAD()
+	}
+	messageID := string(resp.ID)
+	c.emit(Event{
+		Type: EventTypeMessageReceived, AccountID: accountID, EmittedAt: sentAt,
+		Message: &MessageEnvelope{
+			Chat: ingest.ChatSnapshot{AccountID: accountID, WAChatJID: targetJID.String(), ChatType: mapChatType(targetJID), LastMessageAt: &sentAt},
+			Message: ingest.MessageInput{
+				AccountID: accountID, WAMessageID: messageID, SenderJID: senderJID.String(), FromMe: true,
+				MessageType: ingest.MessageTypeText, TextContent: stringPointer(trimmedText),
+				ReplyToWAMessageID: stringPointer(strings.TrimSpace(reply.WAMessageID)), SentAt: sentAt,
+			},
+			Payload: map[string]any{"source": "whatsmeow", "direction": "outbound", "chat_jid": targetJID.String(), "message_id": messageID, "text": trimmedText, "reply_to": reply.WAMessageID, "sent_at_utc": sentAt},
+		},
+	})
 	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
 }
 
@@ -623,7 +674,7 @@ func (c *WhatsmeowConnector) sendStructuredMessage(
 	targetJID = targetJID.ToNonAD()
 	resp, err := session.client.SendMessage(ctx, targetJID, outboundMessage)
 	if err != nil {
-		return SendResult{}, fmt.Errorf("send whatsapp %s message: %w", messageType, err)
+		return SendResult{}, c.handleSendFailure(accountID, fmt.Sprintf("send whatsapp %s message", messageType), err)
 	}
 	sentAt := resp.Timestamp
 	if sentAt.IsZero() {
@@ -868,7 +919,7 @@ func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID s
 
 	upload, err := session.client.Upload(ctx, input.Data, waMediaType)
 	if err != nil {
-		return SendResult{}, fmt.Errorf("upload whatsapp media: %w", err)
+		return SendResult{}, c.handleSendFailure(accountID, "upload whatsapp media", err)
 	}
 
 	if input.VoiceMessage && mediaType != ingest.MediaTypeAudio {
@@ -877,7 +928,7 @@ func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID s
 	outboundMessage := buildMediaMessage(mediaType, mimeType, fileName, caption, input.VoiceMessage, input.DurationSeconds, upload)
 	resp, err := session.client.SendMessage(ctx, targetJID, outboundMessage)
 	if err != nil {
-		return SendResult{}, fmt.Errorf("send whatsapp media message: %w", err)
+		return SendResult{}, c.handleSendFailure(accountID, "send whatsapp media message", err)
 	}
 
 	sentAt := resp.Timestamp
@@ -956,6 +1007,89 @@ func (c *WhatsmeowConnector) SendMedia(ctx context.Context, accountID, chatJID s
 	})
 
 	return SendResult{WAMessageID: messageID, SentAt: sentAt}, nil
+}
+
+func (c *WhatsmeowConnector) handleSendFailure(accountID, operation string, cause error) error {
+	wrapped := fmt.Errorf("%s: %w", operation, cause)
+	message := strings.ToLower(cause.Error())
+	if strings.Contains(message, "error 401") || strings.Contains(message, "status 401") || strings.Contains(message, "not-authorized") || strings.Contains(message, "not authorized") {
+		snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
+			snapshot.Status = "logged_out"
+			snapshot.Pairing = nil
+			snapshot.ConnectedAt = nil
+			snapshot.LastError = "WhatsApp 登录已失效，请重新扫码登录"
+			snapshot.UpdatedAt = c.now()
+			return snapshot
+		})
+		c.deleteDeviceBinding(context.Background(), accountID)
+		c.emitSnapshot(snapshot)
+		if session, found := c.getSession(accountID); found && session.client != nil {
+			session.client.Disconnect()
+			if session.client.Store != nil && session.client.Store.ID != nil {
+				if err := session.client.Store.Delete(context.Background()); err != nil {
+					c.logger.Warn("failed to delete unauthorized whatsapp device store", "account_id", accountID, "error", err)
+				}
+			}
+		}
+		c.removeSession(accountID)
+		return fmt.Errorf("WhatsApp 登录已失效，请重新扫码登录: %w", wrapped)
+	}
+	return wrapped
+}
+
+func quotedMessageFallback(messageType string) string {
+	switch strings.ToLower(strings.TrimSpace(messageType)) {
+	case "image":
+		return "图片"
+	case "video":
+		return "视频"
+	case "audio":
+		return "语音消息"
+	case "document":
+		return "文档"
+	case "sticker":
+		return "贴图"
+	case "contact":
+		return "联系人"
+	case "poll":
+		return "投票"
+	default:
+		return "消息"
+	}
+}
+
+func buildQuotedReplyContext(reply SendReplyContext) *waProto.ContextInfo {
+	contextInfo := &waProto.ContextInfo{
+		StanzaID:      proto.String(strings.TrimSpace(reply.WAMessageID)),
+		QuotedMessage: buildQuotedReplyMessage(reply),
+	}
+	if senderJID, err := waTypes.ParseJID(strings.TrimSpace(reply.SenderJID)); err == nil && !senderJID.IsEmpty() {
+		contextInfo.Participant = proto.String(senderJID.ToNonAD().String())
+	}
+	return contextInfo
+}
+
+func buildQuotedReplyMessage(reply SendReplyContext) *waProto.Message {
+	text := strings.TrimSpace(reply.Text)
+	if text == "" {
+		text = quotedMessageFallback(reply.MessageType)
+	}
+	switch strings.ToLower(strings.TrimSpace(reply.MessageType)) {
+	case "image":
+		return &waProto.Message{ImageMessage: &waProto.ImageMessage{Caption: proto.String(text)}}
+	case "video":
+		return &waProto.Message{VideoMessage: &waProto.VideoMessage{Caption: proto.String(text)}}
+	case "audio":
+		return &waProto.Message{AudioMessage: &waProto.AudioMessage{Mimetype: proto.String("audio/ogg; codecs=opus"), PTT: proto.Bool(true)}}
+	case "document":
+		return &waProto.Message{DocumentMessage: &waProto.DocumentMessage{Title: proto.String(text), FileName: proto.String(text)}}
+	case "sticker":
+		return &waProto.Message{StickerMessage: &waProto.StickerMessage{Mimetype: proto.String("image/webp")}}
+	case "contact":
+		return &waProto.Message{ContactMessage: &waProto.ContactMessage{DisplayName: proto.String(text)}}
+	default:
+		return &waProto.Message{Conversation: proto.String(text)}
+	}
 }
 
 func (c *WhatsmeowConnector) resolveProxyPlan(ctx context.Context, accountID string) (ProxyPlan, error) {
@@ -1316,6 +1450,9 @@ func (c *WhatsmeowConnector) handleQRChannelItem(accountID string, item whatsmeo
 }
 
 func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
+	if _, found := c.getSession(accountID); !found {
+		return
+	}
 	switch event := evt.(type) {
 	case *waEvents.Connected:
 		now := c.now()
@@ -1332,7 +1469,10 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 		c.emitSnapshot(snapshot)
 		c.refreshKnownMetadataAsync(accountID)
 	case *waEvents.Disconnected:
-		session, _ := c.getSession(accountID)
+		session, current, found := c.getSessionState(accountID)
+		if !found || current.Status == "logged_out" {
+			return
+		}
 		hasDevice := sessionHasDevice(session)
 		snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
 			if hasDevice {
@@ -1356,6 +1496,10 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 		c.persistDeviceBinding(context.Background(), accountID)
 		c.emitSnapshot(snapshot)
 	case *waEvents.LoggedOut:
+		session, _, found := c.getSessionState(accountID)
+		if !found {
+			return
+		}
 		snapshot := c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
 			snapshot.Status = "logged_out"
 			snapshot.Pairing = nil
@@ -1364,10 +1508,14 @@ func (c *WhatsmeowConnector) handleWhatsmeowEvent(accountID string, evt any) {
 			snapshot.UpdatedAt = c.now()
 			return snapshot
 		})
-		if c.bindingStore != nil {
-			_ = c.bindingStore.Delete(context.Background(), accountID)
-		}
+		c.deleteDeviceBinding(context.Background(), accountID)
 		c.emitSnapshot(snapshot)
+		if session.client != nil && session.client.Store != nil && session.client.Store.ID != nil {
+			if err := session.client.Store.Delete(context.Background()); err != nil {
+				c.logger.Warn("failed to delete logged out whatsapp device store", "account_id", accountID, "error", err)
+			}
+		}
+		c.removeSession(accountID)
 	case *waEvents.StreamReplaced:
 		c.emitSnapshot(c.updateSnapshot(accountID, func(snapshot SessionSnapshot) SessionSnapshot {
 			snapshot.Status = "failed"
@@ -1537,7 +1685,62 @@ func (c *WhatsmeowConnector) refreshKnownMetadataAsync(accountID string) {
 		if err := c.refreshKnownGroupTitles(ctx, accountID); err != nil {
 			c.logger.Warn("failed to refresh whatsapp group titles", "account_id", accountID, "error", err)
 		}
+		if err := c.refreshKnownProfilePhotos(ctx, accountID); err != nil {
+			c.logger.Warn("failed to refresh whatsapp profile photos", "account_id", accountID, "error", err)
+		}
 	}()
+}
+
+func (c *WhatsmeowConnector) refreshKnownProfilePhotos(ctx context.Context, accountID string) error {
+	session, found := c.getSession(accountID)
+	if !found || session.client == nil || !session.client.IsConnected() || !session.client.IsLoggedIn() {
+		return nil
+	}
+	rows, err := c.db.QueryContext(ctx, `
+SELECT wa_chat_jid
+FROM chats
+WHERE account_id = $1 AND chat_type = 'direct'
+ORDER BY COALESCE(last_message_at, updated_at) DESC
+LIMIT 60`, accountID)
+	if err != nil {
+		return fmt.Errorf("list chats for profile photo refresh: %w", err)
+	}
+	targets := make([]waTypes.JID, 0, 60)
+	for rows.Next() {
+		var jidText string
+		if err := rows.Scan(&jidText); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan profile photo target: %w", err)
+		}
+		jid, parseErr := waTypes.ParseJID(strings.TrimSpace(jidText))
+		if parseErr == nil {
+			targets = append(targets, jid.ToNonAD())
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, target := range targets {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		info, pictureErr := session.client.GetProfilePictureInfo(ctx, target, &whatsmeow.GetProfilePictureParams{Preview: true})
+		if pictureErr != nil || info == nil || strings.TrimSpace(info.URL) == "" {
+			continue
+		}
+		phoneNumber := derivePhoneNumber(target)
+		_, err = c.db.ExecContext(ctx, `
+INSERT INTO contacts (id, account_id, wa_jid, phone_number, profile_photo_url)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (account_id, wa_jid) DO UPDATE
+SET phone_number = COALESCE(EXCLUDED.phone_number, contacts.phone_number),
+    profile_photo_url = EXCLUDED.profile_photo_url,
+    updated_at = NOW()`, ids.NewUUID(), accountID, target.String(), phoneNumber, strings.TrimSpace(info.URL))
+		if err != nil {
+			return fmt.Errorf("store profile photo for %q: %w", target.String(), err)
+		}
+	}
+	return nil
 }
 
 func (c *WhatsmeowConnector) refreshKnownGroupTitles(ctx context.Context, accountID string) error {

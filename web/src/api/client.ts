@@ -224,6 +224,7 @@ export interface MessageView {
   message_type: MessageType
   text_content?: string
   reply_to_wa_message_id?: string
+  reply_to?: QuotedMessageView
   sent_at: string
   delivered_at?: string
   read_at?: string
@@ -253,6 +254,15 @@ export interface MessageByDateResponse {
 export interface SendChatMessagePayload {
   message_text: string
   reply_to_wa_message_id?: string
+}
+
+export interface QuotedMessageView {
+  wa_message_id: string
+  sender_jid: string
+  sender_name?: string
+  from_me: boolean
+  message_type: MessageType
+  text_content?: string
 }
 
 export interface SendChatMessageResponse {
@@ -593,8 +603,13 @@ export interface ProviderPresetView {
   name: string
   provider_type: string
   base_url: string
+  text_enabled: boolean
   models: string[]
   default_model: string
+  asr_enabled: boolean
+  asr_base_url: string
+  asr_model: string
+  is_default_asr: boolean
   enabled: boolean
   api_key_configured: boolean
   created_at: string
@@ -607,9 +622,21 @@ export interface UpsertProviderPresetPayload {
   provider_type: string
   base_url: string
   api_key?: string
+  text_enabled: boolean
   models: string[]
   default_model: string
+  asr_enabled: boolean
+  asr_base_url?: string
+  asr_model?: string
+  is_default_asr: boolean
   enabled: boolean
+}
+
+export interface AudioTranscriptionView {
+  text: string
+  source_language_code?: string
+  provider_name: string
+  model: string
 }
 
 export type AgentSkillFileKind = 'skill' | 'reference' | 'asset'
@@ -1447,6 +1474,13 @@ export async function sendChatContact(chatId: string, displayName: string, phone
   })
 }
 
+export async function openDirectChat(accountId: string, displayName: string, phoneNumber: string) {
+  return request<{ chat: ChatHeader }>('/api/chats', {
+    method: 'POST',
+    jsonBody: { account_id: accountId, display_name: displayName, phone_number: phoneNumber },
+  })
+}
+
 export async function sendChatPoll(chatId: string, question: string, options: string[], allowMultiple: boolean) {
   return request<SendChatMessageResponse>(`/api/chats/${chatId}/poll`, {
     method: 'POST',
@@ -1579,6 +1613,50 @@ export async function discoverProviderModels(payload: {
     method: 'POST',
     jsonBody: payload,
   })
+}
+
+async function uploadAudioForTranscription(path: string, file: Blob, fileName: string, providerId?: string) {
+  const controller = new AbortController()
+  const timeout = globalThis.setTimeout(() => controller.abort(), 130000)
+  const formData = new FormData()
+  formData.set('file', file, fileName)
+  if (providerId) {
+    formData.set('provider_id', providerId)
+  }
+  try {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      let message = '语音转写失败'
+      try {
+        const payload = (await response.json()) as { error?: string }
+        message = payload.error?.trim() || message
+      } catch {
+        message = response.statusText || message
+      }
+      throw new ApiError(response.status, message)
+    }
+    return (await response.json()) as { transcription: AudioTranscriptionView }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('语音转写超时，请稍后重试')
+    }
+    throw error
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
+}
+
+export function transcribeAudio(file: Blob, fileName = 'voice.ogg') {
+  return uploadAudioForTranscription('/api/audio-transcriptions', file, fileName)
+}
+
+export function testProviderASR(providerId: string, file: File) {
+  return uploadAudioForTranscription('/api/admin/provider-presets/test-asr', file, file.name, providerId)
 }
 
 export async function listAgentSkills() {

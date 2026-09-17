@@ -14,6 +14,10 @@ import (
 	"whatsapp-agent-platform/internal/storage"
 )
 
+type transactionStarter interface {
+	BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
+}
+
 type Repository struct {
 	db storage.DBTX
 }
@@ -674,7 +678,8 @@ func (r *Repository) DeleteSystemConfig(ctx context.Context, id string) error {
 
 func (r *Repository) ListProviderPresets(ctx context.Context) ([]ProviderPreset, error) {
 	const query = `
-SELECT id, name, provider_type, base_url, api_key, models, default_model, enabled, created_at, updated_at
+SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+       asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
 ORDER BY enabled DESC, name ASC, created_at DESC`
 
@@ -700,10 +705,21 @@ ORDER BY enabled DESC, name ASC, created_at DESC`
 
 func (r *Repository) GetProviderPresetByID(ctx context.Context, id string) (ProviderPreset, error) {
 	const query = `
-SELECT id, name, provider_type, base_url, api_key, models, default_model, enabled, created_at, updated_at
+SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+       asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
 WHERE id = $1`
 	return scanProviderPreset(r.db.QueryRowContext(ctx, query, strings.TrimSpace(id)))
+}
+
+func (r *Repository) GetDefaultASRProvider(ctx context.Context) (ProviderPreset, error) {
+	const query = `
+SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+       asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
+FROM agent_provider_presets
+WHERE enabled = TRUE AND asr_enabled = TRUE AND is_default_asr = TRUE
+LIMIT 1`
+	return scanProviderPreset(r.db.QueryRowContext(ctx, query))
 }
 
 func (r *Repository) UpsertProviderPreset(ctx context.Context, preset ProviderPreset) error {
@@ -714,20 +730,65 @@ func (r *Repository) UpsertProviderPreset(ctx context.Context, preset ProviderPr
 
 	const query = `
 INSERT INTO agent_provider_presets (
-    id, name, provider_type, base_url, api_key, models, default_model, enabled
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+    asr_enabled, asr_base_url, asr_model, is_default_asr, enabled
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     provider_type = EXCLUDED.provider_type,
     base_url = EXCLUDED.base_url,
     api_key = EXCLUDED.api_key,
+    text_enabled = EXCLUDED.text_enabled,
     models = EXCLUDED.models,
     default_model = EXCLUDED.default_model,
+    asr_enabled = EXCLUDED.asr_enabled,
+    asr_base_url = EXCLUDED.asr_base_url,
+    asr_model = EXCLUDED.asr_model,
+    is_default_asr = EXCLUDED.is_default_asr,
     enabled = EXCLUDED.enabled,
     updated_at = NOW()`
 
-	if _, err := r.db.ExecContext(ctx, query, preset.ID, preset.Name, preset.ProviderType, preset.BaseURL, preset.APIKey, models, preset.DefaultModel, preset.Enabled); err != nil {
+	executor := r.db
+	var tx *sql.Tx
+	if preset.IsDefaultASR {
+		starter, ok := r.db.(transactionStarter)
+		if !ok {
+			return fmt.Errorf("provider repository does not support transactions")
+		}
+		tx, err = starter.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin provider preset transaction: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		executor = tx
+		if _, err := executor.ExecContext(ctx, `UPDATE agent_provider_presets SET is_default_asr = FALSE, updated_at = NOW() WHERE is_default_asr = TRUE AND id <> $1`, preset.ID); err != nil {
+			return fmt.Errorf("clear previous default ASR provider: %w", err)
+		}
+	}
+
+	if _, err := executor.ExecContext(
+		ctx,
+		query,
+		preset.ID,
+		preset.Name,
+		preset.ProviderType,
+		preset.BaseURL,
+		preset.APIKey,
+		preset.TextEnabled,
+		models,
+		preset.DefaultModel,
+		preset.ASREnabled,
+		preset.ASRBaseURL,
+		preset.ASRModel,
+		preset.IsDefaultASR,
+		preset.Enabled,
+	); err != nil {
 		return fmt.Errorf("upsert provider preset %q: %w", preset.ID, err)
+	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit provider preset transaction: %w", err)
+		}
 	}
 	return nil
 }
@@ -2107,8 +2168,13 @@ func scanProviderPreset(row rowScanner) (ProviderPreset, error) {
 		&item.ProviderType,
 		&item.BaseURL,
 		&item.APIKey,
+		&item.TextEnabled,
 		&models,
 		&item.DefaultModel,
+		&item.ASREnabled,
+		&item.ASRBaseURL,
+		&item.ASRModel,
+		&item.IsDefaultASR,
 		&item.Enabled,
 		&item.CreatedAt,
 		&item.UpdatedAt,

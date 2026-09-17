@@ -17,6 +17,7 @@ import {
   listSystemAgentConfigs,
   listUsers,
   resetUserPassword,
+  testProviderASR,
   updateInvitation,
   updateUser,
   updateDesktopDeviceStatus,
@@ -47,7 +48,7 @@ import {
 import { Icon } from '../components/Icon'
 
 type AdminTab = 'users' | 'invitations' | 'agents' | 'skills' | 'providerPresets' | 'usageLogs'
-type ProviderType = 'openai_compatible' | 'coze' | 'n8n' | 'webhook'
+type ProviderType = 'openai_compatible' | 'openrouter' | 'coze' | 'n8n' | 'webhook'
 
 interface AgentConfigForm {
   id: string
@@ -72,8 +73,13 @@ interface ProviderPresetForm {
   baseUrl: string
   apiKey: string
   apiKeyConfigured: boolean
+  textEnabled: boolean
   models: string
   defaultModel: string
+  asrEnabled: boolean
+  asrBaseUrl: string
+  asrModel: string
+  isDefaultASR: boolean
   enabled: boolean
 }
 
@@ -130,6 +136,7 @@ const defaultRiskLabels = ['低', '中', '高']
 
 const providerOptions: Array<{ value: ProviderType; label: string }> = [
   { value: 'openai_compatible', label: 'OpenAI-compatible' },
+  { value: 'openrouter', label: 'OpenRouter（语音转写）' },
   { value: 'coze', label: 'Coze' },
   { value: 'n8n', label: 'n8n' },
   { value: 'webhook', label: 'Webhook' },
@@ -515,6 +522,11 @@ type MockProvider = {
   apiKey: string
   models: string[]
   defaultModel: string
+  textEnabled: boolean
+  asrEnabled: boolean
+  asrBaseUrl: string
+  asrModel: string
+  isDefaultASR: boolean
   enabled: boolean
 }
 
@@ -544,8 +556,9 @@ const mockSkills: MockSkill[] = [
 ]
 
 const mockProviders: MockProvider[] = [
-  { id: 'provider-1', name: 'siliconflow', type: 'OpenAI-compatible', baseUrl: 'https://api.siliconflow.cn/v1', apiKey: 'sk-demo-siliconflow', models: ['Qwen/Qwen3-32B', 'deepseek-ai/DeepSeek-V3', 'THUDM/GLM-4.5'], defaultModel: 'Qwen/Qwen3-32B', enabled: true },
-  { id: 'provider-2', name: 'uini vibe', type: 'OpenAI-compatible', baseUrl: 'https://api.uini.example/v1', apiKey: 'sk-demo-uini', models: ['gpt-5.5', 'gpt-4.1-mini'], defaultModel: 'gpt-5.5', enabled: true },
+  { id: 'provider-1', name: 'siliconflow', type: 'OpenAI-compatible', baseUrl: 'https://api.siliconflow.cn/v1', apiKey: 'sk-demo-siliconflow', models: ['Qwen/Qwen3-32B', 'deepseek-ai/DeepSeek-V3', 'THUDM/GLM-4.5'], defaultModel: 'Qwen/Qwen3-32B', textEnabled: true, asrEnabled: false, asrBaseUrl: '', asrModel: '', isDefaultASR: false, enabled: true },
+  { id: 'provider-2', name: 'uini vibe', type: 'OpenAI-compatible', baseUrl: 'https://api.uini.example/v1', apiKey: 'sk-demo-uini', models: ['gpt-5.5', 'gpt-4.1-mini'], defaultModel: 'gpt-5.5', textEnabled: true, asrEnabled: false, asrBaseUrl: '', asrModel: '', isDefaultASR: false, enabled: true },
+  { id: 'provider-3', name: 'global asr', type: 'OpenAI-compatible', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-demo-asr', models: [], defaultModel: '', textEnabled: false, asrEnabled: true, asrBaseUrl: '', asrModel: 'gpt-4o-transcribe', isDefaultASR: true, enabled: true },
 ]
 
 function AdminMockPage() {
@@ -636,11 +649,31 @@ function MockSkillsPanel({ skills, setSkills, onNotify }: { skills: MockSkill[];
 
 function MockProvidersPanel({ providers, setProviders, onNotify }: { providers: MockProvider[]; setProviders: (items: MockProvider[]) => void; onNotify: (message: string) => void }) {
   const [draft, setDraft] = useState<MockProvider>()
-  const openCreate = () => setDraft({ id: '', name: '', type: 'OpenAI-compatible', baseUrl: '', apiKey: '', models: [], defaultModel: '', enabled: true })
+  const openCreate = () => setDraft({ id: '', name: '', type: 'OpenAI-compatible', baseUrl: '', apiKey: '', models: [], defaultModel: '', textEnabled: true, asrEnabled: false, asrBaseUrl: '', asrModel: '', isDefaultASR: false, enabled: true })
   const openEdit = (provider: MockProvider) => setDraft({ ...provider, models: [...provider.models] })
   function detectModels() { if (!draft) return; const models = draft.models.length ? draft.models : ['gpt-5.5', 'gpt-4.1-mini']; setDraft({ ...draft, models, defaultModel: draft.defaultModel || models[0] }); onNotify('已检测到可用模型（mock）') }
   function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!draft) return; const next = draft.id ? providers.map((item) => item.id === draft.id ? draft : item) : [{ ...draft, id: `mock-${Date.now()}`, name: draft.name || '新 Provider' }, ...providers]; setProviders(next); setDraft(undefined); onNotify(draft.id ? 'Provider 已更新（mock）' : 'Provider 已创建（mock）') }
-  return <><MockAdminListShell eyebrow="Provider / Model" title="Provider 预设" count={`${providers.length} 个 Provider`} createLabel="新建 Provider" onCreate={openCreate}>{providers.map((provider) => <article className="admin-mock-record" key={provider.id} onDoubleClick={() => openEdit(provider)}><div className="admin-mock-record-main"><span className="admin-mock-record-icon"><Icon name="key" /></span><div><strong>{provider.name}</strong><span>{provider.type} · {provider.baseUrl}</span><em className={provider.enabled ? 'active' : ''}>{provider.enabled ? '已启用' : '未启用'} · 默认 {provider.defaultModel || '未选择'}</em></div></div><div className="admin-mock-record-meta"><span>{provider.models.length} 个可用模型</span><small>API Key 已配置</small></div><button className="secondary-button" type="button" onClick={() => openEdit(provider)}><Icon name="edit" />编辑</button></article>)}</MockAdminListShell>{draft ? <MockModal title={draft.id ? '编辑 Provider' : '新建 Provider'} eyebrow="Provider 配置" onClose={() => setDraft(undefined)}><form className="form-grid" onSubmit={save}><div className="mock-two-columns"><label className="field"><span>预设名称</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} required /></label><label className="field"><span>Provider 类型</span><select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}><option>OpenAI-compatible</option><option>Coze</option><option>n8n</option><option>Webhook</option></select></label></div><label className="field"><span>Base URL / API 地址</span><input value={draft.baseUrl} onChange={(e) => setDraft({ ...draft, baseUrl: e.target.value })} placeholder="https://api.example.com/v1" required /></label><label className="field"><span>API Key</span><input type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} placeholder="请输入 API Key" required /></label><div className="mock-model-detect"><div><strong>可用模型</strong><span>{draft.models.length ? `${draft.models.length} 个模型已检测` : '尚未检测模型'}</span></div><button className="secondary-button" type="button" onClick={detectModels}><Icon name="search" />检测可用模型</button></div>{draft.models.length ? <div className="mock-model-list">{draft.models.map((model) => <span key={model}>{model}</span>)}</div> : null}<div className="mock-two-columns"><label className="field"><span>默认模型</span><select value={draft.defaultModel} onChange={(e) => setDraft({ ...draft, defaultModel: e.target.value })} disabled={!draft.models.length}><option value="">请先检测模型</option>{draft.models.map((model) => <option key={model}>{model}</option>)}</select></label><label className="mock-toggle mock-toggle-box"><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />允许智能体使用</label></div><footer className="admin-mock-modal-footer"><button className="secondary-button" type="button" onClick={() => setDraft(undefined)}>取消</button><button className="primary-button" type="submit"><Icon name="save" />保存 Provider</button></footer></form></MockModal> : null}</>
+  return <>
+    <MockAdminListShell eyebrow="Provider / Model" title="Provider 预设" count={`${providers.length} 个 Provider`} createLabel="新建 Provider" onCreate={openCreate}>
+      {providers.map((provider) => <article className="admin-mock-record" key={provider.id} onDoubleClick={() => openEdit(provider)}>
+        <div className="admin-mock-record-main"><span className="admin-mock-record-icon"><Icon name="key" /></span><div><strong>{provider.name}</strong><span>{provider.type} · {provider.baseUrl}</span><em className={provider.enabled ? 'active' : ''}>{provider.enabled ? '已启用' : '未启用'} · {provider.textEnabled ? '文本模型' : '语音转写'}</em></div></div>
+        <div className="admin-mock-record-meta"><span>{provider.textEnabled ? `${provider.models.length} 个文本模型` : '未启用文本模型'}</span><small>{provider.asrEnabled ? `${provider.asrModel}${provider.isDefaultASR ? ' · 默认转写' : ''}` : '未启用 ASR'}</small></div>
+        <button className="secondary-button" type="button" onClick={() => openEdit(provider)}><Icon name="edit" />编辑</button>
+      </article>)}
+    </MockAdminListShell>
+    {draft ? <MockModal title={draft.id ? '编辑 Provider' : '新建 Provider'} eyebrow="Provider 配置" onClose={() => setDraft(undefined)}>
+      <form className="form-grid" onSubmit={save}>
+        <div className="mock-two-columns"><label className="field"><span>预设名称</span><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} required /></label><label className="field"><span>Provider 类型</span><select value={draft.type} onChange={(event) => setDraft((current) => current ? event.target.value === 'OpenRouter' ? { ...current, type: 'OpenRouter', name: current.name || 'OpenRouter ASR', baseUrl: 'https://openrouter.ai/api/v1', textEnabled: false, asrEnabled: true, asrModel: 'google/gemini-2.5-flash-lite', isDefaultASR: true } : { ...current, type: event.target.value } : current)}><option>OpenAI-compatible</option><option>OpenRouter</option><option>Coze</option><option>n8n</option><option>Webhook</option></select></label></div>
+        <label className="field"><span>Base URL / API 地址</span><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" required /></label>
+        <label className="field"><span>API Key</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder="请输入 API Key" required /></label>
+        <div className="mock-two-columns" role="radiogroup" aria-label="Provider 用途"><label className="mock-toggle mock-toggle-box"><input type="radio" name="mock-provider-capability" checked={draft.textEnabled} disabled={draft.type === 'OpenRouter'} onChange={() => setDraft({ ...draft, textEnabled: true, asrEnabled: false, isDefaultASR: false })} />文本模型</label><label className="mock-toggle mock-toggle-box"><input type="radio" name="mock-provider-capability" checked={draft.asrEnabled} onChange={() => setDraft({ ...draft, textEnabled: false, asrEnabled: true })} />语音转写（ASR）</label></div>
+        {draft.textEnabled ? <><div className="mock-model-detect"><div><strong>可用模型</strong><span>{draft.models.length ? `${draft.models.length} 个模型已检测` : '尚未检测模型'}</span></div><button className="secondary-button" type="button" onClick={detectModels}><Icon name="search" />检测可用模型</button></div>{draft.models.length ? <div className="mock-model-list">{draft.models.map((model) => <span key={model}>{model}</span>)}</div> : null}<label className="field"><span>默认文本模型</span><select value={draft.defaultModel} onChange={(event) => setDraft({ ...draft, defaultModel: event.target.value })} disabled={!draft.models.length}><option value="">请先检测模型</option>{draft.models.map((model) => <option key={model}>{model}</option>)}</select></label></> : null}
+        {draft.asrEnabled ? <section className="provider-asr-section"><div className="admin-form-section-title"><strong>语音转写</strong><span>自动识别语种，不使用智能体提示词</span></div>{draft.type !== 'OpenRouter' ? <label className="field"><span>ASR API 地址（可选）</span><input value={draft.asrBaseUrl} onChange={(event) => setDraft({ ...draft, asrBaseUrl: event.target.value })} placeholder="留空时使用上方 Base URL" /></label> : null}<div className="mock-two-columns"><label className="field"><span>ASR 模型</span>{draft.type === 'OpenRouter' ? <select value={draft.asrModel} onChange={(event) => setDraft({ ...draft, asrModel: event.target.value })}><option value="google/gemini-2.5-flash-lite">Gemini 2.5 Flash Lite（测试推荐）</option><option value="google/gemini-2.5-flash">Gemini 2.5 Flash（更高精度）</option></select> : <input value={draft.asrModel} onChange={(event) => setDraft({ ...draft, asrModel: event.target.value })} placeholder="例如：whisper-1" />}</label><label className="mock-toggle mock-toggle-box"><input type="checkbox" checked={draft.isDefaultASR} onChange={(event) => setDraft({ ...draft, isDefaultASR: event.target.checked })} />设为默认语音转写 Provider</label></div></section> : null}
+        <label className="mock-toggle"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />启用当前 Provider</label>
+        <footer className="admin-mock-modal-footer"><button className="secondary-button" type="button" onClick={() => setDraft(undefined)}>取消</button><button className="primary-button" type="submit"><Icon name="save" />保存 Provider</button></footer>
+      </form>
+    </MockModal> : null}
+  </>
 }
 
 function DesktopGrantEditor({
@@ -1734,6 +1767,8 @@ function ProviderPresetPanel() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [discovering, setDiscovering] = useState(false)
+  const [testingASR, setTestingASR] = useState(false)
+  const [asrTestResult, setASRTestResult] = useState<string>()
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const selected = useMemo(() => presets.find((item) => item.id === selectedId), [presets, selectedId])
@@ -1744,6 +1779,7 @@ function ProviderPresetPanel() {
 
   useEffect(() => {
     setForm(selected ? mapProviderPresetToForm(selected) : createDefaultProviderPresetForm())
+	setASRTestResult(undefined)
   }, [selected, selectedId])
 
   async function load() {
@@ -1768,8 +1804,18 @@ function ProviderPresetPanel() {
     setError(undefined)
     setNotice(undefined)
     const models = parsePresetModels(form.models)
-    if (!form.name.trim() || !models.length && form.providerType === 'openai_compatible') {
-      setError(form.name.trim() ? 'OpenAI-compatible 预设至少需要一个模型' : '预设名称不能为空')
+    if (!form.name.trim() || form.textEnabled === form.asrEnabled) {
+      setError(form.name.trim() ? 'Provider 必须且只能选择文本模型或语音转写能力' : '预设名称不能为空')
+	  setSaving(false)
+	  return
+	}
+	if (form.textEnabled && form.providerType === 'openai_compatible' && !models.length) {
+	  setError('启用文本模型时至少需要一个可用模型')
+	  setSaving(false)
+	  return
+	}
+	if (form.asrEnabled && !form.asrModel.trim()) {
+	  setError('启用语音转写时必须填写 ASR 模型')
       setSaving(false)
       return
     }
@@ -1780,8 +1826,13 @@ function ProviderPresetPanel() {
         provider_type: form.providerType,
         base_url: form.baseUrl.trim(),
         api_key: form.apiKey.trim() || undefined,
+		text_enabled: form.textEnabled,
         models,
         default_model: form.defaultModel.trim(),
+		asr_enabled: form.asrEnabled,
+		asr_base_url: form.asrBaseUrl.trim() || undefined,
+		asr_model: form.asrModel.trim() || undefined,
+		is_default_asr: form.asrEnabled && form.isDefaultASR,
         enabled: form.enabled,
       })
       setPresets((current) => [...current.filter((item) => item.id !== response.preset.id), response.preset])
@@ -1793,6 +1844,33 @@ function ProviderPresetPanel() {
     } finally {
       setSaving(false)
     }
+  }
+
+  function handleProviderTypeChange(providerType: ProviderType) {
+    setForm((current) => {
+      if (providerType === 'openrouter') {
+        return {
+          ...current,
+          providerType,
+          name: current.name || 'OpenRouter ASR',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          textEnabled: false,
+          asrEnabled: true,
+          asrBaseUrl: '',
+          asrModel: current.providerType === 'openrouter' && current.asrModel ? current.asrModel : 'google/gemini-2.5-flash-lite',
+          isDefaultASR: true,
+        }
+      }
+      return {
+        ...current,
+        providerType,
+        baseUrl: current.providerType === 'openrouter' ? '' : current.baseUrl,
+        textEnabled: current.providerType === 'openrouter' ? true : current.textEnabled,
+        asrEnabled: current.providerType === 'openrouter' ? false : current.asrEnabled,
+        asrModel: current.providerType === 'openrouter' ? '' : current.asrModel,
+        isDefaultASR: current.providerType === 'openrouter' ? false : current.isDefaultASR,
+      }
+    })
   }
 
   async function handleDiscoverModels() {
@@ -1834,6 +1912,22 @@ function ProviderPresetPanel() {
     }
   }
 
+  async function handleTestASR(file?: File) {
+	if (!file || testingASR || !selected?.id) return
+	setTestingASR(true)
+	setError(undefined)
+	setASRTestResult(undefined)
+	try {
+	  const response = await testProviderASR(selected.id, file)
+	  setASRTestResult(response.transcription.text)
+	  setNotice(`语音转写测试成功 · ${response.transcription.model}`)
+	} catch (testError) {
+	  setError(testError instanceof Error ? testError.message : '语音转写测试失败')
+	} finally {
+	  setTestingASR(false)
+	}
+  }
+
   async function handleDelete() {
     if (!selected || saving || !window.confirm(`确认删除 Provider「${selected.name}」？`)) return
     setSaving(true)
@@ -1857,7 +1951,7 @@ function ProviderPresetPanel() {
         <aside className="admin-record-list-inner">
           <div className="admin-list-caption"><strong>已保存 Provider</strong><span>点击项目编辑连接信息、模型和启用状态</span></div>
           <div className="system-agent-list">
-            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary provider-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="admin-record-summary-main"><strong>{preset.name}</strong><span>{preset.provider_type} · {preset.base_url}</span></span><span className="admin-record-summary-meta"><span>{preset.enabled ? '已启用' : '已停用'}</span><small>{preset.models.length} 个模型 · 默认 {preset.default_model || '未选择'}</small></span><span className="admin-record-summary-arrow"><Icon name="chevronRight" /></span></button>)}
+            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary provider-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="admin-record-summary-main"><strong>{preset.name}</strong><span>{preset.provider_type === 'openrouter' ? 'OpenRouter' : preset.provider_type} · {preset.base_url}</span></span><span className="admin-record-summary-meta"><span>{preset.enabled ? '已启用' : '已停用'} · {preset.text_enabled ? '文本模型' : '语音转写'}</span><small>{preset.text_enabled ? `${preset.models.length} 个模型 · 默认 ${preset.default_model || '未选择'}` : `ASR · ${preset.asr_model || '未配置'}`}{preset.is_default_asr ? ' · 默认转写' : ''}</small></span><span className="admin-record-summary-arrow"><Icon name="chevronRight" /></span></button>)}
             {!presets.length ? <div className="system-agent-empty">还没有 Provider 配置</div> : null}
           </div>
         </aside>
@@ -1868,11 +1962,16 @@ function ProviderPresetPanel() {
               <div className="admin-form-section-title"><strong>连接信息</strong><span>智能体直接使用这里保存的密钥和模型</span></div>
               <div className="two-column-grid">
                 <label className="field"><span>预设名称</span><input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：OpenAI 主账号" /></label>
-                <label className="field"><span>Provider 类型</span><select value={form.providerType} onChange={(event) => setForm((current) => ({ ...current, providerType: event.target.value as ProviderType }))}>{providerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <label className="field"><span>Provider 类型</span><select value={form.providerType} onChange={(event) => handleProviderTypeChange(event.target.value as ProviderType)}>{providerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
               </div>
               <label className="field"><span>Base URL / API 地址</span><input value={form.baseUrl} onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></label>
               <label className="field"><span>API Key</span><input type="password" value={form.apiKey} onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))} placeholder={form.apiKeyConfigured ? '已配置，留空保持不变' : '请输入 API Key'} /></label>
-              <div className="provider-model-toolbar">
+			  <div className="two-column-grid" role="radiogroup" aria-label="Provider 用途">
+				<label className="checkbox-row agent-thinking-row"><input type="radio" name="provider-capability" checked={form.textEnabled} disabled={form.providerType === 'openrouter'} onChange={() => setForm((current) => ({ ...current, textEnabled: true, asrEnabled: false, isDefaultASR: false }))} /><span>文本模型</span></label>
+				<label className="checkbox-row agent-thinking-row"><input type="radio" name="provider-capability" checked={form.asrEnabled} onChange={() => setForm((current) => ({ ...current, textEnabled: false, asrEnabled: true }))} /><span>语音转写（ASR）</span></label>
+			  </div>
+			  {form.textEnabled ? <>
+			  <div className="provider-model-toolbar">
                 <div>
                   <span className="admin-control-label">可用模型</span>
                   <small>{parsePresetModels(form.models).length ? `已保存 ${parsePresetModels(form.models).length} 个模型` : '尚未检测模型'}</small>
@@ -1881,7 +1980,19 @@ function ProviderPresetPanel() {
                   <Icon name="search" />{discovering ? '检测中...' : '检测可用模型'}
                 </button>
               </div>
-              <div className="two-column-grid"><label className="field"><span>默认模型</span><select value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.models).map((model) => <option key={model} value={model}>{model}</option>)}</select></label><label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>允许智能体使用</span></label></div>
+			  <label className="field"><span>默认文本模型</span><select value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.models).map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+			  </> : null}
+			  {form.asrEnabled ? <section className="provider-asr-section">
+				<div className="admin-form-section-title"><strong>语音转写</strong><span>自动识别语种，不使用智能体提示词</span></div>
+				{form.providerType !== 'openrouter' ? <label className="field"><span>ASR API 地址（可选）</span><input value={form.asrBaseUrl} onChange={(event) => setForm((current) => ({ ...current, asrBaseUrl: event.target.value }))} placeholder="留空时使用上方 Base URL；也可填写完整 /audio/transcriptions 地址" /></label> : null}
+				<div className="two-column-grid">
+				  <label className="field"><span>ASR 模型</span>{form.providerType === 'openrouter' ? <select value={form.asrModel} onChange={(event) => setForm((current) => ({ ...current, asrModel: event.target.value }))}><option value="google/gemini-2.5-flash-lite">Gemini 2.5 Flash Lite（测试推荐）</option><option value="google/gemini-2.5-flash">Gemini 2.5 Flash（更高精度）</option></select> : <input value={form.asrModel} onChange={(event) => setForm((current) => ({ ...current, asrModel: event.target.value }))} placeholder="例如：whisper-1" />}</label>
+				  <label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.isDefaultASR} onChange={(event) => setForm((current) => ({ ...current, isDefaultASR: event.target.checked }))} /><span>设为默认语音转写 Provider</span></label>
+				</div>
+				{selected ? <div className="provider-model-toolbar"><div><span className="admin-control-label">测试语音转写</span><small>上传一段音频验证 API、模型和返回文本</small></div><label className={`secondary-button${testingASR ? ' disabled' : ''}`}><Icon name="audio" />{testingASR ? '转写中...' : '选择音频测试'}<input className="visually-hidden" type="file" accept="audio/*" disabled={testingASR} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; void handleTestASR(file) }} /></label></div> : <small className="muted">保存 Provider 后可以上传音频测试。</small>}
+				{asrTestResult ? <div className="provider-asr-test-result"><strong>转写结果</strong><p>{asrTestResult}</p></div> : null}
+			  </section> : null}
+			  <label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用当前 Provider</span></label>
             </section>
           </div>
           <div className="admin-agent-actions">{notice ? <div className="success-banner">{notice}</div> : null}{error ? <div className="error-banner">{error}</div> : null}<div className="button-row"><button className="primary-button" type="submit" disabled={saving}><Icon name="save" />{saving ? '保存中...' : '保存 Provider'}</button>{selected ? <button className="danger-button" type="button" onClick={() => void handleDelete()} disabled={saving}><Icon name="delete" />删除 Provider</button> : null}</div></div>
@@ -1893,11 +2004,12 @@ function ProviderPresetPanel() {
 }
 
 function createDefaultProviderPresetForm(): ProviderPresetForm {
-  return { id: '', name: '', providerType: 'openai_compatible', baseUrl: '', apiKey: '', apiKeyConfigured: false, models: '', defaultModel: '', enabled: true }
+  return { id: '', name: '', providerType: 'openai_compatible', baseUrl: '', apiKey: '', apiKeyConfigured: false, textEnabled: true, models: '', defaultModel: '', asrEnabled: false, asrBaseUrl: '', asrModel: '', isDefaultASR: false, enabled: true }
 }
 
 function mapProviderPresetToForm(preset: ProviderPresetView): ProviderPresetForm {
-  return { id: preset.id, name: preset.name, providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, apiKey: '', apiKeyConfigured: preset.api_key_configured, models: preset.models.join('\n'), defaultModel: preset.default_model, enabled: preset.enabled }
+  const asrEnabled = preset.asr_enabled
+  return { id: preset.id, name: preset.name, providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, apiKey: '', apiKeyConfigured: preset.api_key_configured, textEnabled: !asrEnabled, models: preset.models.join('\n'), defaultModel: preset.default_model, asrEnabled, asrBaseUrl: preset.asr_base_url, asrModel: preset.asr_model, isDefaultASR: preset.is_default_asr, enabled: preset.enabled }
 }
 
 function parsePresetModels(value: string) {
@@ -2223,7 +2335,7 @@ function SystemAgentPanel() {
                   <option value="">请选择 Provider</option>
                   {providerPresets
                     .filter((preset) => preset.enabled || preset.id === form.providerPresetId)
-                    .filter((preset) => purpose !== 'translation' || preset.provider_type === 'openai_compatible')
+                    .filter((preset) => preset.text_enabled && (purpose !== 'translation' || preset.provider_type === 'openai_compatible'))
                     .map((preset) => (
                     <option key={preset.id} value={preset.id}>{preset.name}</option>
                   ))}
@@ -2711,6 +2823,10 @@ function parseLabelTextarea(value: string) {
 
 function normalizeProviderType(value: string): ProviderType {
   switch (value.trim().toLowerCase()) {
+    case 'openrouter':
+    case 'open_router':
+    case 'open-router':
+      return 'openrouter'
     case 'coze':
       return 'coze'
     case 'n8n':

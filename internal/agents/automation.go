@@ -1595,6 +1595,9 @@ func (a *Automation) resolveProviderPreset(ctx context.Context, config map[strin
 	if !preset.Enabled {
 		return nil, fmt.Errorf("provider preset %q is disabled", preset.Name)
 	}
+	if !preset.TextEnabled {
+		return nil, fmt.Errorf("provider preset %q does not enable text models", preset.Name)
+	}
 	if preset.ProviderType == "openai_compatible" && strings.TrimSpace(preset.APIKey) == "" {
 		return nil, fmt.Errorf("provider preset %q has no API key; configure it in admin backend", preset.Name)
 	}

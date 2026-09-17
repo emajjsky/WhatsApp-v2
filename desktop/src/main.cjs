@@ -68,6 +68,10 @@ function runtimeRoot() {
   return path.join(resourcesRoot(), 'runtime')
 }
 
+function ffmpegExecutablePath() {
+  return path.join(runtimeRoot(), 'ffmpeg', 'ffmpeg.exe')
+}
+
 function userDesktopConfigPath() {
   return path.join(userDataRoot(), 'desktop-config.json')
 }
@@ -996,6 +1000,7 @@ async function startAPI() {
   const configuredProxyURL = configString(config, 'whatsAppProxyUrl', 'whatsappProxyUrl', 'whatsAppProxyURL', 'proxyUrl')
   const whatsAppProxyURL = process.env.WHATSAPP_PROXY_URL || (proxyMode === 'manual' ? configuredProxyURL : '')
   const apiExe = requiredFile(path.join(runtimeRoot(), 'api', 'api-server.exe'), '本地 API 服务')
+  const ffmpegExe = requiredFile(ffmpegExecutablePath(), '语音消息转换器')
   ensureDir(dataRoot())
   apiProcess = spawnManaged('api-server', apiExe, [], {
     cwd: userDataRoot(),
@@ -1023,6 +1028,7 @@ async function startAPI() {
       WHATSAPP_PROXY_URL: whatsAppProxyURL,
       SYSTEM_PROXY_PROVIDER_URL: `http://127.0.0.1:${WEB_PORT}/desktop/runtime-proxy`,
       LOCAL_PROXY_CREDENTIAL_KEY: localProxyCredentialKey(),
+      FFMPEG_PATH: ffmpegExe,
       WA_DESKTOP_DEVICE_ID: identity.deviceID,
       WA_DESKTOP_DEVICE_NAME: identity.deviceName,
       WA_DESKTOP_APP_VERSION: app.getVersion(),

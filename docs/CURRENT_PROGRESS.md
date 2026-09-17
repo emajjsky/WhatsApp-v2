@@ -42,6 +42,7 @@
 - 新增会话工作区：支持会话备注、置顶、归档、标记未读、标签筛选和标签绑定。
 - 对话页补充复制消息、引用回复和进入会话时的真实已读回执；引用会通过 WhatsApp 扩展文本的 `stanza_id` 发送。
 - 管理后台新增 `Provider 配置`：管理员统一维护 Provider 类型、Base URL 和 API Key，自动检测可用模型并选择默认模型。
+- Provider 配置在文本模型 / ASR 用途之间单选：ASR 支持 OpenAI-compatible 和 OpenRouter；选择 OpenRouter 后自动填写接口与测试推荐模型，用户只需填写 API Key，并可上传音频验证连接。
 - 智能体编辑器只选择 Provider 和对应模型；API Key 不再重复保存在智能体配置中，返回前端时只提供“已配置”状态。
 - 联系人、会话标签和 Provider 分别由迁移 `0025_contact_and_chat_workspace.sql`、`0026_provider_presets.sql` 和 `0028_provider_preset_api_key.sql` 创建或扩展。
 - 打包版启动前会拒绝包含中文或其他非 ASCII 字符的安装目录，并提示重新安装到纯英文路径；用户数据目录不受影响。
@@ -269,7 +270,7 @@ deploy/migrations/0017_chat_status_cards_cloud_agents.sql
 - 桌面端使用云端回复 Agent 绑定的 Skill / 话术包。
 - 桌面端使用云端配置的翻译 Agent。
 - 桌面端使用云端配置的状态卡 Agent。
-- Windows 已发布安装包当前为 `0.1.49`。本版本已包含 Provider 统一配置、模型自动检测、默认模型选择与智能体配置简化；云端 API 和客户端内置页面需保持同版本部署。
+- Windows 已发布安装包当前为 `0.1.63`。本版本已包含 Provider 统一配置、OpenRouter ASR、语音转录与翻译、消息操作和联系人详情；云端 API 和客户端内置页面需保持同版本部署。
 
 ## 0.1.28 启动稳定性修复
 
@@ -355,6 +356,20 @@ docker compose -f deploy/docker/docker-compose.electron-cloud.yml up -d --build
 docker compose -f deploy/docker/docker-compose.electron-cloud.yml ps
 curl http://127.0.0.1:8088/healthz
 ```
+
+## 会话兼容与媒体补全（待发布）
+
+- 对话页账号来源限定为 `connected` / `reconnecting`，退出或凭据失效的账号不再残留在账号选择器中。
+- WhatsApp 发送、上传遇到 `401/not-authorized` 时，账号切换为 `logged_out`，清除设备绑定、whatsmeow Store 和内存会话；断线及晚到事件不能覆盖该状态。
+- 语音录音在本机通过随客户端打包的 FFmpeg 转为单声道 48kHz OGG Opus，并按 PTT 消息发送；接收端使用自定义波形播放器。
+- 接收端语音支持自动语种 ASR 转录和中文翻译；ASR 不依赖提示词，原文及中文译文分别展示并缓存，右键菜单也提供转录入口。
+- 引用回复保存并返回原消息摘要，协议层携带完整 `ContextInfo`，前端引用块支持跳回原消息并限制长文本溢出。
+- 联系人名片支持在当前 WhatsApp 账号下创建或打开真实单聊；会话列表补充国际号码，已知一对一会话会异步同步头像。
+- 消息悬浮操作调整为双方均可回应、仅自己发送的消息显示快捷转发；媒体右键菜单按实际能力显示另存为、分享和打开方式。
+- 联系人详情调整为右侧独立抽屉，包含头像、号码、搜索、媒体、星标、通知、特别关注、列表、备注和本地清理操作。
+- 已通过 Go 全量测试、前端 lint/build、桌面入口语法检查、临时 PostgreSQL 接口实测，以及 `1440x900`、客户端最小窗口 `1180x760` 视觉检查。
+- 已移除 GPL `ffmpeg-static` npm 依赖，改为固定版本且强制校验的 FFmpeg LGPL v3 shared Windows 构建；可执行文件、动态库、LGPL/GPL 文本、构建参数和精确源码地址随安装包分发。
+- 本轮改动按 `0.1.63` 发布。
 
 ## 下一步建议
 

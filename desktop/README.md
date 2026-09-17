@@ -8,6 +8,7 @@ This folder builds the Windows desktop installer. The installer bundles:
 - Python embeddable runtime for `agent_runner`
 - PostgreSQL Windows binaries for local storage
 - Microsoft Visual C++ 2015-2022 x64 runtime required by PostgreSQL
+- A pinned FFmpeg LGPL v3 shared runtime for OGG Opus voice conversion
 
 Users do not need Docker, PostgreSQL, Go, Node.js, or Python installed.
 
@@ -16,9 +17,9 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.62`.
+Current packaging version: `0.1.63`.
 
-## 0.1.62 WhatsApp message actions and voice messages
+## 0.1.63 WhatsApp message actions, voice messages, and ASR
 
 - Add WhatsApp protocol-backed reactions, replies, forwarding, editing,
   starring, delete-for-everyone, polls, contact cards, GIF files, and WebP
@@ -118,6 +119,12 @@ Run from `desktop/`:
 npm install
 npm run dist:win
 ```
+
+`prepare:ffmpeg` downloads the pinned Windows x64 LGPL shared archive, verifies
+its SHA-256 digest, license declaration, dynamic linkage, exact version, and
+libopus encoder before copying only `ffmpeg.exe`, its DLLs, and compliance
+documents into `desktop/runtime/ffmpeg/`. The bundled third-party notice records
+the exact FFmpeg and build-script source revisions.
 
 The installer is written to `desktop/release/`.
 

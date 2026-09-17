@@ -56,6 +56,13 @@ type SendResult struct {
 	SentAt      time.Time
 }
 
+type SendReplyContext struct {
+	WAMessageID string
+	SenderJID   string
+	MessageType string
+	Text        string
+}
+
 type SendMediaInput struct {
 	MediaType       ingest.MediaType
 	FileName        string
@@ -532,6 +539,16 @@ func (m *Manager) SendText(ctx context.Context, accountID, chatJID, text string,
 	}
 
 	return sender.SendText(ctx, accountID, chatJID, text, replyTo...)
+}
+
+func (m *Manager) SendReplyText(ctx context.Context, accountID, chatJID, text string, reply SendReplyContext) (SendResult, error) {
+	sender, ok := m.connector.(interface {
+		SendReplyText(context.Context, string, string, string, SendReplyContext) (SendResult, error)
+	})
+	if !ok {
+		return SendResult{}, fmt.Errorf("session connector does not support quoted replies")
+	}
+	return sender.SendReplyText(ctx, accountID, chatJID, text, reply)
 }
 
 func (m *Manager) SendMedia(ctx context.Context, accountID, chatJID string, input SendMediaInput) (SendResult, error) {

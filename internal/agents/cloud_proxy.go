@@ -155,6 +155,26 @@ func (p *CloudProxy) HandleTranslateText(w http.ResponseWriter, r *http.Request)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"translation": response.Translation})
 }
 
+func (p *CloudProxy) HandleAudioTranscription(w http.ResponseWriter, r *http.Request, adminTest bool) {
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 26<<20)
+	route := "/api/desktop/audio-transcriptions"
+	if adminTest {
+		route = "/api/admin/provider-presets/test-asr"
+	}
+	req, err := p.newCloudRequest(r.Context(), r, http.MethodPost, route, r.Body)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+	req.Header.Set("Accept", "application/json")
+	p.forwardCloudResponse(w, req, "call cloud audio transcription")
+}
+
 func (p *CloudProxy) HandleStatusCard(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		ChatID              string `json:"chat_id"`
