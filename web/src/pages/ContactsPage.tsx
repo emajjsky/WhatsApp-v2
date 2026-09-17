@@ -29,14 +29,35 @@ export function ContactsPage() {
     [contacts, selectedId],
   )
 
+  const connectedAccounts = useMemo(
+    () => accounts.filter(isAccountConnected),
+    [accounts],
+  )
+
   useEffect(() => {
-    void listAccounts()
+    let cancelled = false
+    const loadAccounts = (background = false) => void listAccounts()
       .then((response) => {
+        if (cancelled) return
         const nextAccounts = Array.isArray(response.accounts) ? response.accounts : []
+        const nextConnectedAccounts = nextAccounts.filter(isAccountConnected)
         setAccounts(nextAccounts)
-        setAccountId(nextAccounts[0]?.id ?? '')
+        setAccountId((current) => nextConnectedAccounts.some((account) => account.id === current)
+          ? current
+          : nextConnectedAccounts[0]?.id ?? '')
       })
-      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : '加载账号失败'))
+      .catch((loadError) => {
+        if (!cancelled && !background) {
+          setError(loadError instanceof Error ? loadError.message : '加载账号失败')
+        }
+      })
+
+    loadAccounts()
+    const timer = window.setInterval(() => loadAccounts(true), 5000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [])
 
   const loadContacts = useCallback(async (background = false) => {
@@ -105,9 +126,11 @@ export function ContactsPage() {
       <section className="panel contacts-directory">
         <header className="contacts-toolbar">
           <div><p className="eyebrow">联系人</p><h2>{loading ? '同步中' : `${contacts.length} 位联系人`}</h2></div>
-          <select value={accountId} onChange={(event) => setAccountId(event.target.value)} aria-label="选择账号">
-            {accounts.map((account) => <option key={account.id} value={account.id}>{account.display_name}</option>)}
-          </select>
+          {connectedAccounts.length ? (
+            <select value={accountId} onChange={(event) => setAccountId(event.target.value)} aria-label="选择已连接账号">
+              {connectedAccounts.map((account) => <option key={account.id} value={account.id}>{account.display_name}</option>)}
+            </select>
+          ) : <span className="contacts-account-empty">暂无已连接账号</span>}
         </header>
 
         <label className="contacts-search">
@@ -182,4 +205,8 @@ function getContactDisplayName(chat: ChatSummary) {
 function getContactPreview(chat: ChatSummary) {
   if (chat.latest_message_type && chat.latest_message_type !== 'text') return `收到${chat.latest_message_type}消息`
   return '暂无文字消息'
+}
+
+function isAccountConnected(account: AccountView) {
+  return account.status === 'connected' || account.session?.status === 'connected'
 }

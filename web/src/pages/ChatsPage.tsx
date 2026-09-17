@@ -3,6 +3,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -158,6 +159,24 @@ type EmojiCategory = {
 
 type ComposerPickerMode = 'emoji' | 'gif' | 'sticker'
 
+type MediaLibraryTab = 'media' | 'documents' | 'links'
+
+type MediaLibraryAttachment = {
+  message: MessageView
+  attachment: MessageView['media'][number]
+}
+
+type MediaLibraryLink = {
+  message: MessageView
+  url: string
+}
+
+type MediaLibraryContent = {
+  media: MediaLibraryAttachment[]
+  documents: MediaLibraryAttachment[]
+  links: MediaLibraryLink[]
+}
+
 type ChatPrimaryFilter = 'all' | 'unread' | 'groups' | 'favorites'
 
 type StoredChatNavigation = {
@@ -301,6 +320,11 @@ export function ChatsPage() {
   const [chatMetadataBusy, setChatMetadataBusy] = useState(false)
   const [chatNote, setChatNote] = useState('')
   const [chatInfoOpen, setChatInfoOpen] = useState(false)
+  const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false)
+  const [mediaLibraryTab, setMediaLibraryTab] = useState<MediaLibraryTab>('media')
+  const [mediaLibraryMessages, setMediaLibraryMessages] = useState<MessageView[]>([])
+  const [mediaLibraryLoading, setMediaLibraryLoading] = useState(false)
+  const [mediaLibraryError, setMediaLibraryError] = useState<string>()
   const [contactEditorOpen, setContactEditorOpen] = useState(false)
   const [contactNameDraft, setContactNameDraft] = useState('')
   const [contactSaveBusy, setContactSaveBusy] = useState(false)
@@ -433,6 +457,7 @@ export function ChatsPage() {
   const keepTimelinePinnedRef = useRef(true)
   const pendingScrollModeRef = useRef<'bottom' | 'preserve' | 'none'>('bottom')
   const historyRequestSeqRef = useRef(0)
+  const mediaLibraryRequestSeqRef = useRef(0)
   const statusCardRequestSeqRef = useRef(0)
   const listCandidatesRequestSeqRef = useRef(0)
   const previousTimelineMetricsRef = useRef<
@@ -1167,6 +1192,11 @@ export function ChatsPage() {
     setMessageDialog(undefined)
     setSelectedMessageIds([])
     setChatInfoOpen(false)
+    mediaLibraryRequestSeqRef.current += 1
+    setMediaLibraryOpen(false)
+    setMediaLibraryMessages([])
+    setMediaLibraryLoading(false)
+    setMediaLibraryError(undefined)
     setStatusCardOpen(false)
   }, [emptyAssistantWorkspace, restoreAssistantWorkspace, selectedChatId])
 
@@ -2736,11 +2766,60 @@ export function ChatsPage() {
     })
   }
 
+  async function openMediaLibrary() {
+    if (!selectedChatId) return
+
+    const requestChatId = selectedChatId
+    const requestSeq = mediaLibraryRequestSeqRef.current + 1
+    mediaLibraryRequestSeqRef.current = requestSeq
+    const initialMessages = history?.chat.id === requestChatId ? history.messages : []
+    const seenCursors = new Set<string>()
+    let messages = mergeMessagesChronologically(initialMessages)
+    let before: string | undefined
+    let hasMore = true
+
+    setMediaLibraryOpen(true)
+    setMediaLibraryTab('media')
+    setMediaLibraryMessages(messages)
+    setMediaLibraryLoading(true)
+    setMediaLibraryError(undefined)
+
+    try {
+      while (hasMore) {
+        const response = await getChatMessages(requestChatId, { limit: 100, before })
+        if (mediaLibraryRequestSeqRef.current !== requestSeq || selectedChatId !== requestChatId) return
+
+        messages = mergeMessagesChronologically(messages, response.messages)
+        setMediaLibraryMessages(messages)
+
+        hasMore = Boolean(response.has_more && response.next_before && !seenCursors.has(response.next_before))
+        if (!hasMore || !response.next_before) break
+        seenCursors.add(response.next_before)
+        before = response.next_before
+      }
+    } catch (loadError) {
+      if (mediaLibraryRequestSeqRef.current === requestSeq) {
+        setMediaLibraryError(loadError instanceof Error ? loadError.message : '加载媒体记录失败')
+      }
+    } finally {
+      if (mediaLibraryRequestSeqRef.current === requestSeq) setMediaLibraryLoading(false)
+    }
+  }
+
   const activeStatusCardAgent = statusCardAgents[0]
   const chatAccounts = accounts.filter(isChatAccountAvailable)
   const selectedAccount = accounts.find((account) => account.id === selectedAccountId)
   const selectedChat = chats.find((item) => item.id === selectedChatId)
   const activeHistory = history && selectedChatId && history.chat.id === selectedChatId ? history : undefined
+  const mediaLibrary = useMemo(
+    () => buildMediaLibrary(mediaLibraryMessages),
+    [mediaLibraryMessages],
+  )
+  const chatInfoMediaContent = useMemo(
+    () => mediaLibraryMessages.length ? mediaLibrary : buildMediaLibrary(activeHistory?.messages ?? []),
+    [activeHistory?.messages, mediaLibrary, mediaLibraryMessages.length],
+  )
+  const chatInfoMediaCount = getMediaLibraryCount(chatInfoMediaContent)
   const hasSystemAssistantFallback = Boolean(activeHistory && selectedChat)
   const canGenerateAssistantDraft = Boolean(
     selectedChatId &&
@@ -3473,7 +3552,18 @@ export function ChatsPage() {
               ) : null}
 
               {chatInfoOpen ? (
-                <aside className="chat-info-drawer">
+                <aside className={`chat-info-drawer${mediaLibraryOpen ? ' media-library-drawer' : ''}`}>
+                  {mediaLibraryOpen ? (
+                    <ChatMediaLibrary
+                      content={mediaLibrary}
+                      activeTab={mediaLibraryTab}
+                      loading={mediaLibraryLoading}
+                      error={mediaLibraryError}
+                      onTab={setMediaLibraryTab}
+                      onBack={() => setMediaLibraryOpen(false)}
+                    />
+                  ) : (
+                    <>
                   <div className="chat-info-drawer-head">
                     <button type="button" onClick={() => setChatInfoOpen(false)} aria-label="关闭"><Icon name="close" /></button>
                     <strong>{selectedChat.chat_type === 'group' ? '群组信息' : '联系人信息'}</strong>
@@ -3495,8 +3585,8 @@ export function ChatsPage() {
                     </section>
                   ) : null}
                   <section className="chat-info-section chat-info-media-section">
-                    <button type="button" onClick={() => setComposeNoticeForChat(selectedChat.id, '完整媒体库将在媒体浏览模块中展示')}>
-                      <Icon name="image" /><span>影音内容、链接和文档</span><small>{activeHistory.messages.reduce((count, message) => count + message.media.length, 0)}</small><Icon name="chevronRight" />
+                    <button type="button" onClick={() => void openMediaLibrary()}>
+                      <Icon name="image" /><span>影音内容、链接和文档</span><small>{chatInfoMediaCount || ''}</small><Icon name="chevronRight" />
                     </button>
                     <div className="chat-info-media-preview">
                       {activeHistory.messages.flatMap((message) => message.media).filter((media) => media.download_status === 'ready' && (media.media_type === 'image' || media.media_type === 'sticker')).slice(-3).map((media) => <button type="button" key={media.id} onClick={() => window.open(getMediaAssetUrl(media.id), '_blank', 'noopener,noreferrer')}><img src={getMediaAssetUrl(media.id)} alt="" /></button>)}
@@ -3519,6 +3609,8 @@ export function ChatsPage() {
                     <button type="button" onClick={() => { setChatInfoOpen(false); setChatDestructiveDialog({ type: 'clear', chatId: selectedChat.id }) }}><Icon name="clear" /><span>清空聊天</span></button>
                     <button type="button" onClick={() => { setChatInfoOpen(false); setChatDestructiveDialog({ type: 'delete', chatId: selectedChat.id }) }}><Icon name="delete" /><span>删除聊天</span></button>
                   </section>
+                    </>
+                  )}
                 </aside>
               ) : null}
 
@@ -3660,12 +3752,12 @@ export function ChatsPage() {
                         <p className="message-fallback">{fallbackMessageCopy(message.message_type)}</p>
                       ) : null}
 
-                      {renderMessageTranslation(
+                      {message.message_type !== 'contact' ? renderMessageTranslation(
                         messageTranslations[getMessageTranslationKey(message)],
                         canOfferMessageTranslation(message) && translationAgentConfigured
                           ? () => void translateMessageToChinese(message)
                           : undefined,
-                      )}
+                      ) : null}
 
                       {reactionSummary.length ? (
                         <div className="message-reaction-summary" aria-label="消息回应">
@@ -4609,6 +4701,110 @@ function StatusMetric({
   )
 }
 
+function ChatMediaLibrary({
+  content,
+  activeTab,
+  loading,
+  error,
+  onTab,
+  onBack,
+}: {
+  content: MediaLibraryContent
+  activeTab: MediaLibraryTab
+  loading: boolean
+  error?: string
+  onTab: (tab: MediaLibraryTab) => void
+  onBack: () => void
+}) {
+  const tabs: Array<{ id: MediaLibraryTab; label: string; count: number }> = [
+    { id: 'media', label: '影音内容', count: content.media.length },
+    { id: 'documents', label: '文档', count: content.documents.length },
+    { id: 'links', label: '链接', count: content.links.length },
+  ]
+  const activeItems = content[activeTab]
+  const groupedItems = groupMediaLibraryItems(activeItems)
+
+  return (
+    <div className="chat-media-library">
+      <header className="chat-media-library-head">
+        <button type="button" onClick={onBack} aria-label="返回联系人信息"><Icon name="chevronRight" /></button>
+        <strong>影音内容、链接和文档</strong>
+      </header>
+      <div className="chat-media-library-tabs" role="tablist" aria-label="媒体分类">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={activeTab === tab.id ? 'active' : ''}
+            onClick={() => onTab(tab.id)}
+          >
+            <span>{tab.label}</span>
+            {tab.count ? <small>{tab.count}</small> : null}
+          </button>
+        ))}
+      </div>
+      {loading ? <div className="chat-media-library-loading">正在同步完整记录...</div> : null}
+      {error ? <div className="chat-media-library-error">{error}</div> : null}
+      <div className="chat-media-library-body">
+        {groupedItems.length ? groupedItems.map((group) => (
+          <section className="chat-media-library-group" key={group.label}>
+            <h4>{group.label}</h4>
+            {activeTab === 'media' ? (
+              <div className="chat-media-library-grid">
+                {group.items.filter(isMediaLibraryAttachment).map(({ attachment }) => (
+                  <button
+                    key={attachment.id}
+                    type="button"
+                    disabled={attachment.download_status !== 'ready'}
+                    onClick={() => window.open(getMediaAssetUrl(attachment.id), '_blank', 'noopener,noreferrer')}
+                    title={attachment.file_name || '打开媒体'}
+                  >
+                    {attachment.download_status === 'ready' && attachment.media_type === 'video' ? (
+                      <video src={getMediaAssetUrl(attachment.id)} muted preload="metadata" />
+                    ) : attachment.download_status === 'ready' ? (
+                      <img src={getMediaAssetUrl(attachment.id)} alt={attachment.file_name || ''} loading="lazy" />
+                    ) : (
+                      <span className="chat-media-library-unavailable"><Icon name="image" />媒体不可用</span>
+                    )}
+                    {isGIFAttachment(attachment) ? <span className="chat-media-library-gif">GIF</span> : null}
+                    {attachment.media_type === 'video' ? <span className="chat-media-library-video"><Icon name="play" /></span> : null}
+                  </button>
+                ))}
+              </div>
+            ) : activeTab === 'documents' ? (
+              <div className="chat-media-library-list documents">
+                {group.items.filter(isMediaLibraryAttachment).map(({ message, attachment }) => (
+                  <button
+                    key={attachment.id}
+                    type="button"
+                    disabled={attachment.download_status !== 'ready'}
+                    onClick={() => window.open(getMediaAssetUrl(attachment.id), '_blank', 'noopener,noreferrer')}
+                  >
+                    <span className="chat-media-library-file-icon"><Icon name="fileText" /></span>
+                    <span><strong>{attachment.file_name || '文档'}</strong><small>{formatFileSize(attachment.byte_size)} · {formatMessageDateTime(message.sent_at)}</small></span>
+                    <Icon name="chevronRight" />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="chat-media-library-list links">
+                {group.items.filter(isMediaLibraryLink).map(({ message, url }) => (
+                  <a key={`${message.id}-${url}`} href={url} target="_blank" rel="noreferrer">
+                    <span className="chat-media-library-link-icon"><Icon name="externalLink" /></span>
+                    <span><strong>{getURLHost(url)}</strong><small>{url}</small><time dateTime={message.sent_at}>{formatMessageDateTime(message.sent_at)}</time></span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </section>
+        )) : !loading ? <EmptyPanel title={`没有${tabs.find((tab) => tab.id === activeTab)?.label ?? '记录'}`} description="当前会话中没有此类内容。" /> : null}
+      </div>
+    </div>
+  )
+}
+
 function ChatAvatar({ chat }: { chat: ChatSummary }) {
   return (
     <span className="whatsapp-chat-avatar" aria-hidden="true">
@@ -5095,8 +5291,81 @@ function getMessageTranslationKey(message: MessageView, rawText?: string) {
 }
 
 function canOfferMessageTranslation(message: MessageView) {
+  if (message.message_type === 'contact') {
+    return false
+  }
   const text = message.text_content?.trim()
   return Boolean(text && needsChineseTranslation(text))
+}
+
+function buildMediaLibrary(messages: MessageView[]): MediaLibraryContent {
+  const content: MediaLibraryContent = { media: [], documents: [], links: [] }
+  const orderedMessages = [...messages].sort((left, right) => (
+    new Date(right.sent_at).getTime() - new Date(left.sent_at).getTime()
+  ))
+
+  orderedMessages.forEach((message) => {
+    message.media.forEach((attachment) => {
+      if (attachment.media_type === 'image' || attachment.media_type === 'video' || attachment.media_type === 'sticker') {
+        content.media.push({ message, attachment })
+      } else if (attachment.media_type === 'document' || attachment.media_type === 'other') {
+        content.documents.push({ message, attachment })
+      }
+    })
+
+    const urls = extractHTTPURLs(message.text_content || '')
+    urls.forEach((url) => content.links.push({ message, url }))
+  })
+
+  return content
+}
+
+function getMediaLibraryCount(content: MediaLibraryContent) {
+  return content.media.length + content.documents.length + content.links.length
+}
+
+function extractHTTPURLs(value: string) {
+  const matches = value.match(/https?:\/\/[^\s<>{}"'\]]+/gi) ?? []
+  return Array.from(new Set(matches.map((url) => url.replace(/[),.!?;:]+$/g, ''))))
+}
+
+function groupMediaLibraryItems(items: ReadonlyArray<MediaLibraryAttachment | MediaLibraryLink>) {
+  const groups = new Map<string, Array<MediaLibraryAttachment | MediaLibraryLink>>()
+  items.forEach((item) => {
+    const label = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' }).format(new Date(item.message.sent_at))
+    const group = groups.get(label) ?? []
+    group.push(item)
+    groups.set(label, group)
+  })
+  return Array.from(groups, ([label, groupItems]) => ({ label, items: groupItems }))
+}
+
+function isMediaLibraryAttachment(item: MediaLibraryAttachment | MediaLibraryLink): item is MediaLibraryAttachment {
+  return 'attachment' in item
+}
+
+function isMediaLibraryLink(item: MediaLibraryAttachment | MediaLibraryLink): item is MediaLibraryLink {
+  return 'url' in item
+}
+
+function isGIFAttachment(attachment: MessageView['media'][number]) {
+  return attachment.mime_type?.toLowerCase().includes('gif')
+    || attachment.file_name?.toLowerCase().endsWith('.gif')
+}
+
+function formatFileSize(byteSize?: number) {
+  if (!byteSize || byteSize < 1) return '大小未知'
+  if (byteSize < 1024) return `${byteSize} B`
+  if (byteSize < 1024 * 1024) return `${Math.round(byteSize / 1024)} KB`
+  return `${(byteSize / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function getURLHost(value: string) {
+  try {
+    return new URL(value).hostname
+  } catch {
+    return value
+  }
 }
 
 function isMessageTranslationLocked(state?: TranslationState) {

@@ -17,7 +17,15 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.64`.
+Current packaging version: `0.1.65`.
+
+## 0.1.65 Connected contacts and complete media library
+
+- Limit the contacts account selector to currently connected WhatsApp
+  accounts and refresh connection availability in the background.
+- Replace the contact detail placeholder with a complete paginated media
+  library split into media, documents, and links, grouped by month.
+- Hide translation actions and cached translation output for contact cards.
 
 ## 0.1.64 Conversation interaction and OpenRouter fixes
 
