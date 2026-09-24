@@ -4006,7 +4006,7 @@ export function ChatsPage() {
         <aside className="panel chat-assistant-panel whatsapp-chat-assistant" aria-hidden={assistantPanelCollapsed}>
           <div className="whatsapp-assistant-header">
             <div className="assistant-header-controls">
-              <span className="assistant-toolbar-title">选择智能体客服</span>
+              <span className="assistant-toolbar-title">智能体</span>
               {replyAgents.length ? (
                 <select
                   className="assistant-header-select"
