@@ -2954,6 +2954,99 @@ a {
   min-width: 0;
 }
 
+.admin-skill-dialog {
+  width: min(960px, 100%);
+  max-height: min(920px, calc(100vh - 40px));
+}
+
+.admin-skill-dialog .admin-dialog-body {
+  padding: 0;
+}
+
+.admin-skill-dialog-content {
+  display: grid;
+  gap: 16px;
+  padding: 22px 28px 28px;
+}
+
+.admin-skill-dialog .admin-skill-workbench {
+  display: block;
+}
+
+.admin-skill-dialog .admin-skill-editor {
+  gap: 24px;
+  padding: 0;
+  overflow: visible;
+}
+
+.admin-skill-dialog .admin-form-section {
+  gap: 18px;
+  padding: 0 0 24px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.admin-skill-dialog .admin-form-section-title {
+  align-items: start;
+  border: 0;
+  padding: 0;
+}
+
+.admin-skill-dialog .admin-form-section-title strong {
+  font-size: 17px;
+}
+
+.admin-skill-dialog .admin-form-section-title span,
+.admin-skill-file-hint {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-skill-file-hint {
+  margin: 0;
+}
+
+.admin-skill-dialog .admin-skill-file-grid {
+  grid-template-columns: minmax(210px, 0.33fr) minmax(0, 0.67fr);
+  gap: 24px;
+}
+
+.admin-skill-dialog .admin-skill-file-item {
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font-size: 14px;
+}
+
+.admin-skill-dialog .admin-skill-file-item.active {
+  background: #e7f5ef;
+}
+
+.admin-skill-dialog .admin-skill-file-item strong {
+  font-size: 14px;
+}
+
+.admin-skill-dialog .admin-skill-file-item small {
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .admin-skill-dialog-content {
+    padding: 18px;
+  }
+
+  .admin-skill-dialog .admin-skill-file-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-skill-dialog .admin-skill-file-list {
+    max-height: 180px;
+  }
+}
+
 .admin-agent-record-page > .admin-purpose-switch-top {
   flex: 0 0 auto;
   margin: 0 18px;

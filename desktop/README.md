@@ -17,7 +17,13 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.66`.
+Current packaging version: `0.1.67`.
+
+## 0.1.67 Skill workspace
+
+- Simplify the Skill editor into a single-column workspace without a duplicate Skill list.
+- Keep the editor open after saving so reference files can be added immediately.
+- Restrict uploads to text files; PDF and Word extraction are not implemented yet.
 
 ## 0.1.66 Assistant context and layout
 

@@ -1077,7 +1077,6 @@ function SkillAdminPanel() {
         response.skill,
       ].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')))
       setSelectedSkillId(response.skill.id)
-      setEditorOpen(false)
       setNotice('Skill 已保存')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存 Skill 失败')
@@ -1164,7 +1163,12 @@ function SkillAdminPanel() {
     if (!file) {
       return
     }
+    if (!/\.(txt|md|csv|json|log|html)$/i.test(file.name)) {
+      setError('目前只支持文本资料：txt、md、csv、json、log、html；Word / PDF 请先转换为文本')
+      return
+    }
     const text = await file.text().catch(() => '')
+    setError(undefined)
     const path = `references/${file.name}`
     setFileForm({
       id: '',
@@ -1185,7 +1189,7 @@ function SkillAdminPanel() {
           <p className="eyebrow">Agent Skills</p>
           <h3>{loading ? '加载 Skill 中' : `${skills.length} 个 Skill`}</h3>
         </div>
-        <button className="primary-button" type="button" onClick={() => { setSelectedSkillId('new'); setEditorOpen(true) }}>
+        <button className="primary-button" type="button" onClick={() => { setNotice(undefined); setError(undefined); setSelectedSkillId('new'); setEditorOpen(true) }}>
           <Icon name="plus" />
           新建 Skill
         </button>
@@ -1194,40 +1198,24 @@ function SkillAdminPanel() {
 
       <div className="admin-record-list">
         {skills.length ? skills.map((skill) => (
-          <article className="admin-record-summary" key={skill.id} onDoubleClick={() => { setSelectedSkillId(skill.id); setEditorOpen(true) }}>
+          <article className="admin-record-summary" key={skill.id} onDoubleClick={() => { setNotice(undefined); setError(undefined); setSelectedSkillId(skill.id); setEditorOpen(true) }}>
             <div className="admin-record-summary-main"><span className="admin-record-avatar"><Icon name="fileText" /></span><div><strong>{skill.name}</strong><span>{skill.slug} · {skill.description || '暂无说明'}</span></div></div>
             <div className="admin-record-summary-meta"><span>{skill.enabled ? '已启用' : '已停用'}</span><small>{skill.files?.length ?? 0} 个文件</small></div>
-            <button className="secondary-button" type="button" onClick={() => { setSelectedSkillId(skill.id); setEditorOpen(true) }}><Icon name="edit" />编辑</button>
+            <button className="secondary-button" type="button" onClick={() => { setNotice(undefined); setError(undefined); setSelectedSkillId(skill.id); setEditorOpen(true) }}><Icon name="edit" />编辑</button>
           </article>
         )) : <div className="system-agent-empty">还没有 Skill</div>}
       </div>
 
-      {editorOpen ? <AdminDialog title={selectedSkill ? `编辑 Skill · ${selectedSkill.name}` : '新建 Skill'} eyebrow="Skill 管理" onClose={() => setEditorOpen(false)}><div className="admin-skill-dialog-content"><div className="admin-skill-workbench">
-        <aside className="admin-skill-list">
-          {skills.length ? (
-            skills.map((skill) => (
-              <button
-                key={skill.id}
-                type="button"
-                className={`admin-skill-item${skill.id === selectedSkillId ? ' active' : ''}`}
-                onClick={() => setSelectedSkillId(skill.id)}
-              >
-                <strong>{skill.name}</strong>
-                <span>{skill.slug}</span>
-                <small>{skill.enabled ? '已启用' : '已停用'} · {skill.files?.length ?? 0} 个文件</small>
-              </button>
-            ))
-          ) : (
-            <div className="system-agent-empty">还没有 Skill</div>
-          )}
-        </aside>
-
-        <div className="admin-skill-editor">
+      {editorOpen ? <AdminDialog className="admin-skill-dialog" title={selectedSkill ? `编辑 Skill · ${selectedSkill.name}` : '新建 Skill'} eyebrow="Skill 管理" onClose={() => setEditorOpen(false)}><div className="admin-skill-dialog-content">
+        {notice ? <div className="success-banner">{notice}</div> : null}
+        {error ? <div className="error-banner">{error}</div> : null}
+        <div className="admin-skill-workbench">
+          <div className="admin-skill-editor">
           <form className="admin-skill-form" onSubmit={handleSaveSkill}>
             <section className="admin-form-section">
               <div className="admin-form-section-title">
-                <strong>Skill 目录</strong>
-                <span>一个 Skill 就是一套可绑定到 agent 的话术和知识能力</span>
+                <strong>基本信息</strong>
+                <span>绑定到回复智能体后，按客户消息匹配话术和知识</span>
               </div>
               <div className="two-column-grid">
                 <label className="field">
@@ -1240,7 +1228,7 @@ function SkillAdminPanel() {
                 </label>
               </div>
               <label className="field">
-                <span>说明</span>
+                <span>适用场景（帮助判断何时引用）</span>
                 <input
                   value={skillForm.description}
                   onChange={(event) => updateSkillForm({ description: event.target.value })}
@@ -1255,7 +1243,7 @@ function SkillAdminPanel() {
                 <span>启用这个 Skill</span>
               </label>
               <label className="field agent-prompt-field">
-                <span>SKILL.md</span>
+                <span>使用规则 · SKILL.md</span>
                 <textarea
                   rows={11}
                   value={skillForm.skillMarkdown}
@@ -1279,9 +1267,10 @@ function SkillAdminPanel() {
 
           <section className="admin-form-section admin-skill-files">
             <div className="admin-form-section-title">
-              <strong>references / assets</strong>
-              <span>客服话术优先放 references，assets 暂作资料登记</span>
+              <strong>话术与知识资料</strong>
+              <span>仅 references 中的文本会参与回复；assets 暂不检索</span>
             </div>
+            {!selectedSkill ? <p className="admin-skill-file-hint">先保存 Skill，再添加话术或知识资料。</p> : null}
             <div className="admin-skill-file-grid">
               <div className="admin-skill-file-list">
                 <button
@@ -1346,10 +1335,10 @@ function SkillAdminPanel() {
                 </div>
                 <label className="knowledge-upload-drop">
                   <strong>从本地文件填充内容</strong>
-                  <span>建议使用 txt、md、csv、json。PDF/Word 先登记文件名，自动抽文本后续补。</span>
+                  <span>支持 txt、md、csv、json、log、html；PDF / Word 需先转换为文本。</span>
                   <input
                     type="file"
-                    accept=".txt,.md,.csv,.json,.log,.html,.pdf,.doc,.docx"
+                    accept=".txt,.md,.csv,.json,.log,.html"
                     onChange={(event) => void handleReferenceUpload(event.target.files?.[0])}
                   />
                 </label>
@@ -1381,11 +1370,12 @@ function SkillAdminPanel() {
               </form>
             </div>
           </section>
+          </div>
         </div>
-      </div></div></AdminDialog> : null}
+      </div></AdminDialog> : null}
 
-      {notice ? <div className="success-banner">{notice}</div> : null}
-      {error ? <div className="error-banner">{error}</div> : null}
+      {!editorOpen && notice ? <div className="success-banner">{notice}</div> : null}
+      {!editorOpen && error ? <div className="error-banner">{error}</div> : null}
     </section>
   )
 }
