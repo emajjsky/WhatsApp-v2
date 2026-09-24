@@ -2828,16 +2828,14 @@ a {
   border-bottom: 1px solid var(--line);
 }
 
-.admin-agent-modal-purpose,
-.admin-agent-modal-agents {
+.admin-agent-modal-purpose {
   display: flex;
   gap: 10px;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 
-.admin-agent-modal-purpose-button,
-.admin-agent-modal-agent {
+.admin-agent-modal-purpose-button {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -2852,44 +2850,21 @@ a {
   transition: border-color .16s ease, background .16s ease, color .16s ease, transform .16s ease;
 }
 
-.admin-agent-modal-purpose-button:hover,
-.admin-agent-modal-agent:hover {
+.admin-agent-modal-purpose-button:hover {
   border-color: rgba(18, 140, 126, .42);
   transform: translateY(-1px);
 }
 
-.admin-agent-modal-purpose-button.active,
-.admin-agent-modal-agent.active {
+.admin-agent-modal-purpose-button.active {
   border-color: rgba(18, 140, 126, .48);
   color: var(--text);
   background: #eaf7f3;
   box-shadow: 0 4px 12px rgba(18, 140, 126, .08);
 }
 
-.admin-agent-modal-purpose-button strong,
-.admin-agent-modal-agent span {
+.admin-agent-modal-purpose-button strong {
   color: inherit;
   font-size: 14px;
-}
-
-.admin-agent-modal-purpose-button span,
-.admin-agent-modal-agent small {
-  color: var(--text-soft);
-  font-size: 11px;
-}
-
-.admin-agent-modal-agent {
-  min-width: 170px;
-  justify-content: space-between;
-  text-align: left;
-}
-
-.admin-agent-modal-empty {
-  display: inline-flex;
-  align-items: center;
-  min-height: 42px;
-  color: var(--text-soft);
-  font-size: 13px;
 }
 
 .admin-agent-dialog .admin-agent-editor {

@@ -2237,24 +2237,15 @@ function SystemAgentPanel() {
       </div>
 
       {editorOpen ? <AdminDialog className="admin-agent-dialog" title={selectedConfig ? `编辑智能体 · ${selectedConfig.name}` : `新建${getPurposeTitle(purpose)}`} eyebrow="智能回复配置" onClose={() => setEditorOpen(false)}><div className="admin-agent-modal-content">
-        <nav className="admin-agent-modal-nav" aria-label="选择智能体">
+        {!selectedConfig && <nav className="admin-agent-modal-nav" aria-label="选择智能体类型">
           <div className="admin-agent-modal-purpose">
             {(['reply', 'translation', 'status_card'] as AgentPurpose[]).map((item) => (
               <button key={item} type="button" className={`admin-agent-modal-purpose-button${purpose === item ? ' active' : ''}`} onClick={() => setPurpose(item)}>
                 <strong>{getPurposeTitle(item)}</strong>
-                <span>{configs.filter((config) => config.purpose === item).length} 个</span>
               </button>
             ))}
           </div>
-          <div className="admin-agent-modal-agents">
-            {purposeConfigs.length ? purposeConfigs.map((config) => (
-              <button key={config.id} type="button" className={`admin-agent-modal-agent${config.id === selectedConfigId ? ' active' : ''}`} onClick={() => setSelectedConfigId(config.id)}>
-                <span>{config.name}</span>
-                <small>{config.enabled ? '已启用' : '未启用'}</small>
-              </button>
-            )) : <span className="admin-agent-modal-empty">当前类型还没有已创建的智能体</span>}
-          </div>
-        </nav>
+        </nav>}
 
         <form className="agent-config-form admin-agent-editor" onSubmit={handleSubmit}>
           <div className="admin-agent-editor-body">
