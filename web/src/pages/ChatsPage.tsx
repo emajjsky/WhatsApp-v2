@@ -404,7 +404,6 @@ export function ChatsPage() {
   const [translatedSourceDraft, setTranslatedSourceDraft] = useState('')
   const [draftTranslationBusyByChatId, setDraftTranslationBusyByChatId] = useState<Record<string, boolean>>({})
   const [assistantContextEnabled, setAssistantContextEnabled] = useState(true)
-  const [assistantContextLimit, setAssistantContextLimit] = useState(defaultAssistantContextLimit)
   const [replyAgents, setReplyAgents] = useState<SystemAgentConfigView[]>([])
   const [translationAgents, setTranslationAgents] = useState<SystemAgentConfigView[]>([])
   const [statusCardAgents, setStatusCardAgents] = useState<SystemAgentConfigView[]>([])
@@ -2506,13 +2505,20 @@ export function ChatsPage() {
         return
       }
 
+      const configuredContextLimit = Number(
+        replyAgents.find((agent) => agent.id === selectedReplyAgentId)?.provider_config?.context_message_limit,
+      )
+      const contextMessageLimit = Number.isInteger(configuredContextLimit) &&
+        configuredContextLimit >= 1 && configuredContextLimit <= 50
+        ? configuredContextLimit
+        : defaultAssistantContextLimit
       let streamedDraft = ''
       await streamGenerateAgentRun(
         {
           chat_id: requestChatId,
           agent_id: selectedReplyAgentId,
           context_enabled: assistantContextEnabled,
-          context_message_limit: assistantContextLimit,
+          context_message_limit: contextMessageLimit,
         },
         {
           onStart: (run) => {
@@ -4040,21 +4046,6 @@ export function ChatsPage() {
                   onChange={(event) => setAssistantContextEnabled(event.target.checked)}
                 />
                 <span>携带上下文</span>
-              </label>
-
-              <label className="field compact-field assistant-context-limit-field">
-                <span>历史对话（轮）</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={assistantContextLimit}
-                  disabled={!assistantContextEnabled}
-                  onChange={(event) => {
-                    const next = Number(event.target.value)
-                    setAssistantContextLimit(Number.isFinite(next) ? next : defaultAssistantContextLimit)
-                  }}
-                />
               </label>
 
               <button

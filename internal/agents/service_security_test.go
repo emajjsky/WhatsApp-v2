@@ -2,6 +2,20 @@ package agents
 
 import "testing"
 
+func TestPublicProviderConfigIncludesReplyContextLimit(t *testing.T) {
+	config := publicProviderConfig(map[string]any{
+		"type":                  "openai_compatible",
+		"context_message_limit": 27,
+		"api_key":               "secret-key",
+	})
+	if config["context_message_limit"] != 27 {
+		t.Fatalf("context_message_limit = %#v, want 27", config["context_message_limit"])
+	}
+	if _, ok := config["api_key"]; ok {
+		t.Fatal("api_key must not be returned")
+	}
+}
+
 func TestRedactProviderSecrets(t *testing.T) {
 	config := map[string]any{
 		"type":          "openai_compatible",

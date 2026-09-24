@@ -57,6 +57,7 @@ interface AgentConfigForm {
   enabled: boolean
   model: string
   historyLimit: string
+  contextMessageLimit: string
   stageLabels: string
   customerTypeLabels: string
   riskLabels: string
@@ -2119,6 +2120,10 @@ function SystemAgentPanel() {
         setError('请选择模型')
         return
       }
+      if (purpose === 'reply' && (!Number.isInteger(Number(form.contextMessageLimit)) || Number(form.contextMessageLimit) < 1 || Number(form.contextMessageLimit) > 50)) {
+        setError('上下文消息条数请输入 1 至 50 的整数')
+        return
+      }
 
       const response = await upsertSystemAgentConfig({
         id: form.id || undefined,
@@ -2360,6 +2365,26 @@ function SystemAgentPanel() {
               ) : null}
             </section>
 
+            {purpose === 'reply' ? (
+              <section className="admin-form-section">
+                <div className="admin-form-section-title">
+                  <strong>对话上下文</strong>
+                  <span>前台开启携带上下文时生效，默认 20 条</span>
+                </div>
+                <label className="field compact-field">
+                  <span>上下文消息条数</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    step={1}
+                    value={form.contextMessageLimit}
+                    onChange={(event) => updateForm({ contextMessageLimit: event.target.value })}
+                  />
+                </label>
+              </section>
+            ) : null}
+
             {purpose === 'status_card' ? (
               <section className="admin-form-section">
                 <div className="admin-form-section-title">
@@ -2516,6 +2541,7 @@ function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
     enabled: false,
     model: '',
     historyLimit: '500',
+    contextMessageLimit: '20',
     stageLabels: defaultStatusStageLabels.join('\n'),
     customerTypeLabels: defaultCustomerTypeLabels.join('\n'),
     riskLabels: defaultRiskLabels.join('\n'),
@@ -2702,6 +2728,7 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
     enabled: config.enabled,
     model: readConfigString(providerConfig, 'model'),
     historyLimit: readConfigString(providerConfig, 'history_limit') || fallback.historyLimit,
+    contextMessageLimit: readConfigString(providerConfig, 'context_message_limit') || fallback.contextMessageLimit,
     stageLabels: readConfigStringList(providerConfig, 'stage_labels', defaultStatusStageLabels).join('\n'),
     customerTypeLabels: readConfigStringList(
       providerConfig,
@@ -2753,6 +2780,7 @@ function buildProviderConfig(form: AgentConfigForm, preset: ProviderPresetView):
     model: form.model.trim(),
     preset_id: preset.id,
     rules_prompt: form.rulesPrompt.trim(),
+    ...(form.purpose === 'reply' ? { context_message_limit: Number(form.contextMessageLimit) } : {}),
   }))
 }
 

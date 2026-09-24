@@ -17,7 +17,12 @@ bundled PostgreSQL runtime as a local Windows service. The desktop app itself
 runs normally after installation and keeps its database under the current
 user's `%APPDATA%/whatsapp-agent-desktop/` directory.
 
-Current packaging version: `0.1.65`.
+Current packaging version: `0.1.66`.
+
+## 0.1.66 Assistant context and layout
+
+- Move reply context length to each reply Agent configuration (default 20 messages).
+- Keep the conversation header readable when the assistant panel is narrow.
 
 ## 0.1.65 Connected contacts and complete media library
 
