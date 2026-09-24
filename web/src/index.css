@@ -2806,6 +2806,109 @@ a {
   box-shadow: 0 24px 80px rgba(17, 27, 33, 0.3);
 }
 
+.admin-agent-dialog {
+  width: min(1180px, 100%);
+  max-height: min(920px, calc(100vh - 28px));
+}
+
+.admin-agent-dialog .admin-dialog-body {
+  padding: 0;
+}
+
+.admin-agent-modal-content {
+  display: grid;
+  gap: 16px;
+  padding: 18px 22px 22px;
+}
+
+.admin-agent-modal-nav {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.admin-agent-modal-purpose,
+.admin-agent-modal-agents {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.admin-agent-modal-purpose-button,
+.admin-agent-modal-agent {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--text-soft);
+  background: var(--surface-muted);
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, color .16s ease, transform .16s ease;
+}
+
+.admin-agent-modal-purpose-button:hover,
+.admin-agent-modal-agent:hover {
+  border-color: rgba(18, 140, 126, .42);
+  transform: translateY(-1px);
+}
+
+.admin-agent-modal-purpose-button.active,
+.admin-agent-modal-agent.active {
+  border-color: rgba(18, 140, 126, .48);
+  color: var(--text);
+  background: #eaf7f3;
+  box-shadow: 0 4px 12px rgba(18, 140, 126, .08);
+}
+
+.admin-agent-modal-purpose-button strong,
+.admin-agent-modal-agent span {
+  color: inherit;
+  font-size: 14px;
+}
+
+.admin-agent-modal-purpose-button span,
+.admin-agent-modal-agent small {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.admin-agent-modal-agent {
+  min-width: 170px;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.admin-agent-modal-empty {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.admin-agent-dialog .admin-agent-editor {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.admin-agent-dialog .admin-agent-editor-body {
+  gap: 16px;
+  padding: 0;
+}
+
+.admin-agent-dialog .admin-form-section {
+  padding: 18px;
+  border-radius: 16px;
+}
+
 .admin-dialog-header {
   flex: 0 0 auto;
   display: flex;
@@ -2906,6 +3009,14 @@ a {
 
   .admin-dialog {
     max-height: calc(100vh - 20px);
+  }
+
+  .admin-agent-dialog {
+    max-height: calc(100vh - 20px);
+  }
+
+  .admin-agent-modal-content {
+    padding: 14px;
   }
 
   .admin-dialog .admin-agent-workbench,

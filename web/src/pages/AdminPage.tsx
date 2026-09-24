@@ -240,11 +240,13 @@ function AdminDialog({
   title,
   eyebrow,
   onClose,
+  className,
   children,
 }: {
   title: string
   eyebrow: string
   onClose: () => void
+  className?: string
   children: ReactNode
 }) {
   return (
@@ -257,7 +259,7 @@ function AdminDialog({
         }
       }}
     >
-      <section className="admin-dialog" role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title">
+      <section className={`admin-dialog${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title">
         <header className="admin-dialog-header">
           <div>
             <p className="eyebrow">{eyebrow}</p>
@@ -2234,80 +2236,25 @@ function SystemAgentPanel() {
         }) : <div className="system-agent-empty">当前类型还没有智能体</div>}
       </div>
 
-      {editorOpen ? <AdminDialog title={selectedConfig ? `编辑智能体 · ${selectedConfig.name}` : `新建${getPurposeTitle(purpose)}`} eyebrow="智能回复配置" onClose={() => setEditorOpen(false)}><div className="admin-agent-workbench">
-        <aside className="admin-agent-sidebar">
-          <div className="admin-purpose-switch">
-            <button
-              type="button"
-              className={`admin-purpose-button${purpose === 'reply' ? ' active' : ''}`}
-              onClick={() => setPurpose('reply')}
-            >
-              <strong>回复 Agent</strong>
-            </button>
-            <button
-              type="button"
-              className={`admin-purpose-button${purpose === 'translation' ? ' active' : ''}`}
-              onClick={() => setPurpose('translation')}
-            >
-              <strong>翻译 Agent</strong>
-            </button>
-            <button
-              type="button"
-              className={`admin-purpose-button${purpose === 'status_card' ? ' active' : ''}`}
-              onClick={() => setPurpose('status_card')}
-            >
-              <strong>状态卡 Agent</strong>
-            </button>
-          </div>
-
-          <div className="system-agent-selector">
-            <div className="system-agent-selector-head">
-              <div>
-                <strong>{getPurposeConfigTitle(purpose)}</strong>
-                <span>{getPurposeDescription(purpose)}</span>
-              </div>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => setSelectedConfigId('new')}
-                disabled={selectedConfigId === 'new'}
-              >
-                <Icon name="plus" />
-                新建
+      {editorOpen ? <AdminDialog className="admin-agent-dialog" title={selectedConfig ? `编辑智能体 · ${selectedConfig.name}` : `新建${getPurposeTitle(purpose)}`} eyebrow="智能回复配置" onClose={() => setEditorOpen(false)}><div className="admin-agent-modal-content">
+        <nav className="admin-agent-modal-nav" aria-label="选择智能体">
+          <div className="admin-agent-modal-purpose">
+            {(['reply', 'translation', 'status_card'] as AgentPurpose[]).map((item) => (
+              <button key={item} type="button" className={`admin-agent-modal-purpose-button${purpose === item ? ' active' : ''}`} onClick={() => setPurpose(item)}>
+                <strong>{getPurposeTitle(item)}</strong>
+                <span>{configs.filter((config) => config.purpose === item).length} 个</span>
               </button>
-            </div>
-            <div className="system-agent-list">
-              {purposeConfigs.length ? (
-                purposeConfigs.map((config) => {
-                  const presetID = readConfigString(config.provider_config ?? {}, 'preset_id')
-                  const providerName = providerPresets.find((preset) => preset.id === presetID)?.name
-                  return (
-                    <button
-                      key={config.id}
-                      type="button"
-                      className={`system-agent-item${config.id === selectedConfigId ? ' active' : ''}`}
-                      onClick={() => setSelectedConfigId(config.id)}
-                    >
-                      <span>
-                        <strong>{config.name}</strong>
-                        <small>
-                          {config.enabled
-                            ? purpose === 'translation' || purpose === 'status_card'
-                              ? '当前生效'
-                              : '已启用'
-                            : '未启用'}
-                        </small>
-                      </span>
-                      <small>{providerName || '待选择 Provider'}</small>
-                    </button>
-                  )
-                })
-              ) : (
-                <div className="system-agent-empty">当前用途还没有智能体</div>
-              )}
-            </div>
+            ))}
           </div>
-        </aside>
+          <div className="admin-agent-modal-agents">
+            {purposeConfigs.length ? purposeConfigs.map((config) => (
+              <button key={config.id} type="button" className={`admin-agent-modal-agent${config.id === selectedConfigId ? ' active' : ''}`} onClick={() => setSelectedConfigId(config.id)}>
+                <span>{config.name}</span>
+                <small>{config.enabled ? '已启用' : '未启用'}</small>
+              </button>
+            )) : <span className="admin-agent-modal-empty">当前类型还没有已创建的智能体</span>}
+          </div>
+        </nav>
 
         <form className="agent-config-form admin-agent-editor" onSubmit={handleSubmit}>
           <div className="admin-agent-editor-body">
@@ -2648,28 +2595,6 @@ function getPurposeTitle(purpose: AgentPurpose) {
       return '状态卡 Agent'
     default:
       return '回复 Agent'
-  }
-}
-
-function getPurposeConfigTitle(purpose: AgentPurpose) {
-  switch (purpose) {
-    case 'translation':
-      return '翻译智能体'
-    case 'status_card':
-      return '状态卡智能体'
-    default:
-      return '回复智能体'
-  }
-}
-
-function getPurposeDescription(purpose: AgentPurpose) {
-  switch (purpose) {
-    case 'translation':
-      return '普通用户不选择翻译智能体，管理员只启用一个作为当前生效'
-    case 'status_card':
-      return '对话页右侧状态卡使用当前生效的状态卡智能体'
-    default:
-      return '用户可在对话页按需求选择启用的回复智能体'
   }
 }
 
