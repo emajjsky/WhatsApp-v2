@@ -2,6 +2,7 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 're
 import {
   createInvitation,
   createUser,
+  deleteUser,
   discoverProviderModels,
   deleteAgentSkill,
   deleteAgentSkillFile,
@@ -46,6 +47,7 @@ import {
   type UserStatus,
 } from '../api/client'
 import { Icon } from '../components/Icon'
+import { useAuth } from '../auth/AuthContext'
 
 type AdminTab = 'users' | 'invitations' | 'agents' | 'skills' | 'providerPresets' | 'usageLogs'
 type ProviderType = 'openai_compatible' | 'openrouter' | 'coze' | 'n8n' | 'webhook'
@@ -272,6 +274,7 @@ function AdminDialog({
 }
 
 function UserAdminPanel() {
+  const isSuperAdmin = useAuth().user?.role === 'super_admin'
   const [users, setUsers] = useState<AuthUser[]>([])
   const [editor, setEditor] = useState<AuthUser | 'new'>()
   const [email, setEmail] = useState('')
@@ -365,6 +368,20 @@ function UserAdminPanel() {
     }
   }
 
+  async function handleDeleteUser(user: AuthUser) {
+    if (!window.confirm(`确定删除 ${user.display_name}（${user.email}）？此操作无法撤销。`)) return
+    setError(undefined)
+    setNotice(undefined)
+    try {
+      await deleteUser(user.id)
+      setEditor(undefined)
+      await loadUsers()
+      setNotice('用户已删除')
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : '删除用户失败')
+    }
+  }
+
   return (
     <section className="panel admin-record-page">
       <div className="admin-record-page-header">
@@ -391,7 +408,7 @@ function UserAdminPanel() {
       </div>
       <div className="admin-record-list">
           {users.map((user) => (
-            <article className="admin-record-summary" key={user.id} onDoubleClick={() => setEditor(user)}>
+            <article className="admin-record-summary" key={user.id} onDoubleClick={() => isSuperAdmin && setEditor(user)}>
               <div className="admin-record-summary-main">
                 <span className="admin-record-avatar">{user.display_name.slice(0, 1)}</span>
                 <div>
@@ -400,13 +417,13 @@ function UserAdminPanel() {
                 </div>
               </div>
               <div className="admin-record-summary-meta">
-                <span>{user.role === 'admin' ? '管理员' : '普通用户'}</span>
+                <span>{user.role === 'super_admin' ? '超级管理员' : user.role === 'admin' ? '管理员' : '普通用户'}</span>
                 <small>{user.status === 'active' ? '正常' : '已停用'} · 桌面端 {user.desktop?.max_devices ?? 1} 台设备</small>
               </div>
-              <button className="secondary-button" type="button" onClick={() => setEditor(user)}>
+              {isSuperAdmin ? <button className="secondary-button" type="button" onClick={() => setEditor(user)}>
                 <Icon name="edit" />
                 编辑
-              </button>
+              </button> : null}
             </article>
           ))}
       </div>
@@ -420,16 +437,18 @@ function UserAdminPanel() {
             <label className="field"><span>邮箱</span><input value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
             <label className="field"><span>昵称</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label>
             <label className="field"><span>初始密码</span><input type="password" value={password} minLength={8} onChange={(event) => setPassword(event.target.value)} required /></label>
-            <label className="field"><span>角色</span><select value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="user">普通用户</option><option value="admin">管理员</option></select></label>
+            {isSuperAdmin ? <label className="field"><span>角色</span><select value={role} onChange={(event) => setRole(event.target.value as UserRole)}><option value="user">普通用户</option><option value="admin">管理员</option></select></label> : null}
             {role === 'user' ? <PermissionPicker value={permissions} onChange={setPermissions} /> : null}
             <DesktopGrantEditor enabled={desktopEnabled} maxDevices={desktopMaxDevices} expiresAt={desktopExpiresAt} onEnabledChange={setDesktopEnabled} onMaxDevicesChange={setDesktopMaxDevices} onExpiresAtChange={setDesktopExpiresAt} />
             <div className="admin-dialog-actions"><button className="secondary-button" type="button" onClick={() => setEditor(undefined)}>取消</button><button className="primary-button" type="submit" disabled={submitting}><Icon name="user" />{submitting ? '创建中...' : '创建用户'}</button></div>
           </form>
         </AdminDialog>
       ) : null}
-      {editor && editor !== 'new' ? (
+      {isSuperAdmin && editor && editor !== 'new' ? (
         <AdminDialog title={`编辑用户 · ${editor.display_name}`} eyebrow="用户管理" onClose={() => setEditor(undefined)}>
           <UserAdminRow user={editor} onUpdate={handlePatchUser} onResetPassword={handleResetPassword} />
+          {error ? <div className="error-banner">{error}</div> : null}
+          {editor.role !== 'super_admin' ? <div className="admin-dialog-actions"><button className="danger-button" type="button" onClick={() => void handleDeleteUser(editor)}>删除用户</button></div> : null}
         </AdminDialog>
       ) : null}
     </section>
@@ -789,16 +808,19 @@ function UserAdminRow({
           <span>角色</span>
           <select
             value={user.role}
+            disabled={user.role === 'super_admin'}
             onChange={(event) => void onUpdate(user, { role: event.target.value as UserRole })}
           >
             <option value="user">普通用户</option>
             <option value="admin">管理员</option>
+            {user.role === 'super_admin' ? <option value="super_admin">超级管理员</option> : null}
           </select>
         </label>
         <label className="field compact-field">
           <span>账号状态</span>
           <select
             value={user.status}
+            disabled={user.role === 'super_admin'}
             onChange={(event) => void onUpdate(user, { status: event.target.value as UserStatus })}
           >
             <option value="active">启用</option>
@@ -814,7 +836,7 @@ function UserAdminRow({
               onChange={(next) => void onUpdate(user, { permissions: next })}
             />
           ) : (
-            <span className="admin-permission-summary">管理员全部权限</span>
+            <span className="admin-permission-summary">{user.role === 'super_admin' ? '超级管理员全部权限' : '管理员后台权限'}</span>
           )}
         </div>
       </div>

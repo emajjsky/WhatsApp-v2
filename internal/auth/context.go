@@ -52,6 +52,17 @@ func RequireAdmin(ctx context.Context) (User, error) {
 	return user, nil
 }
 
+func RequireSuperAdmin(ctx context.Context) (User, error) {
+	user, err := RequireAdmin(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	if !user.IsSuperAdmin() {
+		return User{}, ErrForbidden
+	}
+	return user, nil
+}
+
 func RequirePermission(ctx context.Context, permission Permission) (User, error) {
 	user, err := RequireUser(ctx)
 	if err != nil {

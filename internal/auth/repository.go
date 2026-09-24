@@ -114,6 +114,9 @@ func (r *Repository) UpsertMirrorUser(ctx context.Context, input MirrorUserInput
 	if role == "" {
 		role = RoleUser
 	}
+	if email == "admin@example.com" && (role == RoleAdmin || role == RoleSuperAdmin) {
+		role = RoleSuperAdmin
+	}
 	status := normalizeStatus(input.Status)
 	if status == "" {
 		status = StatusActive
@@ -256,7 +259,7 @@ SELECT
     created_at,
     updated_at
 FROM users
-WHERE role = 'admin'
+WHERE role = 'super_admin'
 ORDER BY created_at ASC, id ASC
 LIMIT 1`
 
@@ -387,6 +390,30 @@ WHERE id = $1`
 	}
 
 	return ensureAffected(result, id)
+}
+
+func (r *Repository) DeleteUser(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete user %q: %w", id, err)
+	}
+	return ensureAffected(result, id)
+}
+
+func (r *Repository) CountUserAccounts(ctx context.Context, id string) (int, error) {
+	var count int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE user_id = $1`, id).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count user accounts: %w", err)
+	}
+	return count, nil
+}
+
+func (r *Repository) CountUserUsageLogs(ctx context.Context, id string) (int, error) {
+	var count int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM assistant_usage_logs WHERE user_id = $1`, id).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count user usage logs: %w", err)
+	}
+	return count, nil
 }
 
 func (r *Repository) MarkLogin(ctx context.Context, id string, at time.Time) error {

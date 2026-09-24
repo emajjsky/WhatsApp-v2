@@ -280,7 +280,7 @@ export interface SendChatMessageResponse {
   sent_at: string
 }
 
-export type UserRole = 'admin' | 'user'
+export type UserRole = 'super_admin' | 'admin' | 'user'
 export type UserStatus = 'active' | 'disabled'
 export type UserPermission = 'accounts' | 'chats' | 'exports'
 export type InvitationStatus = 'active' | 'disabled'
@@ -956,6 +956,10 @@ export async function resetUserPassword(userId: string, password: string) {
     method: 'POST',
     jsonBody: { password },
   })
+}
+
+export async function deleteUser(userId: string) {
+  return request<void>(`/api/admin/users/${userId}`, { method: 'DELETE' })
 }
 
 export async function listDesktopDevices(userId: string) {

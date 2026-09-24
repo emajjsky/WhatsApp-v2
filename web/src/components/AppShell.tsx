@@ -28,10 +28,10 @@ export function AppShell() {
   const userPermissions = new Set<UserPermission>(auth.user?.permissions ?? [])
   const visibleBaseNavItems = auth.cloudAdminOnly
     ? []
-    : auth.user?.role === 'admin'
+    : auth.user?.role === 'admin' || auth.user?.role === 'super_admin'
       ? baseNavItems
       : baseNavItems.filter((item) => userPermissions.has(item.permission))
-  const navItems = (auth.user?.role === 'admin' ? [...visibleBaseNavItems, ...adminNavItems] : visibleBaseNavItems).filter(
+  const navItems = (auth.user?.role === 'admin' || auth.user?.role === 'super_admin' ? [...visibleBaseNavItems, ...adminNavItems] : visibleBaseNavItems).filter(
     (item) => item.to !== '/proxies' || isDesktopRuntime,
   )
   const isChatMode = location.pathname.startsWith('/chats')

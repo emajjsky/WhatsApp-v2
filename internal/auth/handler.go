@@ -244,6 +244,14 @@ func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := parts[0]
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		if err := h.service.DeleteUser(r.Context(), userID); err != nil {
+			h.writeAuthError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if len(parts) == 1 && r.Method == http.MethodPatch {
 		var input UpdateUserInput
 		if err := httpx.DecodeJSON(r, &input); err != nil {
@@ -427,6 +435,8 @@ func (h *Handler) writeAuthError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrUserNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrUserHasAccounts), errors.Is(err, ErrUserHasUsageLogs):
+		httpx.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	}

@@ -29,6 +29,8 @@ var (
 	ErrInvalidSession            = errors.New("invalid session")
 	ErrCannotDisableSelf         = errors.New("cannot disable the current administrator")
 	ErrCannotDemoteLastAdmin     = errors.New("cannot remove the last administrator")
+	ErrUserHasAccounts           = errors.New("user still owns WhatsApp accounts; transfer or remove them before deleting the user")
+	ErrUserHasUsageLogs          = errors.New("user has assistant usage logs; deletion would erase adoption data")
 	ErrInvalidInviteCode         = errors.New("invitation code is invalid or exhausted")
 	ErrDesktopDisabled           = errors.New("desktop access is disabled")
 	ErrDesktopLicenseExpired     = errors.New("desktop license is expired")
@@ -94,6 +96,9 @@ func NewServiceWithCloud(repository *Repository, cfg ServiceConfig, cloud *Cloud
 }
 
 func (s *Service) Bootstrap(ctx context.Context) (User, error) {
+	if normalizeEmail(s.cfg.BootstrapAdminEmail) != "admin@example.com" {
+		return User{}, fmt.Errorf("super administrator email must be admin@example.com")
+	}
 	count, err := s.repository.CountUsers(ctx)
 	if err != nil {
 		return User{}, err
@@ -110,7 +115,7 @@ func (s *Service) Bootstrap(ctx context.Context) (User, error) {
 			Email:       s.cfg.BootstrapAdminEmail,
 			Password:    s.cfg.BootstrapAdminPassword,
 			DisplayName: s.cfg.BootstrapAdminName,
-			Role:        RoleAdmin,
+			Role:        RoleSuperAdmin,
 			Status:      StatusActive,
 		})
 		if err != nil {
@@ -350,6 +355,9 @@ func (s *Service) createUser(ctx context.Context, repository *Repository, input 
 	if email == "" {
 		return User{}, fmt.Errorf("email is required")
 	}
+	if email == "admin@example.com" && input.Role != RoleSuperAdmin || email != "admin@example.com" && input.Role == RoleSuperAdmin {
+		return User{}, ErrForbidden
+	}
 
 	displayName := strings.TrimSpace(input.DisplayName)
 	if displayName == "" {
@@ -397,15 +405,19 @@ func (s *Service) createUser(ctx context.Context, repository *Repository, input 
 }
 
 func (s *Service) AdminCreateUser(ctx context.Context, input CreateUserInput) (User, error) {
-	if _, err := RequireAdmin(ctx); err != nil {
+	actor, err := RequireAdmin(ctx)
+	if err != nil {
 		return User{}, err
+	}
+	if normalizeEmail(input.Email) == "admin@example.com" || input.Role == RoleSuperAdmin || (!actor.IsSuperAdmin() && input.Role != "" && input.Role != RoleUser) {
+		return User{}, ErrForbidden
 	}
 
 	return s.CreateUser(ctx, input)
 }
 
 func (s *Service) UpdateUser(ctx context.Context, id string, input UpdateUserInput) (User, error) {
-	current, err := RequireAdmin(ctx)
+	current, err := RequireSuperAdmin(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -413,6 +425,12 @@ func (s *Service) UpdateUser(ctx context.Context, id string, input UpdateUserInp
 	target, err := s.repository.GetUserByID(ctx, strings.TrimSpace(id))
 	if err != nil {
 		return User{}, mapUserError(id, err)
+	}
+	if target.IsSuperAdmin() && (input.Role != nil && normalizeRole(*input.Role) != RoleSuperAdmin || input.Status != nil && normalizeStatus(*input.Status) != StatusActive) {
+		return User{}, ErrForbidden
+	}
+	if input.Role != nil && normalizeRole(*input.Role) == RoleSuperAdmin && !target.IsSuperAdmin() {
+		return User{}, ErrForbidden
 	}
 
 	if input.Status != nil && target.ID == current.ID && normalizeStatus(*input.Status) == StatusDisabled {
@@ -449,6 +467,34 @@ func (s *Service) UpdateUser(ctx context.Context, id string, input UpdateUserInp
 	return s.repository.UpdateUser(ctx, target.ID, input)
 }
 
+func (s *Service) DeleteUser(ctx context.Context, id string) error {
+	if _, err := RequireSuperAdmin(ctx); err != nil {
+		return err
+	}
+	target, err := s.repository.GetUserByID(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return mapUserError(id, err)
+	}
+	if target.IsSuperAdmin() || target.Role == RoleSuperAdmin || target.Email == "admin@example.com" {
+		return ErrForbidden
+	}
+	count, err := s.repository.CountUserAccounts(ctx, target.ID)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrUserHasAccounts
+	}
+	count, err = s.repository.CountUserUsageLogs(ctx, target.ID)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrUserHasUsageLogs
+	}
+	return mapUserError(id, s.repository.DeleteUser(ctx, target.ID))
+}
+
 func (s *Service) ListDesktopDevices(ctx context.Context, userID string) ([]DesktopDevice, error) {
 	if _, err := RequireAdmin(ctx); err != nil {
 		return nil, err
@@ -458,7 +504,7 @@ func (s *Service) ListDesktopDevices(ctx context.Context, userID string) ([]Desk
 }
 
 func (s *Service) UpdateDesktopDevice(ctx context.Context, userID string, deviceID string, input UpdateDesktopDeviceInput) (DesktopDevice, error) {
-	if _, err := RequireAdmin(ctx); err != nil {
+	if _, err := RequireSuperAdmin(ctx); err != nil {
 		return DesktopDevice{}, err
 	}
 
@@ -466,7 +512,7 @@ func (s *Service) UpdateDesktopDevice(ctx context.Context, userID string, device
 }
 
 func (s *Service) ResetPassword(ctx context.Context, id string, input ResetPasswordInput) error {
-	if _, err := RequireAdmin(ctx); err != nil {
+	if _, err := RequireSuperAdmin(ctx); err != nil {
 		return err
 	}
 
@@ -589,6 +635,9 @@ func (s *Service) authorizeDesktopDevice(ctx context.Context, user User, input D
 
 func (s *Service) mirrorCloudUser(ctx context.Context, cloudUser User) (User, error) {
 	role := normalizeRole(cloudUser.Role)
+	if normalizeEmail(cloudUser.Email) == "admin@example.com" && (role == RoleAdmin || role == RoleSuperAdmin) {
+		role = RoleSuperAdmin
+	}
 	if role == "" {
 		role = RoleUser
 	}
@@ -673,7 +722,7 @@ func (s *Service) ensureAnotherAdmin(ctx context.Context, targetID string) error
 	}
 
 	for _, user := range users {
-		if user.ID != targetID && user.Role == RoleAdmin && user.Status == StatusActive {
+		if user.ID != targetID && user.IsAdmin() && user.Status == StatusActive {
 			return nil
 		}
 	}
@@ -728,6 +777,8 @@ func normalizeEmail(value string) string {
 
 func normalizeRole(value Role) Role {
 	switch Role(strings.ToLower(strings.TrimSpace(string(value)))) {
+	case RoleSuperAdmin:
+		return RoleSuperAdmin
 	case RoleAdmin:
 		return RoleAdmin
 	case RoleUser:

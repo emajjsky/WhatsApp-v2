@@ -5,6 +5,7 @@ import "time"
 type Role string
 
 const (
+	RoleSuperAdmin Role = "super_admin"
 	RoleAdmin Role = "admin"
 	RoleUser  Role = "user"
 )
@@ -45,7 +46,11 @@ type User struct {
 }
 
 func (u User) IsAdmin() bool {
-	return u.Role == RoleAdmin
+	return u.Role == RoleAdmin || u.IsSuperAdmin()
+}
+
+func (u User) IsSuperAdmin() bool {
+	return u.Role == RoleSuperAdmin && normalizeEmail(u.Email) == "admin@example.com"
 }
 
 func (u User) IsActive() bool {

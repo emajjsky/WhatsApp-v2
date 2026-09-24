@@ -37,7 +37,7 @@ const previewUser: AuthUser = {
   id: 'local-preview-user',
   email: 'preview@example.com',
   display_name: '本地预览',
-  role: 'admin',
+  role: 'super_admin',
   status: 'active',
   permissions: ['accounts', 'chats', 'exports'],
   desktop: { enabled: true, max_devices: 10 },
@@ -160,7 +160,7 @@ export function RequireAdmin() {
   if (!auth.authenticated) {
     return <Navigate to="/login" replace />
   }
-  if (auth.user?.role !== 'admin') {
+  if (auth.user?.role !== 'admin' && auth.user?.role !== 'super_admin') {
     if (auth.cloudAdminOnly) {
       return <div className="auth-loading">当前账号没有后台权限</div>
     }
