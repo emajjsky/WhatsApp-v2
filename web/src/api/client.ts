@@ -613,6 +613,9 @@ export interface ProviderPresetView {
   text_enabled: boolean
   models: string[]
   default_model: string
+  decision_enabled: boolean
+  decision_models: string[]
+  default_decision_model: string
   asr_enabled: boolean
   asr_base_url: string
   asr_model: string
@@ -632,6 +635,9 @@ export interface UpsertProviderPresetPayload {
   text_enabled: boolean
   models: string[]
   default_model: string
+  decision_enabled: boolean
+  decision_models: string[]
+  default_decision_model: string
   asr_enabled: boolean
   asr_base_url?: string
   asr_model?: string
@@ -700,6 +706,29 @@ export interface UpsertAgentSettingsPayload {
   prompt_template: string
 }
 
+export interface DesktopAgentDraftPayload {
+  account_id: string
+  chat_id: string
+  chat_title?: string
+  trigger_message_id: string
+  message_text: string
+  agent_id?: string
+  context_enabled: boolean
+  context_message_limit?: number
+  recent_messages?: Array<{ role: string; text: string }>
+}
+
+export interface DesktopAgentDraftResult {
+  request_id: string
+  agent_id: string
+  agent_name: string
+  status: string
+  draft?: string
+  block_reason?: string
+  provider?: Record<string, unknown>
+  trace?: Record<string, unknown>
+  completed_at: string
+}
 export interface GenerateAgentRunPayload {
   chat_id: string
   agent_id?: string
@@ -1698,6 +1727,12 @@ export async function deleteAgentSkillFile(skillId: string, fileId: string) {
   })
 }
 
+export async function generateDesktopAgentDraft(payload: DesktopAgentDraftPayload) {
+  return request<{ result: DesktopAgentDraftResult }>('/api/desktop/agent-runs/generate', {
+    method: 'POST',
+    jsonBody: payload,
+  })
+}
 export async function generateAgentRun(payload: GenerateAgentRunPayload) {
   return request<{ run: AgentRunView }>('/api/agent-runs/generate', {
     method: 'POST',

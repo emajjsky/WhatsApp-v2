@@ -1429,6 +1429,7 @@ func desktopDraftResultFromRunner(
 		Draft:       strings.TrimSpace(response.Draft),
 		BlockReason: strings.TrimSpace(blockReason),
 		Provider:    response.Provider,
+		Trace:       response.Trace,
 		CompletedAt: completedAt,
 	}
 }
@@ -1601,9 +1602,11 @@ func (a *Automation) resolveProviderPreset(ctx context.Context, config map[strin
 	if preset.ProviderType == "openai_compatible" && strings.TrimSpace(preset.APIKey) == "" {
 		return nil, fmt.Errorf("provider preset %q has no API key; configure it in admin backend", preset.Name)
 	}
-
 	resolved := cloneProviderConfig(config)
 	resolved["type"] = preset.ProviderType
+	resolved["decision_enabled"] = preset.DecisionEnabled
+	resolved["decision_models"] = append([]string(nil), preset.DecisionModels...)
+	resolved["decision_model"] = preset.DefaultDecisionModel
 	if strings.TrimSpace(preset.BaseURL) != "" {
 		resolved["base_url"] = preset.BaseURL
 		if preset.ProviderType != "openai_compatible" && strings.TrimSpace(anyString(resolved["endpoint_url"])) == "" {

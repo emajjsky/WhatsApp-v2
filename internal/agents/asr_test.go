@@ -60,15 +60,17 @@ func TestTranscribeAudioUsesDefaultASRProvider(t *testing.T) {
 	now := time.Now().UTC()
 	query := regexp.QuoteMeta(`
 SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+       decision_enabled, decision_models, default_decision_model,
        asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
 WHERE enabled = TRUE AND asr_enabled = TRUE AND is_default_asr = TRUE
 LIMIT 1`)
 	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{
 		"id", "name", "provider_type", "base_url", "api_key", "text_enabled", "models", "default_model",
+		"decision_enabled", "decision_models", "default_decision_model",
 		"asr_enabled", "asr_base_url", "asr_model", "is_default_asr", "enabled", "created_at", "updated_at",
 	}).AddRow(
-		"provider-1", "ASR Provider", "openai_compatible", server.URL, "test-key", false, []byte(`[]`), "",
+		"provider-1", "ASR Provider", "openai_compatible", server.URL, "test-key", false, []byte(`[]`), false, []byte(`[]`), "",
 		true, "", "whisper-test", true, true, now, now,
 	))
 
@@ -146,15 +148,17 @@ func TestTranscribeAudioUsesOpenRouterAudioInput(t *testing.T) {
 	now := time.Now().UTC()
 	query := regexp.QuoteMeta(`
 SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+       decision_enabled, decision_models, default_decision_model,
        asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
 WHERE enabled = TRUE AND asr_enabled = TRUE AND is_default_asr = TRUE
 LIMIT 1`)
 	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{
 		"id", "name", "provider_type", "base_url", "api_key", "text_enabled", "models", "default_model",
+		"decision_enabled", "decision_models", "default_decision_model",
 		"asr_enabled", "asr_base_url", "asr_model", "is_default_asr", "enabled", "created_at", "updated_at",
 	}).AddRow(
-		"provider-openrouter", "OpenRouter ASR", "openrouter", server.URL, "openrouter-key", false, []byte(`[]`), "",
+		"provider-openrouter", "OpenRouter ASR", "openrouter", server.URL, "openrouter-key", false, []byte(`[]`), false, []byte(`[]`), "",
 		true, "", "google/gemini-2.5-flash-lite", true, true, now, now,
 	))
 	repository, err := NewRepository(db)

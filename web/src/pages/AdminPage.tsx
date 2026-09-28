@@ -10,6 +10,7 @@ import {
   listAgentSkills,
   listProviderPresets,
   listDesktopDevices,
+  generateDesktopAgentDraft,
   deleteProviderPreset,
   deleteSystemAgentConfig,
   listAssistantUsageLogFilters,
@@ -79,6 +80,9 @@ interface ProviderPresetForm {
   textEnabled: boolean
   models: string
   defaultModel: string
+  decisionEnabled: boolean
+  decisionModels: string
+  defaultDecisionModel: string
   asrEnabled: boolean
   asrBaseUrl: string
   asrModel: string
@@ -689,7 +693,8 @@ function MockProvidersPanel({ providers, setProviders, onNotify }: { providers: 
         <label className="field"><span>Base URL / API 地址</span><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} placeholder="https://api.example.com/v1" required /></label>
         <label className="field"><span>API Key</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} placeholder="请输入 API Key" required /></label>
         <div className="mock-two-columns" role="radiogroup" aria-label="Provider 用途"><label className="mock-toggle mock-toggle-box"><input type="radio" name="mock-provider-capability" checked={draft.textEnabled} disabled={draft.type === 'OpenRouter'} onChange={() => setDraft({ ...draft, textEnabled: true, asrEnabled: false, isDefaultASR: false })} />文本模型</label><label className="mock-toggle mock-toggle-box"><input type="radio" name="mock-provider-capability" checked={draft.asrEnabled} onChange={() => setDraft({ ...draft, textEnabled: false, asrEnabled: true })} />语音转写（ASR）</label></div>
-        {draft.textEnabled ? <><div className="mock-model-detect"><div><strong>可用模型</strong><span>{draft.models.length ? `${draft.models.length} 个模型已检测` : '尚未检测模型'}</span></div><button className="secondary-button" type="button" onClick={detectModels}><Icon name="search" />检测可用模型</button></div>{draft.models.length ? <div className="mock-model-list">{draft.models.map((model) => <span key={model}>{model}</span>)}</div> : null}<label className="field"><span>默认文本模型</span><select value={draft.defaultModel} onChange={(event) => setDraft({ ...draft, defaultModel: event.target.value })} disabled={!draft.models.length}><option value="">请先检测模型</option>{draft.models.map((model) => <option key={model}>{model}</option>)}</select></label></> : null}
+        {draft.textEnabled ? <><div className="mock-model-detect"><div><strong>可用模型</strong><span>{draft.models.length ? `${draft.models.length} 个模型已检测` : '尚未检测模型'}</span></div><button className="secondary-button" type="button" onClick={detectModels}><Icon name="search" />检测可用模型</button></div>{draft.models.length ? <div className="mock-model-list">{draft.models.map((model) => <span key={model}>{model}</span>)}</div> : null}<label className="field"><span>默认文本模型</span><select value={draft.defaultModel} onChange={(event) => setDraft({ ...draft, defaultModel: event.target.value })} disabled={!draft.models.length}><option value="">请先检测模型</option>{draft.models.map((model) => <option key={model}>{model}</option>)}</select></label>
+</> : null}
         {draft.asrEnabled ? <section className="provider-asr-section"><div className="admin-form-section-title"><strong>语音转写</strong><span>自动识别语种，不使用智能体提示词</span></div>{draft.type !== 'OpenRouter' ? <label className="field"><span>ASR API 地址（可选）</span><input value={draft.asrBaseUrl} onChange={(event) => setDraft({ ...draft, asrBaseUrl: event.target.value })} placeholder="留空时使用上方 Base URL" /></label> : null}<div className="mock-two-columns"><label className="field"><span>ASR 模型</span>{draft.type === 'OpenRouter' ? <select value={draft.asrModel} onChange={(event) => setDraft({ ...draft, asrModel: event.target.value })}><option value="google/gemini-2.5-flash-lite">Gemini 2.5 Flash Lite（测试推荐）</option><option value="google/gemini-2.5-flash">Gemini 2.5 Flash（更高精度）</option></select> : <input value={draft.asrModel} onChange={(event) => setDraft({ ...draft, asrModel: event.target.value })} placeholder="例如：whisper-1" />}</label><label className="mock-toggle mock-toggle-box"><input type="checkbox" checked={draft.isDefaultASR} onChange={(event) => setDraft({ ...draft, isDefaultASR: event.target.checked })} />设为默认语音转写 Provider</label></div></section> : null}
         <label className="mock-toggle"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />启用当前 Provider</label>
         <footer className="admin-mock-modal-footer"><button className="secondary-button" type="button" onClick={() => setDraft(undefined)}>取消</button><button className="primary-button" type="submit"><Icon name="save" />保存 Provider</button></footer>
@@ -1206,6 +1211,8 @@ function SkillAdminPanel() {
         )) : <div className="system-agent-empty">还没有 Skill</div>}
       </div>
 
+      <SkillMockWorkbench selectedSkill={selectedSkill} />
+
       {editorOpen ? <AdminDialog className="admin-skill-dialog" title={selectedSkill ? `编辑 Skill · ${selectedSkill.name}` : '新建 Skill'} eyebrow="Skill 管理" onClose={() => setEditorOpen(false)}><div className="admin-skill-dialog-content">
         {notice ? <div className="success-banner">{notice}</div> : null}
         {error ? <div className="error-banner">{error}</div> : null}
@@ -1380,6 +1387,145 @@ function SkillAdminPanel() {
   )
 }
 
+function SkillMockWorkbench({ selectedSkill }: { selectedSkill?: AgentSkillView }) {
+  const [configs, setConfigs] = useState<SystemAgentConfigView[]>([])
+  const [agentId, setAgentId] = useState('')
+  const [message, setMessage] = useState('客户问怎么进群，担心费用和流程')
+  const [context, setContext] = useState('客户：我想先了解一下\n客服：好的，您主要想了解哪一部分？')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string>()
+  const [result, setResult] = useState<Awaited<ReturnType<typeof generateDesktopAgentDraft>>['result']>()
+
+  const replyAgents = useMemo(
+    () => configs.filter((config) => config.purpose === 'reply'),
+    [configs],
+  )
+
+  useEffect(() => {
+    void listSystemAgentConfigs()
+      .then((response) => {
+        const next = response.configs.filter((config) => config.purpose === 'reply')
+        setConfigs(next)
+        setAgentId((current) => next.some((config) => config.id === current) ? current : next[0]?.id ?? '')
+      })
+      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : '加载回复 Agent 失败'))
+  }, [])
+
+  useEffect(() => {
+    if (selectedSkill && !replyAgents.some((config) => config.id === agentId)) {
+      setAgentId(replyAgents[0]?.id ?? '')
+    }
+  }, [agentId, replyAgents, selectedSkill])
+
+  async function runRealAgent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!agentId || !message.trim()) {
+      setError('请先配置并选择一个回复 Agent，再输入客户问题')
+      return
+    }
+    setLoading(true)
+    setError(undefined)
+    setResult(undefined)
+    try {
+      const response = await generateDesktopAgentDraft({
+        account_id: 'admin-agent-test',
+        chat_id: 'skill-reference-test-chat',
+        chat_title: 'Skill / reference 试运行',
+        trigger_message_id: `test-${Date.now()}`,
+        message_text: message.trim(),
+        agent_id: agentId,
+        context_enabled: true,
+        context_message_limit: 20,
+        recent_messages: context.split(/\r?\n/).map((text, index) => ({
+          role: index % 2 === 0 ? 'customer' : 'agent',
+          text: text.trim(),
+        })).filter((item) => item.text),
+      })
+      setResult(response.result)
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : '真实 Agent 试运行失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const parsedDraft = useMemo(() => parseTrialDraft(result?.draft), [result?.draft])
+
+  return (
+    <section className="skill-mock-workbench skill-real-trial-workbench">
+      <div className="skill-mock-heading">
+        <div>
+          <p className="eyebrow">真实链路试运行</p>
+          <h4>Agent · Skill · reference · Provider</h4>
+          <span>真实读取后台配置并调用 Agent Runner，只生成草稿，不写入 WhatsApp、不发送消息。</span>
+        </div>
+        <span className="skill-mock-badge">真实 API · 草稿模式</span>
+      </div>
+
+      <form className="skill-mock-form" onSubmit={runRealAgent}>
+        <label className="field">
+          <span>回复 Agent</span>
+          <select value={agentId} onChange={(event) => setAgentId(event.target.value)} disabled={!replyAgents.length || loading}>
+            {!replyAgents.length ? <option value="">暂无已配置回复 Agent</option> : null}
+            {replyAgents.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}
+          </select>
+        </label>
+        <label className="field skill-mock-query-field">
+          <span>模拟客户问题</span>
+          <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="例如：进群需要收费吗？怎么加入？" />
+        </label>
+        <button className="primary-button" type="submit" disabled={loading || !agentId || !message.trim()}>
+          <Icon name="reply" />
+          {loading ? '真实调用中…' : '运行真实 Agent'}
+        </button>
+      </form>
+
+      <label className="field skill-real-trial-context">
+        <span>模拟最近上下文（每行一条，交替按客户 / Agent 传入）</span>
+        <textarea value={context} onChange={(event) => setContext(event.target.value)} rows={3} disabled={loading} />
+      </label>
+
+      {error ? <div className="error-banner">{error}</div> : null}
+      {result ? (
+        <div className="skill-real-trial-result">
+          <div className="skill-real-trial-meta">
+            <span>Agent：{result.agent_name}</span>
+            <span>状态：{result.status}</span>
+            <span>模型：{String(result.provider?.model ?? '未返回')}</span>
+          </div>
+          <div className="skill-real-trial-notice">本次结果来自真实 Provider。决策模型：{String((result.trace?.decision as { model?: string } | undefined)?.model ?? '未启用或未返回')}；判断：{String((result.trace?.decision as { intent?: string } | undefined)?.intent ?? '未返回')}；{result.trace?.decision_error ? `决策回退：${String(result.trace.decision_error)}` : ''}</div>
+          {parsedDraft?.replies?.length ? (
+            <div className="skill-real-trial-replies">
+              {parsedDraft.replies.map((reply, index) => (
+                <article key={`${reply.title}-${index}`}>
+                  <strong>{reply.title || `回复方案 ${index + 1}`}</strong>
+                  <span>{reply.strategy || '未返回策略'}</span>
+                  <p>{reply.content || '未返回正文'}</p>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <pre className="skill-real-trial-raw">{result.draft || result.block_reason || 'Agent 没有返回草稿'}</pre>
+          )}
+        </div>
+      ) : (
+        <div className="skill-mock-empty">这里会真实调用当前回复 Agent，并使用它绑定的 Skill 和 reference。</div>
+      )}
+    </section>
+  )
+}
+
+function parseTrialDraft(value?: string) {
+  if (!value) {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(value) as { replies?: Array<{ title?: string; strategy?: string; content?: string }> }
+    return Array.isArray(parsed.replies) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
 function buildDesktopGrant(enabled: boolean, maxDevices: string, expiresAt: string): DesktopGrant {
   const parsedMaxDevices = Number(maxDevices)
   return {
@@ -1844,6 +1990,9 @@ function ProviderPresetPanel() {
 		text_enabled: form.textEnabled,
         models,
         default_model: form.defaultModel.trim(),
+        decision_enabled: form.decisionEnabled,
+        decision_models: parsePresetModels(form.decisionModels),
+        default_decision_model: form.defaultDecisionModel.trim(),
 		asr_enabled: form.asrEnabled,
 		asr_base_url: form.asrBaseUrl.trim() || undefined,
 		asr_model: form.asrModel.trim() || undefined,
@@ -1966,7 +2115,7 @@ function ProviderPresetPanel() {
         <aside className="admin-record-list-inner">
           <div className="admin-list-caption"><strong>已保存 Provider</strong><span>点击项目编辑连接信息、模型和启用状态</span></div>
           <div className="system-agent-list">
-            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary provider-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="admin-record-summary-main"><strong>{preset.name}</strong><span>{preset.provider_type === 'openrouter' ? 'OpenRouter' : preset.provider_type} · {preset.base_url}</span></span><span className="admin-record-summary-meta"><span>{preset.enabled ? '已启用' : '已停用'} · {preset.text_enabled ? '文本模型' : '语音转写'}</span><small>{preset.text_enabled ? `${preset.models.length} 个模型 · 默认 ${preset.default_model || '未选择'}` : `ASR · ${preset.asr_model || '未配置'}`}{preset.is_default_asr ? ' · 默认转写' : ''}</small></span><span className="admin-record-summary-arrow"><Icon name="chevronRight" /></span></button>)}
+            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary provider-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="admin-record-summary-main"><strong>{preset.name}</strong><span>{preset.provider_type === 'openrouter' ? 'OpenRouter' : preset.provider_type} · {preset.base_url}</span></span><span className="admin-record-summary-meta"><span>{preset.enabled ? '已启用' : '已停用'} · {preset.text_enabled ? '文本模型' : '语音转写'}</span><small>{preset.text_enabled ? `${preset.models.length} 个对话模型 · 默认 ${preset.default_model || '未选择'}` : `ASR · ${preset.asr_model || '未配置'}`}{preset.decision_enabled ? ` · ${(preset.decision_models ?? []).length} 个决策模型 · 默认 ${preset.default_decision_model || '未选择'}` : ''}{preset.is_default_asr ? ' · 默认转写' : ''}</small></span><span className="admin-record-summary-arrow"><Icon name="chevronRight" /></span></button>)}
             {!presets.length ? <div className="system-agent-empty">还没有 Provider 配置</div> : null}
           </div>
         </aside>
@@ -1996,6 +2145,11 @@ function ProviderPresetPanel() {
                 </button>
               </div>
 			  <label className="field"><span>默认文本模型</span><select value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.models).map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+                <section className="provider-decision-section">
+                  <div className="admin-form-section-title"><strong>决策模型（可选）</strong><span>用于状态判断、意图分类和 Skill 推荐；不会生成回复正文</span></div>
+                  <label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.decisionEnabled} onChange={(event) => setForm((current) => ({ ...current, decisionEnabled: event.target.checked }))} /><span>启用决策模型能力</span></label>
+                  {form.decisionEnabled ? <><label className="field"><span>决策模型列表</span><textarea rows={3} value={form.decisionModels} onChange={(event) => setForm((current) => ({ ...current, decisionModels: event.target.value }))} placeholder="每行一个，例如：SemIf、Kev-4B、DiffusionGemma" /></label><label className="field"><span>默认决策模型</span><select value={form.defaultDecisionModel} onChange={(event) => setForm((current) => ({ ...current, defaultDecisionModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.decisionModels).map((model) => <option key={model} value={model}>{model}</option>)}</select></label></> : null}
+                </section>
 			  </> : null}
 			  {form.asrEnabled ? <section className="provider-asr-section">
 				<div className="admin-form-section-title"><strong>语音转写</strong><span>自动识别语种，不使用智能体提示词</span></div>
@@ -2019,12 +2173,12 @@ function ProviderPresetPanel() {
 }
 
 function createDefaultProviderPresetForm(): ProviderPresetForm {
-  return { id: '', name: '', providerType: 'openai_compatible', baseUrl: '', apiKey: '', apiKeyConfigured: false, textEnabled: true, models: '', defaultModel: '', asrEnabled: false, asrBaseUrl: '', asrModel: '', isDefaultASR: false, enabled: true }
+  return { id: '', name: '', providerType: 'openai_compatible', baseUrl: '', apiKey: '', apiKeyConfigured: false, textEnabled: true, models: '', defaultModel: '', decisionEnabled: false, decisionModels: '', defaultDecisionModel: '', asrEnabled: false, asrBaseUrl: '', asrModel: '', isDefaultASR: false, enabled: true }
 }
 
 function mapProviderPresetToForm(preset: ProviderPresetView): ProviderPresetForm {
   const asrEnabled = preset.asr_enabled
-  return { id: preset.id, name: preset.name, providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, apiKey: '', apiKeyConfigured: preset.api_key_configured, textEnabled: !asrEnabled, models: preset.models.join('\n'), defaultModel: preset.default_model, asrEnabled, asrBaseUrl: preset.asr_base_url, asrModel: preset.asr_model, isDefaultASR: preset.is_default_asr, enabled: preset.enabled }
+  return { id: preset.id, name: preset.name, providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, apiKey: '', apiKeyConfigured: preset.api_key_configured, textEnabled: !asrEnabled, models: preset.models.join('\n'), defaultModel: preset.default_model, decisionEnabled: Boolean(preset.decision_enabled), decisionModels: (preset.decision_models ?? []).join('\n'), defaultDecisionModel: preset.default_decision_model || '', asrEnabled, asrBaseUrl: preset.asr_base_url, asrModel: preset.asr_model, isDefaultASR: preset.is_default_asr, enabled: preset.enabled }
 }
 
 function parsePresetModels(value: string) {

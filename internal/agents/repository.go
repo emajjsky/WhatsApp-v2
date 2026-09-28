@@ -679,6 +679,7 @@ func (r *Repository) DeleteSystemConfig(ctx context.Context, id string) error {
 func (r *Repository) ListProviderPresets(ctx context.Context) ([]ProviderPreset, error) {
 	const query = `
 SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+       decision_enabled, decision_models, default_decision_model,
        asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
 ORDER BY enabled DESC, name ASC, created_at DESC`
@@ -706,6 +707,7 @@ ORDER BY enabled DESC, name ASC, created_at DESC`
 func (r *Repository) GetProviderPresetByID(ctx context.Context, id string) (ProviderPreset, error) {
 	const query = `
 SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+       decision_enabled, decision_models, default_decision_model,
        asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
 WHERE id = $1`
@@ -715,6 +717,7 @@ WHERE id = $1`
 func (r *Repository) GetDefaultASRProvider(ctx context.Context) (ProviderPreset, error) {
 	const query = `
 SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+       decision_enabled, decision_models, default_decision_model,
        asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
 WHERE enabled = TRUE AND asr_enabled = TRUE AND is_default_asr = TRUE
@@ -727,12 +730,17 @@ func (r *Repository) UpsertProviderPreset(ctx context.Context, preset ProviderPr
 	if err != nil {
 		return fmt.Errorf("encode provider preset models: %w", err)
 	}
+	decisionModels, err := json.Marshal(normalizeStringList(preset.DecisionModels))
+	if err != nil {
+		return fmt.Errorf("encode provider preset decision models: %w", err)
+	}
 
 	const query = `
 INSERT INTO agent_provider_presets (
     id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+    decision_enabled, decision_models, default_decision_model,
     asr_enabled, asr_base_url, asr_model, is_default_asr, enabled
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
     provider_type = EXCLUDED.provider_type,
@@ -741,6 +749,9 @@ ON CONFLICT (id) DO UPDATE SET
     text_enabled = EXCLUDED.text_enabled,
     models = EXCLUDED.models,
     default_model = EXCLUDED.default_model,
+    decision_enabled = EXCLUDED.decision_enabled,
+    decision_models = EXCLUDED.decision_models,
+    default_decision_model = EXCLUDED.default_decision_model,
     asr_enabled = EXCLUDED.asr_enabled,
     asr_base_url = EXCLUDED.asr_base_url,
     asr_model = EXCLUDED.asr_model,
@@ -777,6 +788,9 @@ ON CONFLICT (id) DO UPDATE SET
 		preset.TextEnabled,
 		models,
 		preset.DefaultModel,
+		preset.DecisionEnabled,
+		decisionModels,
+		preset.DefaultDecisionModel,
 		preset.ASREnabled,
 		preset.ASRBaseURL,
 		preset.ASRModel,
@@ -2164,6 +2178,7 @@ func scanProviderPreset(row rowScanner) (ProviderPreset, error) {
 	var (
 		item   ProviderPreset
 		models []byte
+		decisionModels []byte
 	)
 	if err := row.Scan(
 		&item.ID,
@@ -2174,6 +2189,9 @@ func scanProviderPreset(row rowScanner) (ProviderPreset, error) {
 		&item.TextEnabled,
 		&models,
 		&item.DefaultModel,
+		&item.DecisionEnabled,
+		&decisionModels,
+		&item.DefaultDecisionModel,
 		&item.ASREnabled,
 		&item.ASRBaseURL,
 		&item.ASRModel,
@@ -2191,6 +2209,14 @@ func scanProviderPreset(row rowScanner) (ProviderPreset, error) {
 	}
 	if item.Models == nil {
 		item.Models = []string{}
+	}
+	if len(decisionModels) > 0 {
+		if err := json.Unmarshal(decisionModels, &item.DecisionModels); err != nil {
+			return ProviderPreset{}, fmt.Errorf("decode provider preset %q decision models: %w", item.ID, err)
+		}
+	}
+	if item.DecisionModels == nil {
+		item.DecisionModels = []string{}
 	}
 	item.APIKeyConfigured = strings.TrimSpace(item.APIKey) != ""
 	return item, nil

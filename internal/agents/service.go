@@ -746,9 +746,17 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 		return ProviderPreset{}, fmt.Errorf("unsupported provider preset type %q", input.ProviderType)
 	}
 	models := normalizeStringList(input.Models)
+	decisionModels := normalizeStringList(input.DecisionModels)
 	defaultModel := strings.TrimSpace(input.DefaultModel)
+	defaultDecisionModel := strings.TrimSpace(input.DefaultDecisionModel)
 	if defaultModel != "" && !containsString(models, defaultModel) {
 		models = append(models, defaultModel)
+	}
+	if defaultDecisionModel != "" && !containsString(decisionModels, defaultDecisionModel) {
+		decisionModels = append(decisionModels, defaultDecisionModel)
+	}
+	if input.DecisionEnabled && len(decisionModels) == 0 {
+		return ProviderPreset{}, fmt.Errorf("启用决策模型时至少需要一个模型")
 	}
 	textEnabled := true
 	if input.TextEnabled != nil {
@@ -824,6 +832,9 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 		TextEnabled:  textEnabled,
 		Models:       models,
 		DefaultModel: defaultModel,
+		DecisionEnabled: input.DecisionEnabled,
+		DecisionModels: decisionModels,
+		DefaultDecisionModel: defaultDecisionModel,
 		ASREnabled:   asrEnabled,
 		ASRBaseURL:   asrBaseURL,
 		ASRModel:     asrModel,

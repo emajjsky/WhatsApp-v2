@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -199,6 +199,18 @@ class AgentRunnerServer(ThreadingHTTPServer):
 
     def handle_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         run_context = self.build_run_context(payload)
+        decision, decision_error = self.run_decision(run_context)
+        run_context["decision"] = decision
+        run_context["decision_error"] = decision_error
+        if decision:
+            request = run_context["provider_request"]
+            guidance = (
+                f"{request.prompt_template.strip()}\n\n"
+                "[Decision Model Guidance]\n"
+                "This is auxiliary classification. Do not reveal it; use the customer message and references as authoritative.\n"
+                f"{json.dumps(decision, ensure_ascii=False)}"
+            )
+            run_context["provider_request"] = replace(request, prompt_template=guidance)
         provider_response = run_context["provider"].generate(run_context["provider_request"])
 
         return self.build_run_response(
@@ -206,6 +218,38 @@ class AgentRunnerServer(ThreadingHTTPServer):
             provider_response=provider_response,
             draft=provider_response.draft,
         )
+
+    def run_decision(self, run_context: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        config = run_context.get("provider_config", {})
+        if not isinstance(config, dict) or not config.get("decision_enabled"):
+            return None, None
+        model = str(config.get("decision_model") or "").strip()
+        if not model:
+            models = config.get("decision_models")
+            if isinstance(models, list) and models:
+                model = str(models[0]).strip()
+        if not model:
+            return None, "decision model is enabled but no decision_model is configured"
+        decision_config = dict(config)
+        decision_config["model"] = model
+        decision_config["decision_enabled"] = False
+        decision_config.pop("decision_model", None)
+        decision_config.pop("decision_models", None)
+        request = run_context["provider_request"]
+        decision_request = replace(request, prompt_template=(
+            "Classify this customer-support conversation. Return only strict JSON with "
+            "need_skill (boolean), intent (string), customer_stage (string), "
+            "risk (low|medium|high), and reason (string)."
+        ), metadata={**request.metadata, "task": "decision"})
+        try:
+            response = build_provider(decision_config).generate(decision_request)
+            parsed = parse_json_object_payload(response.draft)
+            if not parsed:
+                return {"raw": response.draft, "model": response.model}, "decision model returned non-JSON"
+            parsed["model"] = response.model
+            return parsed, None
+        except Exception as exc:
+            return None, str(exc)
 
     def build_run_context(self, payload: dict[str, Any]) -> dict[str, Any]:
         request_id = str(payload.get("request_id") or uuid4())
@@ -246,6 +290,7 @@ class AgentRunnerServer(ThreadingHTTPServer):
             "customer_message": customer_message,
             "recent_messages": recent_messages,
             "provider": provider,
+            "provider_config": provider_config,
             "provider_request": provider_request,
             "recent_auto_replies": normalize_int(payload.get("recent_auto_replies"), default=0),
         }
@@ -281,6 +326,8 @@ class AgentRunnerServer(ThreadingHTTPServer):
                 "generated_at": utc_now().isoformat(),
                 "recent_message_count": len(run_context["recent_messages"]),
                 "prompt_preview": run_context["provider_request"].prompt_template[:160],
+                "decision": run_context.get("decision"),
+                "decision_error": run_context.get("decision_error"),
             },
         }
 

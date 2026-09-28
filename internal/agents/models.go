@@ -149,6 +149,9 @@ type ProviderPreset struct {
 	TextEnabled      bool      `json:"text_enabled"`
 	Models           []string  `json:"models"`
 	DefaultModel     string    `json:"default_model"`
+	DecisionEnabled  bool      `json:"decision_enabled"`
+	DecisionModels   []string  `json:"decision_models"`
+	DefaultDecisionModel string `json:"default_decision_model"`
 	ASREnabled       bool      `json:"asr_enabled"`
 	ASRBaseURL       string    `json:"asr_base_url"`
 	ASRModel         string    `json:"asr_model"`
@@ -169,6 +172,9 @@ type UpsertProviderPresetInput struct {
 	TextEnabled  *bool    `json:"text_enabled,omitempty"`
 	Models       []string `json:"models"`
 	DefaultModel string   `json:"default_model"`
+	DecisionEnabled bool `json:"decision_enabled"`
+	DecisionModels []string `json:"decision_models"`
+	DefaultDecisionModel string `json:"default_decision_model"`
 	ASREnabled   bool     `json:"asr_enabled"`
 	ASRBaseURL   string   `json:"asr_base_url,omitempty"`
 	ASRModel     string   `json:"asr_model,omitempty"`
@@ -489,6 +495,7 @@ type DesktopAgentDraftResult struct {
 	Draft       string         `json:"draft,omitempty"`
 	BlockReason string         `json:"block_reason,omitempty"`
 	Provider    map[string]any `json:"provider,omitempty"`
+	Trace       map[string]any `json:"trace,omitempty"`
 	CompletedAt time.Time      `json:"completed_at"`
 }
 
