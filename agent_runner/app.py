@@ -8,6 +8,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
+from urllib import error as urllib_error, request as urllib_request
 from uuid import uuid4
 
 try:
@@ -197,9 +198,53 @@ class AgentRunnerServer(ThreadingHTTPServer):
         super().__init__((config.host, config.port), AgentRunnerHandler)
         self.config = config
 
+    def _apply_skill_decision(
+        self,
+        run_context: dict[str, Any],
+        decision: dict[str, Any] | None,
+        decision_error: str | None = None,
+    ) -> dict[str, Any]:
+        next_context = dict(run_context)
+        request = run_context["provider_request"]
+        if decision is None:
+            if decision_error:
+                next_context["provider_request"] = replace(
+                    request,
+                    knowledge_summary=None,
+                    knowledge_references=[],
+                    metadata={
+                        **request.metadata,
+                        "skill_lookup": "skipped_decision_error",
+                        "skill_decision_error": decision_error,
+                        "skill_tags": [],
+                    },
+                )
+            return next_context
+
+        should_use_skill = bool(decision.get("need_skill"))
+        references = request.knowledge_references if should_use_skill else []
+        if should_use_skill:
+            references, filter_status = filter_skill_references(references, decision.get("skill_tags", []))
+        else:
+            filter_status = "skipped_by_decision"
+        next_context["provider_request"] = replace(
+            request,
+            knowledge_summary=request.knowledge_summary if should_use_skill else None,
+            knowledge_references=references,
+            metadata={
+                **request.metadata,
+                "skill_lookup": "used" if should_use_skill else "skipped",
+                "skill_intent": decision.get("intent", "其他"),
+                "skill_tags": decision.get("skill_tags", []),
+                "skill_filter": filter_status,
+            },
+        )
+        return next_context
+
     def handle_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         run_context = self.build_run_context(payload)
         decision, decision_error = self.run_decision(run_context)
+        run_context = self._apply_skill_decision(run_context, decision, decision_error)
         run_context["decision"] = decision
         run_context["decision_error"] = decision_error
         if decision:
@@ -235,19 +280,44 @@ class AgentRunnerServer(ThreadingHTTPServer):
         decision_config["decision_enabled"] = False
         decision_config.pop("decision_model", None)
         decision_config.pop("decision_models", None)
+        if config.get("decision_base_url"):
+            decision_config["base_url"] = config.get("decision_base_url")
+        if config.get("decision_api_key"):
+            decision_config["api_key"] = config.get("decision_api_key")
+        if config.get("decision_provider_type"):
+            decision_config["type"] = config.get("decision_provider_type")
         request = run_context["provider_request"]
         decision_request = replace(request, prompt_template=(
             "Classify this customer-support conversation. Return only strict JSON with "
-            "need_skill (boolean), intent (string), customer_stage (string), "
+            "need_skill (boolean), intent (one of 售前|售后|客服|引流|进群引导|其他), "
+            "skill_tags (string array), customer_stage (string), "
             "risk (low|medium|high), and reason (string)."
         ), metadata={**request.metadata, "task": "decision"})
         try:
-            response = build_provider(decision_config).generate(decision_request)
-            parsed = parse_json_object_payload(response.draft)
-            if not parsed:
-                return {"raw": response.draft, "model": response.model}, "decision model returned non-JSON"
-            parsed["model"] = response.model
-            return parsed, None
+            decision_base_url = str(config.get("decision_base_url") or "").strip().rstrip("/")
+            if decision_base_url.endswith("/systemone"):
+                payload = {
+                    "model": model,
+                    "state": f"客户消息：{request.customer_message}\n最近上下文：{request.recent_messages}",
+                    "questions": {
+                        "need_skill": {"type": "noul", "instructions": "是否需要查询 Skill 和 reference 知识后再回答？"},
+                        "intent": {"type": "choice", "instructions": "判断客户当前最主要业务意图，用于筛选话术 Skill", "criteria": {"售前": "产品、价格、功能咨询", "售后": "故障、退款、账号或使用问题", "客服": "一般咨询、订单跟进、服务沟通", "引流": "活动、社群、联系方式", "进群引导": "邀请加入群组或社群", "其他": "无法归入以上类别"}},
+                        "skill_tags": {"type": "multi_choice", "instructions": "给出需要检索的 Skill 分类标签，只能从售前、售后、客服、引流、进群引导中选择；无需查询时返回空数组", "criteria": {"售前": "产品和购买咨询", "售后": "售后问题处理", "客服": "一般客服话术", "引流": "推广及线索引导", "进群引导": "邀请入群话术"}},
+                        "risk": {"type": "choice", "instructions": "判断客户风险等级", "criteria": {"低": "没有明显风险", "中": "存在投诉或流失风险", "高": "涉及强烈投诉、资金或安全风险"}},
+                    },
+                }
+                req = urllib_request.Request(decision_base_url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST", headers={"Content-Type": "application/json", "Authorization": f"Bearer {config.get('decision_api_key') or config.get('api_key') or ''}"})
+                with urllib_request.urlopen(req, timeout=60) as resp:
+                    decoded = json.loads(resp.read().decode("utf-8"))
+                parsed = decoded if isinstance(decoded, dict) else {"raw": decoded}
+            else:
+                response = build_provider(decision_config).generate(decision_request)
+                parsed = parse_json_object_payload(response.draft)
+                if not parsed:
+                    return {"raw": response.draft, "model": response.model}, "decision model returned non-JSON"
+                parsed["model"] = response.model
+            parsed["model"] = model
+            return normalize_skill_decision(parsed), None
         except Exception as exc:
             return None, str(exc)
 
@@ -328,6 +398,11 @@ class AgentRunnerServer(ThreadingHTTPServer):
                 "prompt_preview": run_context["provider_request"].prompt_template[:160],
                 "decision": run_context.get("decision"),
                 "decision_error": run_context.get("decision_error"),
+                "skill_lookup": run_context["provider_request"].metadata.get("skill_lookup", "not_decided"),
+                "skill_intent": run_context["provider_request"].metadata.get("skill_intent"),
+                "skill_tags": run_context["provider_request"].metadata.get("skill_tags", []),
+                "skill_filter": run_context["provider_request"].metadata.get("skill_filter"),
+                "reference_count": len(run_context["provider_request"].knowledge_references),
             },
         }
 
@@ -343,6 +418,21 @@ class AgentRunnerServer(ThreadingHTTPServer):
 
     def prepare_run_stream(self, payload: dict[str, Any]):
         run_context = self.build_run_context(payload)
+        decision, decision_error = self.run_decision(run_context)
+        run_context = self._apply_skill_decision(run_context, decision, decision_error)
+        run_context["decision"] = decision
+        run_context["decision_error"] = decision_error
+        if decision:
+            request = run_context["provider_request"]
+            run_context["provider_request"] = replace(
+                request,
+                prompt_template=(
+                    f"{request.prompt_template.strip()}\n\n"
+                    "[Decision Model Guidance]\n"
+                    "这是辅助分类结果，不要向客户展示。只按客户消息和可用参考资料生成回复。\n"
+                    f"{json.dumps(decision, ensure_ascii=False)}"
+                ),
+            )
 
         def iterator():
             yield {
@@ -515,6 +605,65 @@ def required_string(payload: dict[str, Any], key: str) -> str:
     if not value:
         raise ValueError(f"{key} is required")
     return value
+
+
+def normalize_skill_decision(value: dict[str, Any]) -> dict[str, Any]:
+    raw_need_skill = value.get("need_skill")
+    if isinstance(raw_need_skill, str):
+        need_skill = raw_need_skill.strip().lower() in {"true", "1", "yes", "y", "需要", "是"}
+    else:
+        need_skill = bool(raw_need_skill)
+
+    intent = optional_string(value.get("intent")) or "其他"
+    raw_tags = value.get("skill_tags")
+    tags = raw_tags if isinstance(raw_tags, list) else []
+    skill_tags: list[str] = []
+    for tag in tags:
+        normalized = optional_string(tag)
+        if normalized and normalized not in skill_tags:
+            skill_tags.append(normalized)
+    if intent not in skill_tags and intent != "其他":
+        skill_tags.insert(0, intent)
+
+    return {
+        "need_skill": need_skill,
+        "intent": intent,
+        "skill_tags": skill_tags[:8],
+        "customer_stage": optional_string(value.get("customer_stage")) or "未知",
+        "risk": optional_string(value.get("risk")) or "未知",
+        "reason": optional_string(value.get("reason")) or "",
+        "model": optional_string(value.get("model")) or "",
+    }
+
+
+def filter_skill_references(references: list[str], tags: Any) -> tuple[list[str], str]:
+    normalized_tags = [str(tag).strip().casefold() for tag in tags if str(tag).strip()] if isinstance(tags, list) else []
+    if not normalized_tags:
+        return references, "no_tags_fallback_all_bound_references"
+
+    tagged = [reference for reference in references if reference.casefold().find("[skill:") >= 0]
+    if not tagged:
+        return references, "unlabeled_references_fallback_all_bound_references"
+
+    aliases = {
+        "售前": {"售前", "pre-sales", "presales", "sales"},
+        "售后": {"售后", "after-sales", "aftersales", "support", "customer-service"},
+        "客服": {"客服", "customer-service", "customer support", "support"},
+        "引流": {"引流", "lead", "lead-generation", "marketing"},
+        "进群引导": {"进群引导", "group", "group-onboarding", "community"},
+    }
+    expanded_tags = set(normalized_tags)
+    for tag in normalized_tags:
+        expanded_tags.update(aliases.get(tag, set()))
+
+    matched = [
+        reference
+        for reference in tagged
+        if any(tag in reference.casefold() for tag in expanded_tags)
+    ]
+    if not matched:
+        return [], "no_matching_skill_references"
+    return matched, "matched_skill_references"
 
 
 def optional_string(value: Any) -> str | None:

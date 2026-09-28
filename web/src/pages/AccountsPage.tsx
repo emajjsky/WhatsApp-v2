@@ -1,4 +1,5 @@
 import QRCode from 'qrcode'
+import { AsYouType, getCountries, getCountryCallingCode, isValidPhoneNumber, parsePhoneNumberFromString, type CountryCode } from 'libphonenumber-js'
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import {
   createAccount,
@@ -22,10 +23,28 @@ import { StatusBadge } from '../components/StatusBadge'
 
 const initialForm = {
   displayName: '',
+  phoneCountryCode: 'CN',
   phoneNumber: '',
   platformLabel: '',
 }
 
+const regionNames = new Intl.DisplayNames(['zh-CN'], { type: 'region' })
+const phoneCountries = getCountries()
+  .map((code) => ({
+    code,
+    name: regionNames.of(code) ?? code,
+    flag: countryFlag(code),
+    dialCode: getCountryCallingCode(code),
+  }))
+  .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+
+function countryFlag(code: CountryCode) {
+  return code
+    .toUpperCase()
+    .split('')
+    .map((character) => String.fromCodePoint(character.charCodeAt(0) + 127397))
+    .join('')
+}
 const mockProxyBindings: Record<string, string> = {
   'mock-account-7': 'mock-proxy-1',
   'mock-account-6': 'mock-proxy-1',
@@ -394,15 +413,26 @@ export function AccountsPage() {
 
   async function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setSubmitting(true)
     setError(undefined)
+    const selectedCountry = phoneCountries.find((country) => country.code === form.phoneCountryCode)
+    if (!selectedCountry || !isValidPhoneNumber(form.phoneNumber, selectedCountry.code)) {
+      setError(`请输入有效的${selectedCountry?.name ?? '国际'}电话号码`)
+      return
+    }
+    const parsedPhoneNumber = parsePhoneNumberFromString(form.phoneNumber, selectedCountry.code)
+    if (!parsedPhoneNumber) {
+      setError('手机号格式无法识别，请检查国家/地区和号码')
+      return
+    }
+    const fullPhoneNumber = parsedPhoneNumber.number.replace(/^\+/, '')
+    setSubmitting(true)
 
     try {
       if (mockMode) {
         const mockAccount: AccountView = {
           id: `mock-account-${Date.now()}`,
           display_name: form.displayName.trim() || '新建模拟账号',
-          phone_number: form.phoneNumber.trim() || undefined,
+          phone_number: fullPhoneNumber,
           platform_label: form.platformLabel.trim() || undefined,
           status: 'pending',
           created_at: new Date().toISOString(),
@@ -418,7 +448,7 @@ export function AccountsPage() {
       }
       const response = await createAccount({
         display_name: form.displayName.trim(),
-        phone_number: form.phoneNumber.trim() || undefined,
+        phone_number: fullPhoneNumber,
         platform_label: form.platformLabel.trim() || undefined,
       })
 
@@ -497,7 +527,7 @@ export function AccountsPage() {
                 ? { ...account, status: 'connected', last_seen_at: connectedAt, updated_at: connectedAt, session: { status: 'connected', updated_at: connectedAt, connected_at: connectedAt } }
                 : account
             )))
-          }, 1800)
+          }, 10000)
         } else {
           setNotice(`模拟${method === 'logout' ? '退出登录' : '配对操作'}已触发（仅用于本地预览）`)
         }
@@ -656,14 +686,30 @@ export function AccountsPage() {
                     autoFocus
                   />
                 </label>
-                <label className="field">
-                  <span>手机号</span>
-                  <input
-                    value={form.phoneNumber}
-                    onChange={(event) => setForm((current) => ({ ...current, phoneNumber: event.target.value }))}
-                    placeholder="配对码模式建议填写国际格式，例如 86138..."
-                  />
-                </label>
+                <div className="account-phone-fields">
+                  <label className="field">
+                    <span>国家/地区</span>
+                    <select value={form.phoneCountryCode} onChange={(event) => setForm((current) => ({ ...current, phoneCountryCode: event.target.value }))}>
+                      {phoneCountries.map((country) => <option key={country.code} value={country.code}>{country.flag} {country.name} +{country.dialCode}</option>)}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>电话号码</span>
+                    <input
+                      value={form.phoneNumber}
+                      onChange={(event) => {
+                        const country = phoneCountries.find((item) => item.code === form.phoneCountryCode)
+                        const value = country ? new AsYouType(country.code).input(event.target.value.replace(/[^\d+]/g, '')) : event.target.value
+                        setForm((current) => ({ ...current, phoneNumber: value }))
+                      }}
+                      placeholder="请输入本地电话号码"
+                      inputMode="tel"
+                      autoComplete="tel-national"
+                      required
+                    />
+                  </label>
+                </div>
+                <small className="account-phone-help">配对码会发送给这个 WhatsApp 账号，请填写真实号码，不要填写本地测试号码。</small>
                 <label className="field">
                   <span>内部标签</span>
                   <input
@@ -733,6 +779,7 @@ export function AccountsPage() {
                     </div>
                     {modalAccount.session.pairing.qr_code && qrDataUrl ? <img className="pairing-qr-image" src={qrDataUrl} alt="WhatsApp 配对二维码" /> : null}
                     <strong className="pairing-value">{modalAccount.session.pairing.qr_code ?? modalAccount.session.pairing.pairing_code}</strong>
+                    <span className="pairing-phone">绑定号码：+{modalAccount.phone_number ?? '未填写'}</span>
                     <p>{modalAccount.session.pairing.instruction}</p>
                     <small>有效期至 {formatDateTime(modalAccount.session.pairing.expires_at)}</small>
                   </div>

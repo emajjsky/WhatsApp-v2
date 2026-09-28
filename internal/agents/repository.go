@@ -678,7 +678,7 @@ func (r *Repository) DeleteSystemConfig(ctx context.Context, id string) error {
 
 func (r *Repository) ListProviderPresets(ctx context.Context) ([]ProviderPreset, error) {
 	const query = `
-SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+SELECT id, name, capability, provider_type, base_url, api_key, text_enabled, models, default_model,
        decision_enabled, decision_models, default_decision_model,
        asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
@@ -706,7 +706,7 @@ ORDER BY enabled DESC, name ASC, created_at DESC`
 
 func (r *Repository) GetProviderPresetByID(ctx context.Context, id string) (ProviderPreset, error) {
 	const query = `
-SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+SELECT id, name, capability, provider_type, base_url, api_key, text_enabled, models, default_model,
        decision_enabled, decision_models, default_decision_model,
        asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
@@ -716,7 +716,7 @@ WHERE id = $1`
 
 func (r *Repository) GetDefaultASRProvider(ctx context.Context) (ProviderPreset, error) {
 	const query = `
-SELECT id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+SELECT id, name, capability, provider_type, base_url, api_key, text_enabled, models, default_model,
        decision_enabled, decision_models, default_decision_model,
        asr_enabled, asr_base_url, asr_model, is_default_asr, enabled, created_at, updated_at
 FROM agent_provider_presets
@@ -737,12 +737,13 @@ func (r *Repository) UpsertProviderPreset(ctx context.Context, preset ProviderPr
 
 	const query = `
 INSERT INTO agent_provider_presets (
-    id, name, provider_type, base_url, api_key, text_enabled, models, default_model,
+    id, name, capability, provider_type, base_url, api_key, text_enabled, models, default_model,
     decision_enabled, decision_models, default_decision_model,
     asr_enabled, asr_base_url, asr_model, is_default_asr, enabled
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 ON CONFLICT (id) DO UPDATE SET
     name = EXCLUDED.name,
+    capability = EXCLUDED.capability,
     provider_type = EXCLUDED.provider_type,
     base_url = EXCLUDED.base_url,
     api_key = EXCLUDED.api_key,
@@ -782,6 +783,7 @@ ON CONFLICT (id) DO UPDATE SET
 		query,
 		preset.ID,
 		preset.Name,
+		preset.Capability,
 		preset.ProviderType,
 		preset.BaseURL,
 		preset.APIKey,
@@ -2183,6 +2185,7 @@ func scanProviderPreset(row rowScanner) (ProviderPreset, error) {
 	if err := row.Scan(
 		&item.ID,
 		&item.Name,
+		&item.Capability,
 		&item.ProviderType,
 		&item.BaseURL,
 		&item.APIKey,

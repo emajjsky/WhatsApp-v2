@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from agent_runner.app import AgentRunnerServer, parse_json_object_payload
+from agent_runner.app import AgentRunnerServer, filter_skill_references, normalize_skill_decision, parse_json_object_payload
 from agent_runner.providers.base import ProviderRequest, ProviderResponse
 from agent_runner.providers.openai_compatible import OpenAICompatibleProvider, _parse_chat_completion_response
 
@@ -109,6 +109,59 @@ class OpenAICompatibleProviderTest(unittest.TestCase):
 
         self.assertEqual("已破冰", payload["current_stage"])
         self.assertEqual(["高意向"], payload["customer_types"])
+
+    def test_skill_decision_is_normalized_for_routing(self) -> None:
+        decision = normalize_skill_decision(
+            {
+                "need_skill": "是",
+                "intent": "售后",
+                "skill_tags": ["售后", "退款", "售后"],
+                "risk": "中",
+            }
+        )
+
+        self.assertTrue(decision["need_skill"])
+        self.assertEqual(["售后", "退款"], decision["skill_tags"])
+        self.assertEqual("中", decision["risk"])
+
+    def test_skill_decision_can_gate_knowledge_without_changing_request_contract(self) -> None:
+        server = object.__new__(AgentRunnerServer)
+        context = {
+            "provider_request": ProviderRequest(
+                rule_name="reply",
+                prompt_template="Return JSON.",
+                knowledge_summary="售后规则",
+                knowledge_references=["[skill:after-sales]\n退款话术"],
+            )
+        }
+
+        skipped = server._apply_skill_decision(context, normalize_skill_decision({"need_skill": False}))
+        self.assertIsNone(skipped["provider_request"].knowledge_summary)
+        self.assertEqual([], skipped["provider_request"].knowledge_references)
+        self.assertEqual("skipped", skipped["provider_request"].metadata["skill_lookup"])
+
+        used = server._apply_skill_decision(context, normalize_skill_decision({"need_skill": True, "intent": "售后"}))
+        self.assertEqual("售后规则", used["provider_request"].knowledge_summary)
+        self.assertEqual(["[skill:after-sales]\n退款话术"], used["provider_request"].knowledge_references)
+        self.assertEqual("used", used["provider_request"].metadata["skill_lookup"])
+
+    def test_skill_tags_filter_labeled_references(self) -> None:
+        references, status = filter_skill_references(
+            [
+                "[skill:售后]\n退款规则",
+                "[skill:售前]\n价格话术",
+            ],
+            ["售后"],
+        )
+
+        self.assertEqual("matched_skill_references", status)
+        self.assertEqual(["[skill:售后]\n退款规则"], references)
+
+    def test_unlabeled_references_are_kept_for_compatibility(self) -> None:
+        references, status = filter_skill_references(["旧版参考资料"], ["售后"])
+
+        self.assertEqual("unlabeled_references_fallback_all_bound_references", status)
+        self.assertEqual(["旧版参考资料"], references)
 
     @patch("agent_runner.app.build_provider")
     def test_invalid_status_card_output_is_repaired_once(self, build_provider: Mock) -> None:

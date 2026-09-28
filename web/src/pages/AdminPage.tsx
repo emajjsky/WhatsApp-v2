@@ -10,7 +10,6 @@ import {
   listAgentSkills,
   listProviderPresets,
   listDesktopDevices,
-  generateDesktopAgentDraft,
   deleteProviderPreset,
   deleteSystemAgentConfig,
   listAssistantUsageLogFilters,
@@ -68,11 +67,13 @@ interface AgentConfigForm {
   promptTemplate: string
   skillIds: string[]
   providerPresetId: string
+  decisionProviderPresetId: string
 }
 
 interface ProviderPresetForm {
   id: string
   name: string
+  capability: 'text' | 'decision' | 'asr'
   providerType: ProviderType
   baseUrl: string
   apiKey: string
@@ -1211,8 +1212,6 @@ function SkillAdminPanel() {
         )) : <div className="system-agent-empty">还没有 Skill</div>}
       </div>
 
-      <SkillMockWorkbench selectedSkill={selectedSkill} />
-
       {editorOpen ? <AdminDialog className="admin-skill-dialog" title={selectedSkill ? `编辑 Skill · ${selectedSkill.name}` : '新建 Skill'} eyebrow="Skill 管理" onClose={() => setEditorOpen(false)}><div className="admin-skill-dialog-content">
         {notice ? <div className="success-banner">{notice}</div> : null}
         {error ? <div className="error-banner">{error}</div> : null}
@@ -1387,145 +1386,6 @@ function SkillAdminPanel() {
   )
 }
 
-function SkillMockWorkbench({ selectedSkill }: { selectedSkill?: AgentSkillView }) {
-  const [configs, setConfigs] = useState<SystemAgentConfigView[]>([])
-  const [agentId, setAgentId] = useState('')
-  const [message, setMessage] = useState('客户问怎么进群，担心费用和流程')
-  const [context, setContext] = useState('客户：我想先了解一下\n客服：好的，您主要想了解哪一部分？')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>()
-  const [result, setResult] = useState<Awaited<ReturnType<typeof generateDesktopAgentDraft>>['result']>()
-
-  const replyAgents = useMemo(
-    () => configs.filter((config) => config.purpose === 'reply'),
-    [configs],
-  )
-
-  useEffect(() => {
-    void listSystemAgentConfigs()
-      .then((response) => {
-        const next = response.configs.filter((config) => config.purpose === 'reply')
-        setConfigs(next)
-        setAgentId((current) => next.some((config) => config.id === current) ? current : next[0]?.id ?? '')
-      })
-      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : '加载回复 Agent 失败'))
-  }, [])
-
-  useEffect(() => {
-    if (selectedSkill && !replyAgents.some((config) => config.id === agentId)) {
-      setAgentId(replyAgents[0]?.id ?? '')
-    }
-  }, [agentId, replyAgents, selectedSkill])
-
-  async function runRealAgent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!agentId || !message.trim()) {
-      setError('请先配置并选择一个回复 Agent，再输入客户问题')
-      return
-    }
-    setLoading(true)
-    setError(undefined)
-    setResult(undefined)
-    try {
-      const response = await generateDesktopAgentDraft({
-        account_id: 'admin-agent-test',
-        chat_id: 'skill-reference-test-chat',
-        chat_title: 'Skill / reference 试运行',
-        trigger_message_id: `test-${Date.now()}`,
-        message_text: message.trim(),
-        agent_id: agentId,
-        context_enabled: true,
-        context_message_limit: 20,
-        recent_messages: context.split(/\r?\n/).map((text, index) => ({
-          role: index % 2 === 0 ? 'customer' : 'agent',
-          text: text.trim(),
-        })).filter((item) => item.text),
-      })
-      setResult(response.result)
-    } catch (runError) {
-      setError(runError instanceof Error ? runError.message : '真实 Agent 试运行失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const parsedDraft = useMemo(() => parseTrialDraft(result?.draft), [result?.draft])
-
-  return (
-    <section className="skill-mock-workbench skill-real-trial-workbench">
-      <div className="skill-mock-heading">
-        <div>
-          <p className="eyebrow">真实链路试运行</p>
-          <h4>Agent · Skill · reference · Provider</h4>
-          <span>真实读取后台配置并调用 Agent Runner，只生成草稿，不写入 WhatsApp、不发送消息。</span>
-        </div>
-        <span className="skill-mock-badge">真实 API · 草稿模式</span>
-      </div>
-
-      <form className="skill-mock-form" onSubmit={runRealAgent}>
-        <label className="field">
-          <span>回复 Agent</span>
-          <select value={agentId} onChange={(event) => setAgentId(event.target.value)} disabled={!replyAgents.length || loading}>
-            {!replyAgents.length ? <option value="">暂无已配置回复 Agent</option> : null}
-            {replyAgents.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}
-          </select>
-        </label>
-        <label className="field skill-mock-query-field">
-          <span>模拟客户问题</span>
-          <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={3} placeholder="例如：进群需要收费吗？怎么加入？" />
-        </label>
-        <button className="primary-button" type="submit" disabled={loading || !agentId || !message.trim()}>
-          <Icon name="reply" />
-          {loading ? '真实调用中…' : '运行真实 Agent'}
-        </button>
-      </form>
-
-      <label className="field skill-real-trial-context">
-        <span>模拟最近上下文（每行一条，交替按客户 / Agent 传入）</span>
-        <textarea value={context} onChange={(event) => setContext(event.target.value)} rows={3} disabled={loading} />
-      </label>
-
-      {error ? <div className="error-banner">{error}</div> : null}
-      {result ? (
-        <div className="skill-real-trial-result">
-          <div className="skill-real-trial-meta">
-            <span>Agent：{result.agent_name}</span>
-            <span>状态：{result.status}</span>
-            <span>模型：{String(result.provider?.model ?? '未返回')}</span>
-          </div>
-          <div className="skill-real-trial-notice">本次结果来自真实 Provider。决策模型：{String((result.trace?.decision as { model?: string } | undefined)?.model ?? '未启用或未返回')}；判断：{String((result.trace?.decision as { intent?: string } | undefined)?.intent ?? '未返回')}；{result.trace?.decision_error ? `决策回退：${String(result.trace.decision_error)}` : ''}</div>
-          {parsedDraft?.replies?.length ? (
-            <div className="skill-real-trial-replies">
-              {parsedDraft.replies.map((reply, index) => (
-                <article key={`${reply.title}-${index}`}>
-                  <strong>{reply.title || `回复方案 ${index + 1}`}</strong>
-                  <span>{reply.strategy || '未返回策略'}</span>
-                  <p>{reply.content || '未返回正文'}</p>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <pre className="skill-real-trial-raw">{result.draft || result.block_reason || 'Agent 没有返回草稿'}</pre>
-          )}
-        </div>
-      ) : (
-        <div className="skill-mock-empty">这里会真实调用当前回复 Agent，并使用它绑定的 Skill 和 reference。</div>
-      )}
-    </section>
-  )
-}
-
-function parseTrialDraft(value?: string) {
-  if (!value) {
-    return undefined
-  }
-  try {
-    const parsed = JSON.parse(value) as { replies?: Array<{ title?: string; strategy?: string; content?: string }> }
-    return Array.isArray(parsed.replies) ? parsed : undefined
-  } catch {
-    return undefined
-  }
-}
 function buildDesktopGrant(enabled: boolean, maxDevices: string, expiresAt: string): DesktopGrant {
   const parsedMaxDevices = Number(maxDevices)
   return {
@@ -1965,18 +1825,24 @@ function ProviderPresetPanel() {
     setError(undefined)
     setNotice(undefined)
     const models = parsePresetModels(form.models)
-    if (!form.name.trim() || form.textEnabled === form.asrEnabled) {
-      setError(form.name.trim() ? 'Provider 必须且只能选择文本模型或语音转写能力' : '预设名称不能为空')
-	  setSaving(false)
-	  return
-	}
-	if (form.textEnabled && form.providerType === 'openai_compatible' && !models.length) {
-	  setError('启用文本模型时至少需要一个可用模型')
-	  setSaving(false)
-	  return
-	}
-	if (form.asrEnabled && !form.asrModel.trim()) {
-	  setError('启用语音转写时必须填写 ASR 模型')
+    const decisionModels = parsePresetModels(form.decisionModels)
+    if (!form.name.trim()) {
+      setError('预设名称不能为空')
+      setSaving(false)
+      return
+    }
+    if (form.capability === 'text' && form.providerType === 'openai_compatible' && !models.length) {
+      setError('文本模型 Provider 至少需要一个可用模型')
+      setSaving(false)
+      return
+    }
+    if (form.capability === 'decision' && !decisionModels.length) {
+      setError('决策模型 Provider 至少需要一个可用模型')
+      setSaving(false)
+      return
+    }
+    if (form.capability === 'asr' && !form.asrModel.trim()) {
+      setError('语音转写 Provider 必须填写 ASR 模型')
       setSaving(false)
       return
     }
@@ -1984,6 +1850,7 @@ function ProviderPresetPanel() {
       const response = await upsertProviderPreset({
         id: form.id || undefined,
         name: form.name.trim(),
+        capability: form.capability,
         provider_type: form.providerType,
         base_url: form.baseUrl.trim(),
         api_key: form.apiKey.trim() || undefined,
@@ -2037,6 +1904,17 @@ function ProviderPresetPanel() {
     })
   }
 
+  function handleCapabilityChange(capability: ProviderPresetForm['capability']) {
+    setForm((current) => ({
+      ...current,
+      capability,
+      textEnabled: capability === 'text',
+      asrEnabled: capability === 'asr',
+      decisionEnabled: capability === 'decision',
+      isDefaultASR: capability === 'asr' && current.isDefaultASR,
+      baseUrl: capability === 'decision' && !current.baseUrl ? 'https://api.siliconflow.cn/v1/systemone' : current.baseUrl,
+    }))
+  }
   async function handleDiscoverModels() {
     if (discovering || saving) return
     setError(undefined)
@@ -2115,7 +1993,7 @@ function ProviderPresetPanel() {
         <aside className="admin-record-list-inner">
           <div className="admin-list-caption"><strong>已保存 Provider</strong><span>点击项目编辑连接信息、模型和启用状态</span></div>
           <div className="system-agent-list">
-            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary provider-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="provider-record-content"><strong>{preset.name}</strong><span className="provider-record-endpoint"><em>{preset.provider_type === 'openrouter' ? 'OpenRouter' : preset.provider_type}</em><span title={preset.base_url}>{preset.base_url}</span></span></span><span className="admin-record-summary-meta"><span><b className={preset.enabled ? 'provider-status-dot is-active' : 'provider-status-dot'} />{preset.enabled ? '已启用' : '已停用'} · {preset.text_enabled ? '文本模型' : '语音转写'}</span><small>{preset.text_enabled ? `${preset.models.length} 个对话模型 · 默认 ${preset.default_model || '未选择'}` : `ASR · ${preset.asr_model || '未配置'}`}{preset.decision_enabled ? ` · ${(preset.decision_models ?? []).length} 个决策模型 · 默认 ${preset.default_decision_model || '未选择'}` : ''}{preset.is_default_asr ? ' · 默认转写' : ''}</small></span><span className="admin-record-summary-arrow"><Icon name="chevronRight" /></span></button>)}
+            {presets.map((preset) => <button key={preset.id} type="button" className="admin-record-summary provider-record-summary" onClick={() => { setSelectedId(preset.id); setEditorOpen(true) }}><span className="admin-record-avatar"><Icon name="key" /></span><span className="provider-record-content"><strong>{preset.name}</strong><span className="provider-record-endpoint"><em>{preset.provider_type === 'openrouter' ? 'OpenRouter' : preset.provider_type}</em><span title={preset.base_url}>{preset.base_url}</span></span></span><span className="admin-record-summary-meta"><span><b className={preset.enabled ? 'provider-status-dot is-active' : 'provider-status-dot'} />{preset.enabled ? '已启用' : '已停用'} · {preset.capability === 'decision' ? '决策模型' : preset.capability === 'asr' ? '语音转写' : '文本模型'}</span><small>{preset.text_enabled ? `${preset.models.length} 个对话模型 · 默认 ${preset.default_model || '未选择'}` : `ASR · ${preset.asr_model || '未配置'}`}{preset.decision_enabled ? ` · ${(preset.decision_models ?? []).length} 个决策模型 · 默认 ${preset.default_decision_model || '未选择'}` : ''}{preset.is_default_asr ? ' · 默认转写' : ''}</small></span><span className="admin-record-summary-arrow"><Icon name="chevronRight" /></span></button>)}
             {!presets.length ? <div className="system-agent-empty">还没有 Provider 配置</div> : null}
           </div>
         </aside>
@@ -2130,37 +2008,29 @@ function ProviderPresetPanel() {
               </div>
               <label className="field"><span>Base URL / API 地址</span><input value={form.baseUrl} onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" /></label>
               <label className="field"><span>API Key</span><input type="password" value={form.apiKey} onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))} placeholder={form.apiKeyConfigured ? '已配置，留空保持不变' : '请输入 API Key'} /></label>
-			  <div className="two-column-grid" role="radiogroup" aria-label="Provider 用途">
-				<label className="checkbox-row agent-thinking-row"><input type="radio" name="provider-capability" checked={form.textEnabled} disabled={form.providerType === 'openrouter'} onChange={() => setForm((current) => ({ ...current, textEnabled: true, asrEnabled: false, isDefaultASR: false }))} /><span>文本模型</span></label>
-				<label className="checkbox-row agent-thinking-row"><input type="radio" name="provider-capability" checked={form.asrEnabled} onChange={() => setForm((current) => ({ ...current, textEnabled: false, asrEnabled: true }))} /><span>语音转写（ASR）</span></label>
-			  </div>
-			  {form.textEnabled ? <>
-			  <div className="provider-model-toolbar">
-                <div>
-                  <span className="admin-control-label">可用模型</span>
-                  <small>{parsePresetModels(form.models).length ? `已保存 ${parsePresetModels(form.models).length} 个模型` : '尚未检测模型'}</small>
+              <label className="field"><span>Provider 能力</span><select value={form.capability} onChange={(event) => handleCapabilityChange(event.target.value as ProviderPresetForm['capability'])}><option value="text">文本模型</option><option value="decision">决策模型（JEV / System One）</option><option value="asr">语音转写（ASR）</option></select></label>
+              {form.capability === 'text' ? <>
+                <div className="provider-model-toolbar">
+                  <div><span className="admin-control-label">可用模型</span><small>{parsePresetModels(form.models).length ? `已保存 ${parsePresetModels(form.models).length} 个模型` : '尚未检测模型'}</small></div>
+                  <button className="secondary-button" type="button" onClick={() => void handleDiscoverModels()} disabled={discovering || saving}><Icon name="search" />{discovering ? '检测中...' : '检测可用模型'}</button>
                 </div>
-                <button className="secondary-button" type="button" onClick={() => void handleDiscoverModels()} disabled={discovering || saving}>
-                  <Icon name="search" />{discovering ? '检测中...' : '检测可用模型'}
-                </button>
-              </div>
-			  <label className="field"><span>默认文本模型</span><select value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.models).map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
-                <section className="provider-decision-section">
-                  <div className="admin-form-section-title"><strong>决策模型（可选）</strong><span>用于状态判断、意图分类和 Skill 推荐；不会生成回复正文</span></div>
-                  <label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.decisionEnabled} onChange={(event) => setForm((current) => ({ ...current, decisionEnabled: event.target.checked }))} /><span>启用决策模型能力</span></label>
-                  {form.decisionEnabled ? <><label className="field"><span>决策模型列表</span><textarea rows={3} value={form.decisionModels} onChange={(event) => setForm((current) => ({ ...current, decisionModels: event.target.value }))} placeholder="每行一个，例如：SemIf、Kev-4B、DiffusionGemma" /></label><label className="field"><span>默认决策模型</span><select value={form.defaultDecisionModel} onChange={(event) => setForm((current) => ({ ...current, defaultDecisionModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.decisionModels).map((model) => <option key={model} value={model}>{model}</option>)}</select></label></> : null}
-                </section>
-			  </> : null}
-			  {form.asrEnabled ? <section className="provider-asr-section">
-				<div className="admin-form-section-title"><strong>语音转写</strong><span>自动识别语种，不使用智能体提示词</span></div>
-				{form.providerType !== 'openrouter' ? <label className="field"><span>ASR API 地址（可选）</span><input value={form.asrBaseUrl} onChange={(event) => setForm((current) => ({ ...current, asrBaseUrl: event.target.value }))} placeholder="留空时使用上方 Base URL；也可填写完整 /audio/transcriptions 地址" /></label> : null}
-				<div className="two-column-grid">
-				  <label className="field"><span>ASR 模型</span>{form.providerType === 'openrouter' ? <select value={form.asrModel} onChange={(event) => setForm((current) => ({ ...current, asrModel: event.target.value }))}><option value="google/gemini-2.5-flash-lite">Gemini 2.5 Flash Lite（测试推荐）</option><option value="google/gemini-2.5-flash">Gemini 2.5 Flash（更高精度）</option></select> : <input value={form.asrModel} onChange={(event) => setForm((current) => ({ ...current, asrModel: event.target.value }))} placeholder="例如：whisper-1" />}</label>
-				  <label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.isDefaultASR} onChange={(event) => setForm((current) => ({ ...current, isDefaultASR: event.target.checked }))} /><span>设为默认语音转写 Provider</span></label>
-				</div>
-				{selected ? <div className="provider-model-toolbar"><div><span className="admin-control-label">测试语音转写</span><small>上传一段音频验证 API、模型和返回文本</small></div><label className={`secondary-button${testingASR ? ' disabled' : ''}`}><Icon name="audio" />{testingASR ? '转写中...' : '选择音频测试'}<input className="visually-hidden" type="file" accept="audio/*" disabled={testingASR} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; void handleTestASR(file) }} /></label></div> : <small className="muted">保存 Provider 后可以上传音频测试。</small>}
-				{asrTestResult ? <div className="provider-asr-test-result"><strong>转写结果</strong><p>{asrTestResult}</p></div> : null}
-			  </section> : null}
+                <label className="field"><span>默认文本模型</span><select value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.models).map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+              </> : null}
+              {form.capability === 'decision' ? <section className="provider-decision-section">
+                <div className="admin-form-section-title"><strong>System One / JEV 配置</strong><span>只做状态判断、意图分类和 Skill 推荐；不会生成回复正文</span></div>
+                <label className="field"><span>决策模型列表</span><textarea rows={3} value={form.decisionModels} onChange={(event) => setForm((current) => ({ ...current, decisionModels: event.target.value }))} placeholder="每行一个，例如：SemIf、Kev-4B、DiffusionGemma" /></label>
+                <label className="field"><span>默认决策模型</span><select value={form.defaultDecisionModel} onChange={(event) => setForm((current) => ({ ...current, defaultDecisionModel: event.target.value }))}><option value="">请选择模型</option>{parsePresetModels(form.decisionModels).map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+              </section> : null}
+              {form.capability === 'asr' ? <section className="provider-asr-section">
+                <div className="admin-form-section-title"><strong>语音转写</strong><span>自动识别语种，不使用智能体提示词</span></div>
+                {form.providerType !== 'openrouter' ? <label className="field"><span>ASR API 地址（可选）</span><input value={form.asrBaseUrl} onChange={(event) => setForm((current) => ({ ...current, asrBaseUrl: event.target.value }))} placeholder="留空时使用上方 Base URL；也可填写完整 /audio/transcriptions 地址" /></label> : null}
+                <div className="two-column-grid">
+                  <label className="field"><span>ASR 模型</span>{form.providerType === 'openrouter' ? <select value={form.asrModel} onChange={(event) => setForm((current) => ({ ...current, asrModel: event.target.value }))}><option value="google/gemini-2.5-flash-lite">Gemini 2.5 Flash Lite（测试推荐）</option><option value="google/gemini-2.5-flash">Gemini 2.5 Flash（更高精度）</option></select> : <input value={form.asrModel} onChange={(event) => setForm((current) => ({ ...current, asrModel: event.target.value }))} placeholder="例如：whisper-1" />}</label>
+                  <label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.isDefaultASR} onChange={(event) => setForm((current) => ({ ...current, isDefaultASR: event.target.checked }))} /><span>设为默认语音转写 Provider</span></label>
+                </div>
+                {selected ? <div className="provider-model-toolbar"><div><span className="admin-control-label">测试语音转写</span><small>上传一段音频验证 API、模型和返回文本</small></div><label className={`secondary-button${testingASR ? ' disabled' : ''}`}><Icon name="audio" />{testingASR ? '转写中...' : '选择音频测试'}<input className="visually-hidden" type="file" accept="audio/*" disabled={testingASR} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ''; void handleTestASR(file) }} /></label></div> : <small className="muted">保存 Provider 后可以上传音频测试。</small>}
+                {asrTestResult ? <div className="provider-asr-test-result"><strong>转写结果</strong><p>{asrTestResult}</p></div> : null}
+              </section> : null}
 			  <label className="checkbox-row agent-thinking-row"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} /><span>启用当前 Provider</span></label>
             </section>
           </div>
@@ -2173,12 +2043,12 @@ function ProviderPresetPanel() {
 }
 
 function createDefaultProviderPresetForm(): ProviderPresetForm {
-  return { id: '', name: '', providerType: 'openai_compatible', baseUrl: '', apiKey: '', apiKeyConfigured: false, textEnabled: true, models: '', defaultModel: '', decisionEnabled: false, decisionModels: '', defaultDecisionModel: '', asrEnabled: false, asrBaseUrl: '', asrModel: '', isDefaultASR: false, enabled: true }
+  return { id: '', name: '', capability: 'text', providerType: 'openai_compatible', baseUrl: '', apiKey: '', apiKeyConfigured: false, textEnabled: true, models: '', defaultModel: '', decisionEnabled: false, decisionModels: '', defaultDecisionModel: '', asrEnabled: false, asrBaseUrl: '', asrModel: '', isDefaultASR: false, enabled: true }
 }
 
 function mapProviderPresetToForm(preset: ProviderPresetView): ProviderPresetForm {
   const asrEnabled = preset.asr_enabled
-  return { id: preset.id, name: preset.name, providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, apiKey: '', apiKeyConfigured: preset.api_key_configured, textEnabled: !asrEnabled, models: preset.models.join('\n'), defaultModel: preset.default_model, decisionEnabled: Boolean(preset.decision_enabled), decisionModels: (preset.decision_models ?? []).join('\n'), defaultDecisionModel: preset.default_decision_model || '', asrEnabled, asrBaseUrl: preset.asr_base_url, asrModel: preset.asr_model, isDefaultASR: preset.is_default_asr, enabled: preset.enabled }
+  return { id: preset.id, name: preset.name, capability: preset.capability || (preset.asr_enabled ? 'asr' : preset.decision_enabled ? 'decision' : 'text'), providerType: normalizeProviderType(preset.provider_type), baseUrl: preset.base_url, apiKey: '', apiKeyConfigured: preset.api_key_configured, textEnabled: !asrEnabled, models: preset.models.join('\n'), defaultModel: preset.default_model, decisionEnabled: Boolean(preset.decision_enabled), decisionModels: (preset.decision_models ?? []).join('\n'), defaultDecisionModel: preset.default_decision_model || '', asrEnabled, asrBaseUrl: preset.asr_base_url, asrModel: preset.asr_model, isDefaultASR: preset.is_default_asr, enabled: preset.enabled }
 }
 
 function parsePresetModels(value: string) {
@@ -2298,7 +2168,7 @@ function SystemAgentPanel() {
         name,
         purpose,
         enabled: form.enabled,
-        provider_config: buildProviderConfig({ ...form, purpose }, selectedProviderPreset),
+        provider_config: buildProviderConfig({ ...form, purpose }, selectedProviderPreset, providerPresets.find((preset) => preset.id === form.decisionProviderPresetId)),
         prompt_template: form.promptTemplate.trim(),
         skill_ids: purpose === 'reply' ? form.skillIds : [],
       })
@@ -2464,6 +2334,7 @@ function SystemAgentPanel() {
                   </select>
                 </label>
               </div>
+              {purpose === 'reply' ? <label className="field"><span>决策模型 Provider（可选）</span><select value={form.decisionProviderPresetId} onChange={(event) => updateForm({ decisionProviderPresetId: event.target.value })}><option value="">暂不使用决策模型</option>{providerPresets.filter((preset) => (preset.enabled || preset.id === form.decisionProviderPresetId) && preset.capability === 'decision').map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label> : null}
               {providerPresets.filter((preset) => preset.enabled).length === 0 ? (
                 <div className="inline-empty-note">请先到 Provider 预设中配置密钥并检测可用模型。</div>
               ) : null}
@@ -2658,6 +2529,7 @@ function createDefaultConfigForm(purpose: AgentPurpose): AgentConfigForm {
           : defaultReplyRolePrompt,
     skillIds: [],
     providerPresetId: '',
+    decisionProviderPresetId: '',
   }
 }
 
@@ -2826,6 +2698,7 @@ function mapSystemConfigToForm(config: SystemAgentConfigView): AgentConfigForm {
     ) || fallback.promptTemplate,
     skillIds: config.skill_ids ?? [],
     providerPresetId: readConfigString(providerConfig, 'preset_id'),
+    decisionProviderPresetId: readConfigString(providerConfig, 'decision_preset_id'),
   }
 }
 
@@ -2856,13 +2729,14 @@ function normalizeStoredRolePrompt(purpose: AgentPurpose, prompt: string, hasSto
   return trimmed
 }
 
-function buildProviderConfig(form: AgentConfigForm, preset: ProviderPresetView): AgentProviderConfig {
+function buildProviderConfig(form: AgentConfigForm, preset: ProviderPresetView, decisionPreset?: ProviderPresetView): AgentProviderConfig {
   return withStatusCardConfig(form, compactConfig({
     type: normalizeProviderType(preset.provider_type),
     model: form.model.trim(),
     preset_id: preset.id,
     rules_prompt: form.rulesPrompt.trim(),
     ...(form.purpose === 'reply' ? { context_message_limit: Number(form.contextMessageLimit) } : {}),
+    ...(form.purpose === 'reply' && decisionPreset ? { decision_preset_id: decisionPreset.id } : {}),
   }))
 }
 

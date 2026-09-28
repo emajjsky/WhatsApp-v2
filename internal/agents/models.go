@@ -51,6 +51,13 @@ type KnowledgeBinding struct {
 	References []string `json:"references"`
 }
 
+type SkillDecision struct {
+	NeedSkill   bool     `json:"need_skill"`
+	Intent      string   `json:"intent,omitempty"`
+	SkillTags   []string `json:"skill_tags,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+}
+
 type SkillFileKind string
 
 const (
@@ -144,6 +151,7 @@ type SystemAgentConfig struct {
 type ProviderPreset struct {
 	ID               string    `json:"id"`
 	Name             string    `json:"name"`
+	Capability       string    `json:"capability"`
 	ProviderType     string    `json:"provider_type"`
 	BaseURL          string    `json:"base_url"`
 	TextEnabled      bool      `json:"text_enabled"`
@@ -166,6 +174,7 @@ type ProviderPreset struct {
 type UpsertProviderPresetInput struct {
 	ID           string   `json:"id,omitempty"`
 	Name         string   `json:"name"`
+	Capability   string   `json:"capability"`
 	ProviderType string   `json:"provider_type"`
 	BaseURL      string   `json:"base_url"`
 	APIKey       string   `json:"api_key,omitempty"`

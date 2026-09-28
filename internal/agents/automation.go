@@ -1643,6 +1643,22 @@ func (a *Automation) resolveProviderPreset(ctx context.Context, config map[strin
 		// Never inherit the removed thinking switch from an old agent record.
 		resolved["enable_thinking"] = false
 	}
+	decisionPresetID := strings.TrimSpace(anyString(config["decision_preset_id"]))
+	if decisionPresetID != "" {
+		decisionPreset, err := a.repository.GetProviderPresetByID(ctx, decisionPresetID)
+		if err != nil {
+			return nil, fmt.Errorf("load decision provider preset %q: %w", decisionPresetID, err)
+		}
+		if !decisionPreset.Enabled || decisionPreset.Capability != "decision" {
+			return nil, fmt.Errorf("decision provider preset %q is not an enabled decision Provider", decisionPreset.Name)
+		}
+		resolved["decision_enabled"] = true
+		resolved["decision_base_url"] = decisionPreset.BaseURL
+		resolved["decision_api_key"] = decisionPreset.APIKey
+		resolved["decision_provider_type"] = decisionPreset.ProviderType
+		resolved["decision_models"] = append([]string(nil), decisionPreset.DecisionModels...)
+		resolved["decision_model"] = decisionPreset.DefaultDecisionModel
+	}
 	return resolved, nil
 }
 
@@ -1718,15 +1734,18 @@ func (a *Automation) buildSkillKnowledgeBinding(
 	}
 	for _, skillID := range skillIDs {
 		if skill, ok := skillsByID[skillID]; ok {
-			binding = mergeKnowledgeBinding(binding, skillKnowledgeBinding(skill, query))
+			binding = mergeKnowledgeBinding(binding, skillKnowledgeBinding(skill, query, nil))
 		}
 	}
 
 	return binding, nil
 }
 
-func skillKnowledgeBinding(skill AgentSkill, query string) *KnowledgeBinding {
+func skillKnowledgeBinding(skill AgentSkill, query string, allowedTags []string) *KnowledgeBinding {
 	if strings.TrimSpace(skill.ID) == "" {
+		return nil
+	}
+	if len(allowedTags) > 0 && !skillMatchesTags(skill, allowedTags) {
 		return nil
 	}
 
@@ -1750,7 +1769,11 @@ func skillKnowledgeBinding(skill AgentSkill, query string) *KnowledgeBinding {
 		if content == "" {
 			continue
 		}
-		references = append(references, fmt.Sprintf("[%s]\n%s", file.Path, limitText(content, 3500)))
+		skillLabel := strings.TrimSpace(skill.Slug)
+		if skillLabel == "" {
+			skillLabel = strings.TrimSpace(skill.Name)
+		}
+		references = append(references, fmt.Sprintf("[skill:%s]\n[path:%s]\n%s", skillLabel, file.Path, limitText(content, 3500)))
 	}
 
 	summary := strings.Join(summaryParts, "\n\n")
@@ -1758,6 +1781,17 @@ func skillKnowledgeBinding(skill AgentSkill, query string) *KnowledgeBinding {
 		Summary:    &summary,
 		References: references,
 	}
+}
+
+func skillMatchesTags(skill AgentSkill, tags []string) bool {
+	searchable := strings.ToLower(strings.Join([]string{skill.Name, skill.Slug, skill.Description, skill.SkillMarkdown}, "\n"))
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if tag != "" && strings.Contains(searchable, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func pickRelevantSkillFiles(files []SkillFile, query string, limit int) []SkillFile {

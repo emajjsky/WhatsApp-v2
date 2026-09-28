@@ -1356,7 +1356,12 @@ func (c *WhatsmeowConnector) startPairingCodeFlow(ctx context.Context, accountID
 		return SessionSnapshot{}, c.failSnapshot(accountID, "failed", "pairing_code 需要账号上先填手机号")
 	}
 
-	code, err := session.client.PairPhone(ctx, *phoneNumber, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
+	normalizedPhoneNumber, err := normalizePairingPhoneNumber(*phoneNumber)
+	if err != nil {
+		return SessionSnapshot{}, c.failSnapshot(accountID, "failed", err.Error())
+	}
+
+	code, err := session.client.PairPhone(ctx, normalizedPhoneNumber, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
 		return SessionSnapshot{}, c.failSnapshot(accountID, "failed", fmt.Sprintf("generate pairing code: %v", err))
 	}
@@ -1375,6 +1380,22 @@ func (c *WhatsmeowConnector) startPairingCodeFlow(ctx context.Context, accountID
 	})
 	c.emitSnapshot(snapshot)
 	return snapshot, nil
+}
+
+func normalizePairingPhoneNumber(value string) (string, error) {
+	var normalized strings.Builder
+	for _, char := range strings.TrimSpace(value) {
+		if char >= '0' && char <= '9' {
+			normalized.WriteRune(char)
+		}
+	}
+
+	phoneNumber := normalized.String()
+	if len(phoneNumber) < 7 || len(phoneNumber) > 15 {
+		return "", fmt.Errorf("手机号必须使用国际格式，例如 8613818462550")
+	}
+
+	return phoneNumber, nil
 }
 
 func (c *WhatsmeowConnector) awaitQRItem(ctx context.Context, qrChan <-chan whatsmeow.QRChannelItem) (whatsmeow.QRChannelItem, bool) {

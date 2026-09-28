@@ -110,13 +110,7 @@ func (r *Repository) UpsertMirrorUser(ctx context.Context, input MirrorUserInput
 	if displayName == "" {
 		displayName = email
 	}
-	role := normalizeRole(input.Role)
-	if role == "" {
-		role = RoleUser
-	}
-	if email == "admin@example.com" && (role == RoleAdmin || role == RoleSuperAdmin) {
-		role = RoleSuperAdmin
-	}
+	role := normalizeUserRole(email, input.Role)
 	status := normalizeStatus(input.Status)
 	if status == "" {
 		status = StatusActive
@@ -259,8 +253,8 @@ SELECT
     created_at,
     updated_at
 FROM users
-WHERE role = 'super_admin'
-ORDER BY created_at ASC, id ASC
+WHERE role = 'super_admin' OR LOWER(email) = 'admin@example.com'
+ORDER BY CASE WHEN LOWER(email) = 'admin@example.com' THEN 0 ELSE 1 END, created_at ASC, id ASC
 LIMIT 1`
 
 	user, err := scanUser(r.db.QueryRowContext(ctx, query))
@@ -962,6 +956,8 @@ func scanUser(row rowScanner) (User, error) {
 	if licenseExpiresAt.Valid {
 		user.Desktop.LicenseExpiresAt = &licenseExpiresAt.Time
 	}
+	user.Email = normalizeEmail(user.Email)
+	user.Role = normalizeUserRole(user.Email, user.Role)
 	user.Desktop = normalizeDesktopGrant(user.Desktop)
 
 	return user, nil

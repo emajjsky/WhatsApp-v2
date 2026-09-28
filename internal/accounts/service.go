@@ -92,10 +92,14 @@ func (s *Service) CreateAccount(ctx context.Context, input CreateAccountInput) (
 		ID:            generateAccountID(),
 		UserID:        currentUserID(ctx),
 		DisplayName:   displayName,
-		PhoneNumber:   normalizedOptionalString(input.PhoneNumber),
 		Status:        "pending",
 		PlatformLabel: normalizedOptionalString(input.PlatformLabel),
 	}
+	phoneNumber, err := normalizeOptionalPhoneNumber(input.PhoneNumber)
+	if err != nil {
+		return AccountView{}, err
+	}
+	account.PhoneNumber = phoneNumber
 
 	if err := s.repository.Create(ctx, account); err != nil {
 		return AccountView{}, err
@@ -333,6 +337,29 @@ func normalizedOptionalString(value *string) *string {
 	}
 
 	return &trimmed
+}
+
+func normalizeOptionalPhoneNumber(value *string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	var normalized strings.Builder
+	for _, char := range strings.TrimSpace(*value) {
+		if char >= '0' && char <= '9' {
+			normalized.WriteRune(char)
+		}
+	}
+
+	phoneNumber := normalized.String()
+	if phoneNumber == "" {
+		return nil, nil
+	}
+	if len(phoneNumber) < 7 || len(phoneNumber) > 15 {
+		return nil, fmt.Errorf("手机号必须使用国际格式，例如 8613818462550")
+	}
+
+	return &phoneNumber, nil
 }
 
 func generateAccountID() string {

@@ -621,6 +621,39 @@ a {
   padding: 20px;
 }
 
+.account-phone-fields {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.9fr) minmax(0, 1.4fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d9e4df;
+  border-radius: 12px;
+  background: #f7faf8;
+}
+
+.account-phone-fields select,
+.account-phone-fields input {
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid #cbd8d3;
+  border-radius: 9px;
+  background: #fff;
+  color: #111b21;
+  font-size: 13px;
+}
+
+.account-phone-fields select:focus,
+.account-phone-fields input:focus {
+  border-color: #00a884;
+  outline: 2px solid rgba(0, 168, 132, 0.14);
+}
+
+.account-phone-help {
+  margin-top: -6px;
+  color: #667781;
+  font-size: 11px;
+  line-height: 1.5;
+}
 .account-create-form .field,
 .account-modal-network .field {
   gap: 5px;
@@ -783,6 +816,12 @@ a {
   letter-spacing: 0.06em;
 }
 
+.account-pairing-modal .pairing-phone {
+  color: #111b21;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .account-pairing-modal p,
 .account-pairing-modal small {
   margin: 0;
@@ -839,6 +878,10 @@ a {
 }
 
 @media (max-width: 520px) {
+  .account-phone-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .accounts-page-header {
     display: grid;
   }

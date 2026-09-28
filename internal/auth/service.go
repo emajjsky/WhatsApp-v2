@@ -634,13 +634,7 @@ func (s *Service) authorizeDesktopDevice(ctx context.Context, user User, input D
 }
 
 func (s *Service) mirrorCloudUser(ctx context.Context, cloudUser User) (User, error) {
-	role := normalizeRole(cloudUser.Role)
-	if normalizeEmail(cloudUser.Email) == "admin@example.com" && (role == RoleAdmin || role == RoleSuperAdmin) {
-		role = RoleSuperAdmin
-	}
-	if role == "" {
-		role = RoleUser
-	}
+	role := normalizeUserRole(cloudUser.Email, cloudUser.Role)
 	status := normalizeStatus(cloudUser.Status)
 	if status == "" {
 		status = StatusActive
@@ -777,15 +771,28 @@ func normalizeEmail(value string) string {
 
 func normalizeRole(value Role) Role {
 	switch Role(strings.ToLower(strings.TrimSpace(string(value)))) {
-	case RoleSuperAdmin:
+	case RoleSuperAdmin, "superadmin", "super administrator":
 		return RoleSuperAdmin
-	case RoleAdmin:
+	case RoleAdmin, "administrator":
 		return RoleAdmin
 	case RoleUser:
 		return RoleUser
 	default:
 		return ""
 	}
+}
+
+func normalizeUserRole(email string, role Role) Role {
+	if normalizeEmail(email) == "admin@example.com" {
+		return RoleSuperAdmin
+	}
+
+	normalized := normalizeRole(role)
+	if normalized == "" {
+		return RoleUser
+	}
+
+	return normalized
 }
 
 func normalizeStatus(value Status) Status {

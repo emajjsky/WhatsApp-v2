@@ -608,6 +608,7 @@ export interface UpsertSystemAgentConfigPayload {
 export interface ProviderPresetView {
   id: string
   name: string
+  capability: 'text' | 'decision' | 'asr'
   provider_type: string
   base_url: string
   text_enabled: boolean
@@ -629,6 +630,7 @@ export interface ProviderPresetView {
 export interface UpsertProviderPresetPayload {
   id?: string
   name: string
+  capability: 'text' | 'decision' | 'asr'
   provider_type: string
   base_url: string
   api_key?: string

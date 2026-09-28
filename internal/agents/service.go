@@ -745,6 +745,13 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 	if providerType == "" || providerType == "mock" || providerType == "static" {
 		return ProviderPreset{}, fmt.Errorf("unsupported provider preset type %q", input.ProviderType)
 	}
+	capability := strings.TrimSpace(strings.ToLower(input.Capability))
+	if capability == "" {
+		capability = "text"
+	}
+	if capability != "text" && capability != "decision" && capability != "asr" {
+		return ProviderPreset{}, fmt.Errorf("unsupported provider capability %q", input.Capability)
+	}
 	models := normalizeStringList(input.Models)
 	decisionModels := normalizeStringList(input.DecisionModels)
 	defaultModel := strings.TrimSpace(input.DefaultModel)
@@ -755,8 +762,8 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 	if defaultDecisionModel != "" && !containsString(decisionModels, defaultDecisionModel) {
 		decisionModels = append(decisionModels, defaultDecisionModel)
 	}
-	if input.DecisionEnabled && len(decisionModels) == 0 {
-		return ProviderPreset{}, fmt.Errorf("启用决策模型时至少需要一个模型")
+	if capability == "decision" && len(decisionModels) == 0 {
+		return ProviderPreset{}, fmt.Errorf("决策模型 Provider 至少需要一个模型")
 	}
 	textEnabled := true
 	if input.TextEnabled != nil {
@@ -786,8 +793,11 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 	asrEnabled := input.ASREnabled
 	asrModel := strings.TrimSpace(input.ASRModel)
 	asrBaseURL := strings.TrimSpace(input.ASRBaseURL)
-	if textEnabled == asrEnabled {
-		return ProviderPreset{}, fmt.Errorf("Provider 必须且只能选择文本模型或语音转写能力")
+	textEnabled = capability == "text"
+	asrEnabled = capability == "asr"
+	if capability == "decision" {
+		textEnabled = false
+		asrEnabled = false
 	}
 	if providerType == "openrouter" && textEnabled {
 		return ProviderPreset{}, fmt.Errorf("OpenRouter Provider 当前仅用于语音转写")
@@ -812,27 +822,32 @@ func (s *Service) UpsertProviderPreset(ctx context.Context, input UpsertProvider
 	if len([]rune(asrBaseURL)) > 500 {
 		return ProviderPreset{}, fmt.Errorf("asr_base_url is too long")
 	}
-	if strings.TrimSpace(input.APIKey) == "" && (textEnabled || asrEnabled) && (providerType == "openai_compatible" || providerType == "openrouter") {
+	if strings.TrimSpace(input.APIKey) == "" && (textEnabled || asrEnabled || capability == "decision") && (providerType == "openai_compatible" || providerType == "openrouter") {
 		return ProviderPreset{}, fmt.Errorf("Provider 必须配置 API Key")
 	}
-	if !asrEnabled {
+	if capability != "asr" {
 		asrBaseURL = ""
 		asrModel = ""
 	}
-	if !textEnabled {
+	if capability != "text" {
 		models = nil
 		defaultModel = ""
+	}
+	if capability != "decision" {
+		decisionModels = nil
+		defaultDecisionModel = ""
 	}
 	preset := ProviderPreset{
 		ID:           id,
 		Name:         name,
+		Capability:   capability,
 		ProviderType: providerType,
 		BaseURL:      baseURL,
 		APIKey:       strings.TrimSpace(input.APIKey),
 		TextEnabled:  textEnabled,
 		Models:       models,
 		DefaultModel: defaultModel,
-		DecisionEnabled: input.DecisionEnabled,
+		DecisionEnabled: capability == "decision",
 		DecisionModels: decisionModels,
 		DefaultDecisionModel: defaultDecisionModel,
 		ASREnabled:   asrEnabled,
