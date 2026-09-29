@@ -306,6 +306,7 @@ type AgentRun struct {
 	TriggerMessageID string
 	Status           RunStatus
 	InputContext     json.RawMessage
+	Trace            json.RawMessage
 	OutputDraft      *string
 	BlockReason      *string
 	SentMessageID    *string
@@ -324,6 +325,7 @@ type RunView struct {
 	TriggerMessageID string     `json:"trigger_message_id"`
 	TriggerPreview   *string    `json:"trigger_preview,omitempty"`
 	Status           RunStatus  `json:"status"`
+	Trace            map[string]any `json:"trace,omitempty"`
 	OutputDraft      *string    `json:"output_draft,omitempty"`
 	BlockReason      *string    `json:"block_reason,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
@@ -472,6 +474,7 @@ type AssistantUsageLogFilterOptions struct {
 
 type RunStatusUpdate struct {
 	Status        RunStatus
+	Trace         json.RawMessage
 	OutputDraft   *string
 	BlockReason   *string
 	SentMessageID *string

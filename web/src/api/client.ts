@@ -475,6 +475,7 @@ export interface AgentRunView {
   trigger_message_id: string
   trigger_preview?: string
   status: AgentRunStatus
+  trace?: Record<string, unknown>
   output_draft?: string
   block_reason?: string
   created_at: string

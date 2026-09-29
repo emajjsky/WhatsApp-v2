@@ -7,6 +7,7 @@ import {
   deleteAgentSkill,
   deleteAgentSkillFile,
   listAccounts,
+  listAgentRuns,
   listAgentSkills,
   listProviderPresets,
   listDesktopDevices,
@@ -26,6 +27,7 @@ import {
   upsertAgentSkillFile,
   upsertProviderPreset,
   upsertSystemAgentConfig,
+  type AgentRunView,
   type AgentSkillFileKind,
   type AgentSkillFileView,
   type AgentSkillView,
@@ -49,7 +51,7 @@ import {
 import { Icon } from '../components/Icon'
 import { useAuth } from '../auth/AuthContext'
 
-type AdminTab = 'users' | 'invitations' | 'agents' | 'skills' | 'providerPresets' | 'usageLogs'
+type AdminTab = 'users' | 'invitations' | 'agents' | 'skills' | 'providerPresets' | 'usageLogs' | 'runLogs'
 type ProviderType = 'openai_compatible' | 'openrouter' | 'coze' | 'n8n' | 'webhook'
 
 interface AgentConfigForm {
@@ -198,6 +200,12 @@ export function AdminPage() {
             onClick={() => setTab('providerPresets')}
           />
           <AdminTabButton
+            active={tab === 'runLogs'}
+            title="Agent 运行日志"
+            hint="JEV、Skill 和 Provider 链路"
+            onClick={() => setTab('runLogs')}
+          />
+          <AdminTabButton
             active={tab === 'usageLogs'}
             title="采纳数据"
             hint="方案采纳和发送记录"
@@ -213,6 +221,7 @@ export function AdminPage() {
         {tab === 'skills' ? <SkillAdminPanel /> : null}
         {tab === 'providerPresets' ? <ProviderPresetPanel /> : null}
         {tab === 'usageLogs' ? <AssistantUsageLogPanel /> : null}
+        {tab === 'runLogs' ? <AgentRunLogPanel /> : null}
       </main>
     </div>
   )
@@ -1780,6 +1789,122 @@ function AssistantUsageLogPanel() {
   )
 }
 
+function AgentRunLogPanel() {
+  const [runs, setRuns] = useState<AgentRunView[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string>()
+  const [expandedId, setExpandedId] = useState<string>()
+
+  async function loadRuns() {
+    setLoading(true)
+    setError(undefined)
+    try {
+      const response = await listAgentRuns({ limit: 200, offset: 0 })
+      setRuns(response.runs)
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '加载 Agent 运行日志失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadRuns()
+  }, [])
+
+  return (
+    <section className="panel admin-agent-run-log-panel">
+      <div className="admin-usage-log-heading">
+        <div>
+          <h3>Agent 运行日志</h3>
+          <p>查看每次回复是否调用决策模型、命中哪个 Skill 和 reference，以及最终回复 Provider。</p>
+        </div>
+        <button className="secondary-button" type="button" onClick={() => void loadRuns()} disabled={loading}>
+          {loading ? '刷新中...' : '刷新日志'}
+        </button>
+      </div>
+
+      {error ? <div className="error-banner">{error}</div> : null}
+      <div className="admin-agent-run-log-table-wrap">
+        {runs.length ? (
+          <table className="admin-agent-run-log-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>会话 / Agent</th>
+                <th>状态</th>
+                <th>决策模型</th>
+                <th>Skill / reference</th>
+                <th>回复 Provider</th>
+                <th>详情</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => {
+                const trace = run.trace ?? {}
+                const decision = (trace.decision_model ?? {}) as Record<string, unknown>
+                const skill = (trace.skill ?? {}) as Record<string, unknown>
+                const provider = (trace.reply_provider ?? {}) as Record<string, unknown>
+                const decisionCalled = decision.called === true
+                const decisionStatus = decision.error ? '失败' : decisionCalled ? '已调用' : '未调用'
+                const referenceCount = Number(skill.reference_count ?? trace.reference_count ?? 0)
+                const referencePaths = Array.isArray(skill.reference_paths) ? skill.reference_paths.join('、') : '-'
+                return (
+                  <tr key={run.id}>
+                    <td>{formatDateTime(run.created_at)}</td>
+                    <td>
+                      <strong>{run.rule_name || 'System Agent'}</strong>
+                      <small>{run.chat_title || run.chat_id || '-'}</small>
+                    </td>
+                    <td><span className={`admin-run-status ${run.status}`}>{formatAgentRunStatus(run.status)}</span></td>
+                    <td>
+                      <strong>{decisionStatus}</strong>
+                      <small>{String(decision.provider_type || '-')}{decision.model ? ` · ${String(decision.model)}` : ''}</small>
+                      {decision.need_skill !== undefined ? <small>need_skill：{decision.need_skill ? '是' : '否'} · {String(decision.intent || '其他')}</small> : null}
+                    </td>
+                    <td>
+                      <strong>{String(trace.skill_lookup || '未判定')} · {referenceCount} 个 reference</strong>
+                      <small>{referencePaths}</small>
+                    </td>
+                    <td>
+                      <strong>{String(provider.type || '-')}</strong>
+                      <small>{String(provider.model || '-')}</small>
+                    </td>
+                    <td>
+                      <button className="secondary-button compact-button" type="button" onClick={() => setExpandedId((current) => current === run.id ? undefined : run.id)}>
+                        {expandedId === run.id ? '收起' : '查看 trace'}
+                      </button>
+                      {expandedId === run.id ? <pre className="admin-agent-run-trace">{JSON.stringify(trace, null, 2)}</pre> : null}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <div className="empty-state compact-empty-state">{loading ? '正在加载...' : '暂无 Agent 运行日志'}</div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function formatAgentRunStatus(status: AgentRunView['status']) {
+  switch (status) {
+    case 'ready_for_review':
+      return '待审核'
+    case 'generating':
+      return '生成中'
+    case 'blocked':
+      return '已拦截'
+    case 'sent':
+      return '已发送'
+    case 'failed':
+      return '失败'
+    default:
+      return status
+  }
+}
 function ProviderPresetPanel() {
   const [presets, setPresets] = useState<ProviderPresetView[]>([])
   const [selectedId, setSelectedId] = useState('new')

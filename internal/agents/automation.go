@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -430,7 +431,146 @@ func (a *Automation) GenerateDesktopDraft(ctx context.Context, input DesktopAgen
 		return DesktopAgentDraftResult{}, err
 	}
 
-	return desktopDraftResultFromRunner(requestID, systemConfig, response, a.now()), nil
+	trace := buildDesktopTrace(response.Provider, response.Trace, knowledgeBinding)
+	trace["policy"] = sanitizeTraceValue(response.Policy)
+	trace["dispatch"] = sanitizeTraceValue(response.Dispatch)
+	trace["agent"] = map[string]any{"id": systemConfig.ID, "name": systemConfig.Name}
+	trace["source"] = "desktop_cloud_agent"
+	inputContext, contextErr := mustMarshalJSON(map[string]any{
+		"source":          "desktop_cloud_agent",
+		"agent_id":        systemConfig.ID,
+		"agent_name":      systemConfig.Name,
+		"message_text":    messageText,
+		"context_enabled": input.ContextEnabled,
+		"context_limit":   input.ContextMessageLimit,
+	})
+	if contextErr != nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("encode desktop agent run context: %w", contextErr)
+	}
+
+	if err := a.repository.CreateRun(ctx, AgentRun{
+		ID:               requestID,
+		RuleID:           "",
+		AccountID:        strings.TrimSpace(input.AccountID),
+		ChatID:           strings.TrimSpace(input.ChatID),
+		TriggerMessageID: strings.TrimSpace(input.TriggerMessageID),
+		Status:           RunStatusGenerating,
+		InputContext:     contextErrlessJSON(inputContext),
+	}); err != nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("create desktop agent run trace: %w", err)
+	}
+	result := desktopDraftResultFromRunner(requestID, systemConfig, response, a.now())
+	traceJSON, traceErr := mustMarshalJSON(trace)
+	if traceErr != nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("encode desktop agent run trace: %w", traceErr)
+	}
+	if err := a.repository.UpdateRunStatus(ctx, requestID, RunStatusUpdate{
+		Status:        result.Status,
+		Trace:         json.RawMessage(traceJSON),
+		OutputDraft:   stringPointer(result.Draft),
+		BlockReason:   stringPointer(result.BlockReason),
+		CompletedAt:   &result.CompletedAt,
+	}); err != nil {
+		return DesktopAgentDraftResult{}, fmt.Errorf("save desktop agent run trace: %w", err)
+	}
+	a.logRunTrace(requestID, trace)
+
+	return result, nil
+}
+
+func buildDesktopTrace(provider, runnerTrace map[string]any, binding *KnowledgeBinding) map[string]any {
+	trace := map[string]any{}
+	if provider != nil {
+		trace["reply_provider"] = sanitizeTraceValue(provider)
+	}
+	for key, value := range runnerTrace {
+		trace[key] = sanitizeTraceValue(value)
+	}
+	if binding == nil {
+		if _, exists := trace["skill"]; !exists {
+			trace["skill"] = map[string]any{"bound": false, "reference_count": 0, "reference_paths": []string{}}
+		}
+		return trace
+	}
+	if skill, exists := trace["skill"].(map[string]any); exists {
+		skill["bound"] = true
+		skill["candidate_reference_count"] = len(binding.References)
+		trace["skill"] = skill
+		return trace
+	}
+	paths := make([]string, 0, len(binding.References))
+	referenceHashes := make([]string, 0, len(binding.References))
+	for _, reference := range binding.References {
+		path := ""
+		for _, line := range strings.Split(reference, "\n") {
+			if strings.HasPrefix(line, "[path:") && strings.HasSuffix(line, "]") {
+				path = strings.TrimSuffix(strings.TrimPrefix(line, "[path:"), "]")
+				break
+			}
+		}
+		paths = append(paths, path)
+		hash := sha256.Sum256([]byte(reference))
+		referenceHashes = append(referenceHashes, fmt.Sprintf("%x", hash[:8]))
+	}
+	trace["skill"] = map[string]any{
+		"bound":             true,
+		"summary_present":   binding.Summary != nil && strings.TrimSpace(*binding.Summary) != "",
+		"reference_count":   len(binding.References),
+		"reference_paths":   paths,
+		"reference_hashes":  referenceHashes,
+	}
+	return trace
+}
+
+func runnerResponseTrace(response RunnerRunResponse, binding *KnowledgeBinding) map[string]any {
+	trace := buildDesktopTrace(response.Provider, response.Trace, binding)
+	trace["policy"] = sanitizeTraceValue(response.Policy)
+	trace["dispatch"] = sanitizeTraceValue(response.Dispatch)
+	return trace
+}
+
+func sanitizeTraceValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, item := range typed {
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "key") || strings.Contains(lower, "token") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "authorization") {
+				result[key] = "[redacted]"
+				continue
+			}
+			result[key] = sanitizeTraceValue(item)
+		}
+		return result
+	case []any:
+		result := make([]any, len(typed))
+		for index, item := range typed {
+			result[index] = sanitizeTraceValue(item)
+		}
+		return result
+	default:
+		return value
+	}
+}
+
+func contextErrlessJSON(value []byte) json.RawMessage {
+	return json.RawMessage(value)
+}
+
+func (a *Automation) logRunTrace(requestID string, trace map[string]any) {
+	if a == nil || a.logger == nil {
+		return
+	}
+	skill, _ := trace["skill"].(map[string]any)
+	a.logger.Info("agent run trace persisted",
+		"request_id", requestID,
+		"reply_provider", trace["reply_provider"],
+		"decision_model", trace["decision_model"],
+		"skill_lookup", trace["skill_lookup"],
+		"skill_intent", trace["skill_intent"],
+		"reference_count", skill["reference_count"],
+		"reference_paths", skill["reference_paths"],
+	)
 }
 
 func (a *Automation) GenerateDesktopDraftStream(
@@ -775,8 +915,10 @@ func (a *Automation) prepareManualRun(ctx context.Context, input GenerateRunInpu
 
 func (a *Automation) failRun(ctx context.Context, runID string, reason string) (RunView, error) {
 	completedAt := a.now()
+	traceJSON, _ := mustMarshalJSON(map[string]any{"phase": "orchestration", "error": reason})
 	if err := a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 		Status:      RunStatusFailed,
+		Trace:       json.RawMessage(traceJSON),
 		BlockReason: stringPointer(reason),
 		CompletedAt: &completedAt,
 	}); err != nil {
@@ -980,10 +1122,17 @@ func (a *Automation) applyRunnerDecision(
 ) error {
 	completedAt := a.now()
 
+	trace := runnerResponseTrace(runnerResp, rule.KnowledgeBinding)
+	traceJSON, traceErr := mustMarshalJSON(trace)
+	if traceErr != nil {
+		return traceErr
+	}
+
 	draft := strings.TrimSpace(runnerResp.Draft)
 	if draft == "" {
 		return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 			Status:      RunStatusFailed,
+			Trace: json.RawMessage(traceJSON),
 			BlockReason: stringPointer("agent runner returned empty draft"),
 			CompletedAt: &completedAt,
 		})
@@ -993,6 +1142,7 @@ func (a *Automation) applyRunnerDecision(
 	case "blocked":
 		return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 			Status:      RunStatusBlocked,
+			Trace:       json.RawMessage(traceJSON),
 			OutputDraft: stringPointer(draft),
 			BlockReason: stringPointer(strings.Join(normalizeReasons(runnerResp.BlockReasons), "; ")),
 			CompletedAt: &completedAt,
@@ -1000,6 +1150,7 @@ func (a *Automation) applyRunnerDecision(
 	case "ready_for_review":
 		return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 			Status:      RunStatusReadyForReview,
+			Trace:       json.RawMessage(traceJSON),
 			OutputDraft: stringPointer(draft),
 			CompletedAt: &completedAt,
 		})
@@ -1008,6 +1159,7 @@ func (a *Automation) applyRunnerDecision(
 		if !a.autoSendEnabled || rule.ReplyMode != ReplyModeAutoSend {
 			return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 				Status:      RunStatusReadyForReview,
+				Trace: json.RawMessage(traceJSON),
 				OutputDraft: stringPointer(draft),
 				CompletedAt: &completedAt,
 			})
@@ -1021,6 +1173,7 @@ func (a *Automation) applyRunnerDecision(
 			if lastSentAt != nil && completedAt.Sub(*lastSentAt) < time.Duration(rule.CooldownSeconds)*time.Second {
 				return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 					Status:      RunStatusReadyForReview,
+					Trace: json.RawMessage(traceJSON),
 					OutputDraft: stringPointer(draft),
 					CompletedAt: &completedAt,
 				})
@@ -1031,6 +1184,7 @@ func (a *Automation) applyRunnerDecision(
 		if err != nil {
 			return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 				Status:      RunStatusFailed,
+				Trace:       json.RawMessage(traceJSON),
 				OutputDraft: stringPointer(draft),
 				BlockReason: stringPointer(fmt.Sprintf("auto-send failed: %v", err)),
 				CompletedAt: &completedAt,
@@ -1045,6 +1199,7 @@ func (a *Automation) applyRunnerDecision(
 
 		return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 			Status:        RunStatusSent,
+			Trace: json.RawMessage(traceJSON),
 			OutputDraft:   stringPointer(draft),
 			SentMessageID: sentMessageIDPtr,
 			CompletedAt:   &completedAt,
@@ -1052,6 +1207,7 @@ func (a *Automation) applyRunnerDecision(
 	default:
 		return a.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 			Status:      RunStatusFailed,
+			Trace: json.RawMessage(traceJSON),
 			OutputDraft: stringPointer(draft),
 			BlockReason: stringPointer(fmt.Sprintf("unsupported runner status %q", runnerResp.Status)),
 			CompletedAt: &completedAt,

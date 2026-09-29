@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, Notification, ipcMain, session, shell, net: electronNet } = require('electron')
+const { app, BrowserWindow, Menu, Tray, nativeImage, dialog, Notification, ipcMain, session, shell, net: electronNet, safeStorage } = require('electron')
 const { spawn, spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const http = require('node:http')
@@ -184,6 +184,41 @@ function migrationsRoot() {
 
 function userDataRoot() {
   return app.getPath('userData')
+}
+
+function rememberedLoginPath() {
+  return path.join(userDataRoot(), 'remembered-login.json')
+}
+
+function readRememberedLogin() {
+  const stored = readJSONFile(rememberedLoginPath())
+  let password = ''
+  if (typeof stored.password_encrypted === 'string' && stored.password_encrypted && safeStorage.isEncryptionAvailable()) {
+    try {
+      password = safeStorage.decryptString(Buffer.from(stored.password_encrypted, 'base64'))
+    } catch {
+      password = ''
+    }
+  }
+  return {
+    email: typeof stored.email === 'string' ? stored.email : '',
+    password,
+    rememberPassword: stored.remember_password === true,
+    secure: safeStorage.isEncryptionAvailable(),
+  }
+}
+
+function writeRememberedLogin(payload) {
+  ensureDir(userDataRoot())
+  const email = typeof payload?.email === 'string' ? payload.email.trim() : ''
+  const rememberPassword = payload?.rememberPassword === true
+  const password = typeof payload?.password === 'string' ? payload.password : ''
+  const stored = { email, remember_password: rememberPassword }
+  if (rememberPassword && password && safeStorage.isEncryptionAvailable()) {
+    stored.password_encrypted = safeStorage.encryptString(password).toString('base64')
+  }
+  fs.writeFileSync(rememberedLoginPath(), `${JSON.stringify(stored, null, 2)}\n`, 'utf8')
+  return { secure: safeStorage.isEncryptionAvailable() }
 }
 
 function dataRoot() {
@@ -641,6 +676,8 @@ function registerDesktopIPC() {
     await restartAPI()
     return desktopRuntimeConfigView()
   })
+  ipcMain.handle('desktop-auth:get-remembered-login', () => readRememberedLogin())
+  ipcMain.handle('desktop-auth:save-remembered-login', (_event, payload) => writeRememberedLogin(payload))
   ipcMain.handle('desktop-notify:incoming-call', (_event, payload) => {
     const callType = payload && payload.callType === 'video' ? '视频' : '语音'
     const caller = payload && typeof payload.caller === 'string' && payload.caller.trim()

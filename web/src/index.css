@@ -654,6 +654,21 @@ a {
   font-size: 11px;
   line-height: 1.5;
 }
+
+.auth-remember-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #667781;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.auth-remember-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: #00a884;
+}
 .account-create-form .field,
 .account-modal-network .field {
   gap: 5px;
@@ -15674,4 +15689,106 @@ a {
     margin-left: 12px;
     padding: 16px;
   }
+}
+
+.admin-agent-run-log-panel {
+  min-width: 0;
+}
+
+.admin-agent-run-log-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+}
+
+.admin-agent-run-log-table {
+  width: 100%;
+  min-width: 1120px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-agent-run-log-table th,
+.admin-agent-run-log-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle, #e5e7eb);
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-agent-run-log-table th {
+  color: var(--text-muted, #667085);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: var(--surface-subtle, #f8fafc);
+}
+
+.admin-agent-run-log-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-agent-run-log-table td strong,
+.admin-agent-run-log-table td small {
+  display: block;
+}
+
+.admin-agent-run-log-table td small {
+  margin-top: 4px;
+  color: var(--text-muted, #667085);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.admin-run-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #475467;
+  background: #f2f4f7;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.admin-run-status.ready_for_review,
+.admin-run-status.sent {
+  color: #067647;
+  background: #ecfdf3;
+}
+
+.admin-run-status.failed,
+.admin-run-status.blocked {
+  color: #b42318;
+  background: #fef3f2;
+}
+
+.admin-run-status.generating,
+.admin-run-status.queued {
+  color: #b54708;
+  background: #fffaeb;
+}
+
+.admin-agent-run-trace {
+  position: absolute;
+  z-index: 2;
+  width: min(620px, 60vw);
+  max-height: 420px;
+  margin-top: 8px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle, #e5e7eb);
+  border-radius: 10px;
+  color: #d0d5dd;
+  background: #101828;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  box-shadow: 0 12px 30px rgb(16 24 40 / 18%);
+}
+
+.admin-agent-run-log-table td:last-child {
+  position: relative;
+  min-width: 120px;
 }

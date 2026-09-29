@@ -631,8 +631,13 @@ func (p *CloudProxy) applyCloudDraftResult(
 		status = RunStatusReadyForReview
 	}
 
+	traceJSON, traceErr := mustMarshalJSON(buildDesktopTrace(result.Provider, result.Trace, nil))
+	if traceErr != nil {
+		return RunView{}, fmt.Errorf("encode cloud agent run trace: %w", traceErr)
+	}
 	if err := p.repository.UpdateRunStatus(ctx, prepared.RunID, RunStatusUpdate{
 		Status:      status,
+		Trace:       json.RawMessage(traceJSON),
 		OutputDraft: stringPointer(result.Draft),
 		BlockReason: stringPointer(result.BlockReason),
 		CompletedAt: &completedAt,
@@ -655,8 +660,10 @@ func (p *CloudProxy) failPreparedRun(ctx context.Context, w http.ResponseWriter,
 
 func (p *CloudProxy) markRunFailed(ctx context.Context, runID string, reason string) (RunView, error) {
 	completedAt := time.Now().UTC()
+	traceJSON, _ := mustMarshalJSON(map[string]any{"phase": "cloud_proxy", "error": reason})
 	if err := p.repository.UpdateRunStatus(ctx, runID, RunStatusUpdate{
 		Status:      RunStatusFailed,
+		Trace:       json.RawMessage(traceJSON),
 		BlockReason: stringPointer(reason),
 		CompletedAt: &completedAt,
 	}); err != nil {

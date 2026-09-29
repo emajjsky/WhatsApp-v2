@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass, field, replace
@@ -371,42 +372,78 @@ class AgentRunnerServer(ThreadingHTTPServer):
         provider_response: ProviderResponse,
         draft: str,
     ) -> dict[str, Any]:
-        decision = evaluate_reply(
+        policy_decision = evaluate_reply(
             run_context["rule"],
             run_context["customer_message"],
             draft,
             run_context["recent_auto_replies"],
         )
 
+        references = run_context["provider_request"].knowledge_references
+        reference_paths: list[str] = []
+        reference_hashes: list[str] = []
+        for reference in references:
+            path = ""
+            for line in str(reference).splitlines():
+                if line.startswith("[path:") and line.endswith("]"):
+                    path = line[6:-1]
+                    break
+            reference_paths.append(path)
+            reference_hashes.append(hashlib.sha256(str(reference).encode("utf-8")).hexdigest()[:16])
+
+        provider_config = run_context.get("provider_config", {})
+        decision_config = provider_config if isinstance(provider_config, dict) else {}
+        skill_decision = run_context.get("decision")
+        decision_trace: dict[str, Any] = {
+            "called": bool(skill_decision is not None or run_context.get("decision_error")),
+            "enabled": bool(decision_config.get("decision_enabled")),
+            "provider_type": decision_config.get("decision_provider_type") or ("jev" if str(decision_config.get("decision_base_url") or "").rstrip("/").endswith("/systemone") else decision_config.get("type")),
+            "model": decision_config.get("decision_model") or ((decision_config.get("decision_models") or [None])[0] if isinstance(decision_config.get("decision_models"), list) else None),
+            "decision": skill_decision,
+            "error": run_context.get("decision_error"),
+        }
+        if isinstance(skill_decision, dict):
+            decision_trace["need_skill"] = skill_decision.get("need_skill")
+            decision_trace["intent"] = skill_decision.get("intent")
+            decision_trace["skill_tags"] = skill_decision.get("skill_tags", [])
+
         response: dict[str, Any] = {
             "run_id": run_context["request_id"],
             "account_id": run_context["account_id"],
             "chat_id": run_context["chat_id"],
             "trigger_message_id": run_context["trigger_message_id"],
-            "status": decision.status,
+            "status": policy_decision.status,
             "draft": draft,
-            "block_reasons": decision.block_reasons,
+            "block_reasons": policy_decision.block_reasons,
             "provider": {
                 "type": provider_response.provider,
                 "model": provider_response.model,
                 "usage": provider_response.usage,
             },
-            "policy": asdict(decision),
+            "policy": asdict(policy_decision),
             "trace": {
                 "generated_at": utc_now().isoformat(),
                 "recent_message_count": len(run_context["recent_messages"]),
                 "prompt_preview": run_context["provider_request"].prompt_template[:160],
                 "decision": run_context.get("decision"),
                 "decision_error": run_context.get("decision_error"),
+                "decision_model": decision_trace,
                 "skill_lookup": run_context["provider_request"].metadata.get("skill_lookup", "not_decided"),
                 "skill_intent": run_context["provider_request"].metadata.get("skill_intent"),
                 "skill_tags": run_context["provider_request"].metadata.get("skill_tags", []),
                 "skill_filter": run_context["provider_request"].metadata.get("skill_filter"),
-                "reference_count": len(run_context["provider_request"].knowledge_references),
+                "reference_count": len(references),
+                "skill": {
+                    "bound": bool(run_context["provider_request"].knowledge_summary or references),
+                    "summary_present": bool(run_context["provider_request"].knowledge_summary),
+                    "reference_count": len(references),
+                    "reference_paths": reference_paths,
+                    "reference_hashes": reference_hashes,
+                },
             },
         }
 
-        if decision.should_dispatch:
+        if policy_decision.should_dispatch:
             response["dispatch"] = {
                 "channel": "session-gateway",
                 "account_id": run_context["account_id"],

@@ -1206,6 +1206,7 @@ INSERT INTO agent_runs (
     trigger_message_id,
     status,
     input_context,
+		trace,
     output_draft,
     block_reason,
     sent_message_id,
@@ -1222,6 +1223,7 @@ INSERT INTO agent_runs (
 		run.TriggerMessageID,
 		run.Status,
 		run.InputContext,
+		normalizeJSON(run.Trace),
 		run.OutputDraft,
 		run.BlockReason,
 		run.SentMessageID,
@@ -1233,15 +1235,34 @@ INSERT INTO agent_runs (
 	return nil
 }
 
+func normalizeJSON(value json.RawMessage) json.RawMessage {
+	if len(value) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	return value
+}
+
+func decodeTrace(value []byte) map[string]any {
+	if len(value) == 0 {
+		return nil
+	}
+	var trace map[string]any
+	if err := json.Unmarshal(value, &trace); err != nil {
+		return map[string]any{"decode_error": err.Error()}
+	}
+	return trace
+}
+
 func (r *Repository) UpdateRunStatus(ctx context.Context, id string, update RunStatusUpdate) error {
 	const query = `
 UPDATE agent_runs
 SET
     status = $2,
-    output_draft = $3,
-    block_reason = $4,
-    sent_message_id = $5,
-    completed_at = $6
+    trace = CASE WHEN $3::jsonb = '{}'::jsonb THEN trace ELSE $3::jsonb END,
+    output_draft = $4,
+    block_reason = $5,
+    sent_message_id = $6,
+    completed_at = $7
 WHERE id = $1`
 
 	result, err := r.db.ExecContext(
@@ -1249,6 +1270,7 @@ WHERE id = $1`
 		query,
 		id,
 		update.Status,
+		normalizeJSON(update.Trace),
 		update.OutputDraft,
 		update.BlockReason,
 		update.SentMessageID,
@@ -1328,6 +1350,7 @@ SELECT
     ar.trigger_message_id,
     trigger_message.text_content,
     ar.status,
+	ar.trace,
     ar.output_draft,
     ar.block_reason,
     ar.created_at,
@@ -1348,6 +1371,7 @@ WHERE ar.id = $1%s`
 		chatTitle      sql.NullString
 		waChatJID      sql.NullString
 		triggerPreview sql.NullString
+		trace          []byte
 		outputDraft    sql.NullString
 		blockReason    sql.NullString
 		completedAt    sql.NullTime
@@ -1364,6 +1388,7 @@ WHERE ar.id = $1%s`
 		&item.TriggerMessageID,
 		&triggerPreview,
 		&item.Status,
+		&trace,
 		&outputDraft,
 		&blockReason,
 		&item.CreatedAt,
@@ -1376,6 +1401,7 @@ WHERE ar.id = $1%s`
 	item.ChatTitle = nullableString(chatTitle)
 	item.WAChatJID = nullableString(waChatJID)
 	item.TriggerPreview = nullableString(triggerPreview)
+	item.Trace = decodeTrace(trace)
 	item.OutputDraft = nullableString(outputDraft)
 	item.BlockReason = nullableString(blockReason)
 	item.CompletedAt = nullableTime(completedAt)
@@ -1409,6 +1435,7 @@ SELECT
     ar.trigger_message_id,
     trigger_message.text_content,
     ar.status,
+    ar.trace,
     ar.output_draft,
     ar.block_reason,
     ar.created_at,
@@ -1435,6 +1462,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 			chatTitle      sql.NullString
 			waChatJID      sql.NullString
 			triggerPreview sql.NullString
+			trace          []byte
 			outputDraft    sql.NullString
 			blockReason    sql.NullString
 			completedAt    sql.NullTime
@@ -1451,6 +1479,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 			&item.TriggerMessageID,
 			&triggerPreview,
 			&item.Status,
+			&trace,
 			&outputDraft,
 			&blockReason,
 			&item.CreatedAt,
@@ -1463,6 +1492,7 @@ LIMIT $%d OFFSET $%d`, whereClause, limitIndex, offsetIndex)
 		item.ChatTitle = nullableString(chatTitle)
 		item.WAChatJID = nullableString(waChatJID)
 		item.TriggerPreview = nullableString(triggerPreview)
+		item.Trace = decodeTrace(trace)
 		item.OutputDraft = nullableString(outputDraft)
 		item.BlockReason = nullableString(blockReason)
 		item.CompletedAt = nullableTime(completedAt)
