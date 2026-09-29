@@ -1211,7 +1211,7 @@ INSERT INTO agent_runs (
     block_reason,
     sent_message_id,
     completed_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 
 	if _, err := r.db.ExecContext(
 		ctx,
